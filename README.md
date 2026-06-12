@@ -58,6 +58,10 @@
 **方式三：Docker**
 
 ```bash
+# 直接用现成镜像（随仓库自动更新）
+docker run -d --name zhinote -p 8080:80 ghcr.io/daloudalou/zhinote:latest
+
+# 或从源码自行构建
 docker build -t zhinote .
 docker run -d --name zhinote -p 8080:80 zhinote
 # 打开 http://localhost:8080
