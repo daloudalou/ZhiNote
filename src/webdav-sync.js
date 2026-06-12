@@ -848,6 +848,7 @@
     // 重载配置（含改口令后）即解除"口令不一致"上传闸，让新口令重新接受 doGet 检验
     _decMismatch = false;
     _decFailRounds = 0;
+    _skipBadNotes = {}; // 换口令/重载配置后僵尸名单作废，全部重试一遍
     return true;
   }
 
@@ -867,6 +868,7 @@
     for (const id in manifest.notes) {
       if (manifest.deleted && manifest.deleted[id]) continue; // 云端墓碑：不会下载
       const remoteTs = manifest.notes[id].updatedAt || 0;
+      if (_isKnownBadNote(id, remoteTs)) continue; // 僵尸笔记反正下载不了，不算"有新内容"
       const localNote = data.notes[id];
       if (!localNote) {
         if (!trash[id]) return true; // 云端有、本地没有（也不在回收站）→ 会下载
@@ -1014,6 +1016,24 @@
   let _skippedDecryptCount = 0;  // 本轮因解密失败被跳过的笔记数（>0 时不记录 manifest 基准，下轮重试）
   let _decMismatch = false;      // 已确认口令与云端不一致：禁止上传笔记正文，防止把另一把钥匙的密文写上云端（混钥污染）
 
+  // 僵尸云端笔记记忆：旧口令残留密文 / 损坏文件，且本地无副本可自愈 → 永远拉不下来。
+  // 按"manifest 时间戳"记忆，连续 2 轮失败后本会话不再重试下载，否则会：
+  // ① 每轮白费 1-3 个请求（含抽样试解）刷屏报错；② _skippedDecryptCount 一直 >0 导致
+  // manifest 基准永不记录，每轮全量重处理；③ "云端有、本地没有"被计入"有新内容要下载"，
+  // 保护条每次打开都弹（用户误以为每次都在首次同步——曾发生）。
+  // 时间戳变了（作者设备重新上传过）会自动重试；改口令/手动同步时整体清空重试。
+  let _skipBadNotes = {}; // { id: { t: manifestTs, n: 连续失败轮数 } }
+  function _isKnownBadNote(id, remoteTs) {
+    const e = _skipBadNotes[id];
+    return !!(e && e.t === remoteTs && e.n >= 2);
+  }
+  function _markBadNote(id, remoteTs) {
+    const e = _skipBadNotes[id];
+    if (e && e.t === remoteTs) e.n++;
+    else _skipBadNotes[id] = { t: remoteTs, n: 1 };
+    return _skipBadNotes[id].n;
+  }
+
   /** 抽样试解：从 manifest 里挑 1-2 篇"本轮失败集合之外"的笔记试着解密，
    *  区分「口令真不对」（样本也解不开）和「恰好只拉到旧口令残留密文」（样本解得开）。 */
   async function _sampleKeyCheck(manifest, excludeIds) {
@@ -1048,6 +1068,7 @@
       const localNote = data.notes[id];
       const localTs = localNote ? new Date(localNote.updatedAt || 0).getTime() : 0;
       if (remoteTs > localTs + 1000) {
+        if (_isKnownBadNote(id, remoteTs)) continue; // 已确认拉不下来的僵尸笔记：不再重试
         toDownload.push(id);
       } else if (localNote && !_getBase(id)) {
         const dn = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
@@ -1104,10 +1125,24 @@
             window.storage.markNotesDirtyByIds(healIds);
             setTimeout(() => { try { schedulePut(); } catch (_) {} }, 2000);
           }
-          const rest = dec.length - healIds.length;
-          _skippedDecryptCount = rest;
+          // 本地无副本可自愈的：记入僵尸名单。计数只算"还会重试"的，
+          // 连续 2 轮失败转为永久跳过（不再阻塞 manifest 基准、不再每轮重试）
+          const restIds = dec.map(d => d.item).filter(id => !healIds.includes(id));
+          let stillRetry = 0;
+          const nowPermanent = [];
+          for (const id of restIds) {
+            const rts = (manifest.notes[id] && manifest.notes[id].updatedAt) || 0;
+            const n = _markBadNote(id, rts);
+            if (n === 2) nowPermanent.push(id);
+            if (n < 2) stillRetry++;
+          }
+          _skippedDecryptCount = stillRetry;
+          if (nowPermanent.length) {
+            console.warn('[webdav] 以下云端笔记用当前口令解不开且本地无副本，本会话不再重试（可在"管理云端笔记"中删除）:', nowPermanent);
+            _emit('cloud-sync', { type: 'webdav-notes-unreadable', count: nowPermanent.length, ids: nowPermanent });
+          }
           console.warn(`[webdav] ${dec.length} 篇为旧口令残留密文（当前口令已验证可解其余笔记）：`
-            + `${healIds.length} 篇用本地副本重新加密上传自愈${rest ? `，${rest} 篇本地无副本/较旧，跳过待其作者设备自愈` : ''}`);
+            + `${healIds.length} 篇用本地副本重新加密上传自愈${restIds.length ? `，${restIds.length} 篇本地无副本/较旧，跳过待其作者设备自愈` : ''}`);
         }
       } else {
         _decFailRounds = 0;
@@ -1124,6 +1159,12 @@
         if (healIds.length && window.storage.markNotesDirtyByIds) {
           window.storage.markNotesDirtyByIds(healIds);
           setTimeout(() => { try { schedulePut(); } catch (_) {} }, 2000);
+        }
+        // 本地无副本可修复的损坏文件：同样记入僵尸名单，避免每轮重试下载
+        for (const b of bad) {
+          if (data.notes[b.item]) continue;
+          const rts = (manifest.notes[b.item] && manifest.notes[b.item].updatedAt) || 0;
+          _markBadNote(b.item, rts);
         }
         console.warn(`[webdav] ${bad.length} 篇云端笔记文件损坏已跳过（${healIds.length} 篇将用本地副本重传修复）:`,
           bad.map(b => `${b.item}: ${b.error.message}`));
@@ -1760,6 +1801,7 @@
   async function manualSync() {
     if (!_config) { console.warn('[webdav] manualSync: _config 为空，同步未启动'); return; }
     if (_stopped) { console.warn('[webdav] manualSync: 模块已停止'); return; }
+    _skipBadNotes = {}; // 手动同步是用户主动行为：僵尸名单清空，给所有跳过的笔记一次重试机会
     if (_syncing) await _waitSyncDone();
     const wasPaused = _paused;
     _paused = false;

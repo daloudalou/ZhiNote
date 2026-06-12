@@ -1341,6 +1341,7 @@ const editor = (() => {
       },
       onUpdate: ({ editor: ed }) => {
         if (_suppressInput) return;
+        _scrubForeignImageSrcs();
         scheduleSave(null);
       },
     });
@@ -2155,7 +2156,23 @@ const editor = (() => {
   function handleImageDrop(e) {
     if (_internalImgDrag) { _internalImgDrag = false; return; }
     const files = e.dataTransfer?.files;
-    if (!files?.length) return;
+    // iOS Safari 从截图缩略图/照片拖入时 files 常为空，文件在 items 里（文件承诺）。
+    // 必须在这里拦下：放过去的话 WebKit 默认行为会插入 blob:/临时 URL 的 <img>，
+    // 本机当场能看、序列化进 Markdown 同步出去后所有设备都是碎图（已发生过）。
+    if (!files?.length) {
+      const items = e.dataTransfer?.items;
+      if (!items?.length) return;
+      const imgItems = Array.from(items).filter(it => it.kind === 'file' && it.type.startsWith('image/'));
+      if (!imgItems.length) return;
+      e.preventDefault();
+      let got = false;
+      for (const it of imgItems) {
+        const file = it.getAsFile();
+        if (file) { got = true; insertImageFile(file); }
+      }
+      if (!got) window.toast?.('未能读取拖入的图片，请改用复制 → 粘贴插入', 'warning');
+      return;
+    }
     for (const file of files) {
       if (file.type.startsWith('image/')) {
         e.preventDefault();
@@ -2184,6 +2201,51 @@ const editor = (() => {
       insertImageFromDataUrl(reader.result, file.name?.replace(/\.[^.]+$/, '') || 'image');
     };
     reader.readAsDataURL(file);
+  }
+
+  /** 兜底清洗：把混进文档的 blob:/webkit 临时图片地址抢救入库，替换为 zhinote://img 引用。
+   *  这类地址只在产生它的会话内有效，序列化同步出去就是碎图（iOS 拖拽曾绕过入口混入）。
+   *  只在 blob 还活着（fetch 成功）时替换；取不到的不动它——可能是别的设备产生的，
+   *  那台设备还有机会自愈，这里改成占位符反而会把它救回来的版本覆盖掉。 */
+  const _scrubInFlight = new Set();
+  function _scrubForeignImageSrcs() {
+    if (!_editor) return;
+    const found = new Set();
+    _editor.state.doc.descendants((node) => {
+      if (node.type.name !== 'image') return;
+      const src = node.attrs.src || '';
+      if ((src.startsWith('blob:') || src.startsWith('webkit-fake-url:')) && !_scrubInFlight.has(src)) found.add(src);
+    });
+    found.forEach(async (src) => {
+      _scrubInFlight.add(src);
+      try {
+        const blob = await fetch(src).then(r => r.blob());
+        if (!blob || !blob.type.startsWith('image/')) return;
+        const dataUrl = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(blob);
+        });
+        const ref = window.storage?.ingestImageDataUrl?.(dataUrl);
+        if (!ref || !_editor) return;
+        _imgDataCache.set(ref.replace('zhinote://img/', '').replace(/#.*$/, ''), dataUrl);
+        // 异步期间文档可能已变，按 src 重新定位再替换
+        const tr = _editor.state.tr;
+        let changed = false;
+        _editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'image' && node.attrs.src === src) {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: ref });
+            changed = true;
+          }
+        });
+        if (changed) _editor.view.dispatch(tr);
+      } catch (_) {
+        // blob 已失效（跨会话/跨设备）：保持原样，不破坏可能被源设备救回的内容
+      } finally {
+        _scrubInFlight.delete(src);
+      }
+    });
   }
 
   /** 用 data URL 插入图片（入库 + 缓存 + setImage） */

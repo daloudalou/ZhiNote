@@ -76,6 +76,18 @@ async function bootstrap() {
         });
       }).catch(() => {});
     }
+    // Cloudflare Web Analytics：匿名聚合统计（无 Cookie、不收集个人信息），仅网页宿主 + 正式域名注入。
+    // 填入 Cloudflare 后台 Web Analytics 站点的 token 后生效；留空 = 不统计。
+    const CF_ANALYTICS_TOKEN = '';
+    if (CF_ANALYTICS_TOKEN && location.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(location.hostname)) {
+      try {
+        const s = document.createElement('script');
+        s.defer = true;
+        s.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+        s.setAttribute('data-cf-beacon', JSON.stringify({ token: CF_ANALYTICS_TOKEN }));
+        document.head.appendChild(s);
+      } catch (_) {}
+    }
   }
 
   // 窗口自愈放最前（在 storage.init() 等耗时操作之前），尽快复位，减少"一条线"残留时间。
@@ -279,6 +291,9 @@ async function bootstrap() {
         _lastSyncFailAt = Date.now();
         toast(_failMsg, 'error', { id: 'webdav-fail', duration: 0 });
       }
+    } else if (payload.type === 'webdav-notes-unreadable') {
+      // 旧口令残留密文且本地无副本：已停止重试。指引用户去"管理云端笔记"删除（笔记 ID 在控制台）
+      toast(`${payload.count} 篇云端笔记无法用当前口令解密且本地无副本，已跳过同步。如确认不再需要，可到 设置 → 同步 → 管理云端笔记 中删除`, 'warning', { id: 'webdav-unreadable', duration: 10000 });
     } else if (payload.type === 'webdav-notes-skipped') {
       // 个别云端笔记文件损坏：已跳过下载，本地有副本的会自动重传修复，无需用户操作
       const _msg = payload.healed > 0
@@ -4001,8 +4016,83 @@ function openDonateCard() {
   document.body.appendChild(overlay);
 }
 
+// ── 网页端"点赞"落点：支持卡 ──
+// Quicker 的内部点赞接口网页端不可用，改为弹卡给两条路：
+// GitHub Star（主推，需 GitHub 账号）/ Quicker 动作页点赞（国内可达）。
+const GH_REPO = 'daloudalou/ZhiNote';
+const GH_STARS_KEY = 'zhinote-gh-stars';
+
+/** 取 GitHub star 数（公开 API 免认证；本地缓存 1 小时；失败返回 null 不报错） */
+async function _githubStars() {
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(GH_STARS_KEY) || 'null'); } catch (_) {}
+  if (cached && Date.now() - cached.t < 3600_000) return cached.n;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${GH_REPO}`, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!r.ok) return cached ? cached.n : null;
+    const n = (await r.json()).stargazers_count;
+    if (typeof n !== 'number') return cached ? cached.n : null;
+    localStorage.setItem(GH_STARS_KEY, JSON.stringify({ n, t: Date.now() }));
+    return n;
+  } catch (_) { return cached ? cached.n : null; }
+}
+
+function openWebSupportCard() {
+  if (document.querySelector('.donate-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'donate-overlay';
+  overlay.innerHTML = `
+    <div class="donate-card support-card">
+      <button type="button" class="donate-close" title="关闭">✕</button>
+      <div class="donate-title">支持枝记</div>
+      <div class="donate-sub">开源免费，顺手点个赞就是最好的鼓励～</div>
+      <button type="button" class="support-option" data-href="https://github.com/${GH_REPO}">
+        <span class="support-option-icon">⭐</span>
+        <span class="support-option-body">
+          <span class="support-option-main">GitHub 上点 Star<span id="support-gh-stars"></span></span>
+          <span class="support-option-desc">需要 GitHub 账号</span>
+        </span>
+      </button>
+      <button type="button" class="support-option" data-href="https://getquicker.net/Sharedaction?code=b5091d78-12cc-4fb9-bd01-08debb8a5d21&fromMyShare=true">
+        <span class="support-option-icon">👍</span>
+        <span class="support-option-body">
+          <span class="support-option-main">Quicker 动作页点赞</span>
+          <span class="support-option-desc">需要 Quicker 账号 · 国内可直接访问</span>
+        </span>
+      </button>
+    </div>`;
+  const close = () => {
+    overlay.classList.add('is-closing');
+    document.removeEventListener('keydown', onKey, true);
+    setTimeout(() => overlay.remove(), 180);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+  };
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('.donate-close').addEventListener('click', close);
+  // 选项点击：链接由全局 data-href 委托打开，这里只负责收起卡片
+  overlay.querySelectorAll('.support-option').forEach(b => b.addEventListener('click', () => setTimeout(close, 120)));
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(overlay);
+  _githubStars().then(n => {
+    const el = overlay.querySelector('#support-gh-stars');
+    if (el && n != null) el.textContent = ` · ${n} 颗星`;
+  });
+}
+
 function setupAboutLikeButton(btn) {
   if (!btn) return;
+
+  // 网页端：点赞接口不可用，按钮变为支持卡入口（GitHub Star / Quicker 动作页）
+  if (!window.host.caps.quicker) {
+    btn.title = '支持枝记：GitHub Star / Quicker 动作页点赞';
+    btn.addEventListener('click', () => {
+      _playLikeAnim(btn);
+      openWebSupportCard();
+    });
+    return;
+  }
 
   // 仅用本机记忆决定初始显示，不在启动时读云端（点击时才读）
   if (localStorage.getItem(LIKE_STATE_KEY) === '1') {
@@ -4015,10 +4105,6 @@ function setupAboutLikeButton(btn) {
     _playLikeAnim(btn);
     // 正在请求中 / 已点过 → 只播动画，不再实际操作
     if (busy || btn.classList.contains('liked')) return;
-    if (!window.host.caps.quicker) {
-      toast('请在枝记窗口内点赞', 'info');
-      return;
-    }
     busy = true;
     try {
       // 单次调用：C# 读云端 → 有记录只回 already（不重复点赞），无记录则点赞并写云端
@@ -5587,13 +5673,10 @@ function openSettingsModal(initialTab) {
         <button type="button" id="set-webdav-proxy-copy" class="link-btn" style="margin-top:6px;">📋 复制 Worker 代理代码</button>
       </div>
     </details>`;})()}
-    <div style="display:flex;gap:8px;align-items:center;margin-top:16px;">
+    <div class="sync-actions-row">
       <button id="set-webdav-test" class="link-btn" title="测试连接">测试连接</button>
-      <span style="color:var(--border);">|</span>
       <button id="set-webdav-sync-now" class="link-btn" title="立即同步一次">立即同步</button>
-      <span style="color:var(--border);">|</span>
       <button id="set-webdav-recover" class="link-btn" title="查看 / 恢复 / 删除云端笔记">管理云端笔记</button>
-      <span style="color:var(--border);">|</span>
       <button id="set-webdav-repair" class="link-btn" title="云端清单（manifest.json）损坏、同步反复报错时使用">修复云端清单</button>
     </div>
     <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
@@ -5760,10 +5843,12 @@ function openSettingsModal(initialTab) {
         <div class="about-web-qr" id="about-web-qr">生成中…</div>
         <div class="about-web-info">
           <div class="about-web-name">网页版</div>
-          <div class="about-web-url" data-href="${escapeHtml(_webAppUrl())}" title="点击打开">${escapeHtml(_webAppUrl().replace(/^https?:\/\//, ''))}</div>
+          <div class="about-web-url-row">
+            <div class="about-web-url" data-href="${escapeHtml(_webAppUrl())}" title="点击打开">${escapeHtml(_webAppUrl().replace(/^https?:\/\//, ''))}</div>
+            <button type="button" class="link-btn" id="about-web-copy" title="复制网页版链接">复制链接</button>
+          </div>
           <div class="about-web-desc">枝记网页版 · 扫码或在浏览器输入网址即可使用</div>
           <div class="about-web-actions">
-            <button type="button" class="link-btn" id="about-web-copy" title="复制网页版链接">复制链接</button>
             <button type="button" class="link-btn" id="about-pwa-install" style="display:none;">📲 安装到主屏幕</button>
           </div>
         </div>
@@ -6662,6 +6747,7 @@ window.upgradeSelect = upgradeSelect;
 
 let _modalOnClose = null;
 let _modalClosing = false;
+let _modalCloseTimer = null;
 const OVERLAY_MS = 180;
 
 function openModal({ title, body, footer, onClose, dialogClass }) {
@@ -6670,6 +6756,16 @@ function openModal({ title, body, footer, onClose, dialogClass }) {
   const titleEl = document.getElementById('modal-title');
   const bodyEl = document.getElementById('modal-body');
   const footEl = document.getElementById('modal-footer');
+  // 关闭动画进行中又立刻开新弹窗（如口令确认弹窗"返回检查"重开设置页）：
+  // 必须取消挂起的隐藏定时器，否则 OVERLAY_MS 后会把刚打开的新弹窗一并藏掉
+  if (_modalCloseTimer) {
+    clearTimeout(_modalCloseTimer);
+    _modalCloseTimer = null;
+    if (typeof _modalOnClose === 'function') {
+      const cb = _modalOnClose; _modalOnClose = null;
+      try { cb(); } catch (_) {}
+    }
+  }
   _modalClosing = false;
   // 每次打开都重置弹窗自定义类（不影响 id 选择器的基础样式）
   if (dialog) dialog.className = dialogClass || '';
@@ -6703,7 +6799,8 @@ function closeModal() {
   overlay.classList.add('is-closing');
   dialog?.classList.add('is-closing');
   overlay.removeEventListener('click', onOverlayClick);
-  setTimeout(() => {
+  _modalCloseTimer = setTimeout(() => {
+    _modalCloseTimer = null;
     overlay.classList.add('hidden');
     overlay.classList.remove('is-closing');
     dialog?.classList.remove('is-closing');

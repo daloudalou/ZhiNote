@@ -3205,6 +3205,9 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 #settings-tab-appearance, #settings-tab-sync, #settings-tab-shortcuts, #settings-tab-about { min-height: 410px; opacity: 1; transition: opacity 0.18s ease; }
 #sync-panel-webdav { opacity: 1; transition: opacity 0.18s ease; }
 .sync-panel { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+/* 同步页操作行：按钮整体换行不折字（窄屏上"管理云端笔记"曾被竖排折成两行） */
+.sync-actions-row { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin-top: 16px; }
+.sync-actions-row .link-btn { white-space: nowrap; }
 
 .settings-tab-hidden { display: none !important; }
 
@@ -3272,14 +3275,16 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 .about-web-qr svg { display: block; }
 .about-web-info { flex: 1; min-width: 0; }
 .about-web-name { font-size: 13px; font-weight: 600; color: var(--text); }
-.about-web-url { font-size: 12px; color: var(--accent); word-break: break-all; margin-top: 3px; cursor: pointer; width: fit-content; }
+.about-web-url-row { display: flex; align-items: center; gap: 12px; margin-top: 3px; min-width: 0; }
+.about-web-url-row .link-btn { white-space: nowrap; flex-shrink: 0; }
+.about-web-url { font-size: 12px; color: var(--accent); word-break: break-all; cursor: pointer; width: fit-content; }
 .about-web-url:hover { text-decoration: underline; }
 .about-web-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; margin-top: 5px; }
-.about-web-actions { margin-top: 6px; display: flex; align-items: center; gap: 14px; }
-.about-web-actions .link-btn { white-space: nowrap; }
-/* 底部一行：左侧文字链接，右侧点赞按钮；左右各留一点内边距让两端不顶死、视觉更平衡 */
-.about-bottom-row { margin-top: 16px; padding: 0 6px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; row-gap: 10px; }
-.about-footer { display: flex; align-items: center; gap: 8px; }
+.about-web-actions { display: flex; align-items: center; gap: 14px; }
+.about-web-actions .link-btn { white-space: nowrap; margin-top: 6px; }
+/* 底部两行整体居中：上行文字链接、下行投喂/点赞，窄屏不再左右挤压换行 */
+.about-bottom-row { margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.about-footer { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; row-gap: 6px; }
 .about-text-link { background: none; border: none; padding: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: color .12s ease; white-space: nowrap; }
 .about-text-link:hover { color: var(--accent); text-decoration: underline; }
 .about-footer-sep { font-size: 12px; color: var(--text-tertiary); opacity: .6; user-select: none; }
@@ -3307,6 +3312,17 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 .donate-close:hover { color: var(--text); }
 body.theme-dark .donate-card { box-shadow: 0 16px 50px rgba(0,0,0,.5); }
 body.theme-dark .donate-card img { background: #fff; padding: 6px; }
+
+/* 网页端支持卡（点赞按钮的落点）：两条出路选项 */
+.support-card { width: 320px; padding-bottom: 24px; }
+.support-option { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 10px; padding: 12px 14px; text-align: left; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+.support-option:first-of-type { margin-top: 14px; }
+.support-option:hover { border-color: var(--accent); background: var(--bg-tertiary); transform: translateY(-1px); }
+.support-option:active { transform: translateY(0) scale(.98); }
+.support-option-icon { font-size: 20px; flex-shrink: 0; }
+.support-option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.support-option-main { font-size: 13px; font-weight: 600; color: var(--text); }
+.support-option-desc { font-size: 11.5px; color: var(--text-tertiary); }
 
 /* 点赞按钮（大拇指） */
 .about-like-btn { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 999px; white-space: nowrap; flex-shrink: 0; transition: transform .18s cubic-bezier(.34,1.56,.64,1), background .15s ease, color .15s ease, border-color .15s ease, box-shadow .2s ease; }
@@ -4182,9 +4198,8 @@ body.theme-gruvbox .md-ctx-sep {
 
   /* 关于页扫码卡片窄屏改竖排居中：横排时右侧信息列太窄，链接/按钮被挤得逐字换行 */
   .about-web-card { flex-direction: column; align-items: center; text-align: center; }
-  .about-web-url { margin-left: auto; margin-right: auto; }
+  .about-web-url-row { justify-content: center; }
   .about-web-actions { justify-content: center; }
-  .about-bottom-row { flex-wrap: wrap; justify-content: center; row-gap: 10px; }
 
   /* 顶栏压缩：隐藏面包屑、字数统计和低频按钮（置顶/挖空/大纲），标题让位、核心按钮完整可见 */
   #topbar { gap: 4px; padding: 0 8px; }
@@ -4595,7 +4610,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.0.196';
+    window.__MD_VER__ = 'v1.0.197';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -73537,6 +73552,7 @@ window.storage = storage;
     // 重载配置（含改口令后）即解除"口令不一致"上传闸，让新口令重新接受 doGet 检验
     _decMismatch = false;
     _decFailRounds = 0;
+    _skipBadNotes = {}; // 换口令/重载配置后僵尸名单作废，全部重试一遍
     return true;
   }
 
@@ -73556,6 +73572,7 @@ window.storage = storage;
     for (const id in manifest.notes) {
       if (manifest.deleted && manifest.deleted[id]) continue; // 云端墓碑：不会下载
       const remoteTs = manifest.notes[id].updatedAt || 0;
+      if (_isKnownBadNote(id, remoteTs)) continue; // 僵尸笔记反正下载不了，不算"有新内容"
       const localNote = data.notes[id];
       if (!localNote) {
         if (!trash[id]) return true; // 云端有、本地没有（也不在回收站）→ 会下载
@@ -73703,6 +73720,24 @@ window.storage = storage;
   let _skippedDecryptCount = 0;  // 本轮因解密失败被跳过的笔记数（>0 时不记录 manifest 基准，下轮重试）
   let _decMismatch = false;      // 已确认口令与云端不一致：禁止上传笔记正文，防止把另一把钥匙的密文写上云端（混钥污染）
 
+  // 僵尸云端笔记记忆：旧口令残留密文 / 损坏文件，且本地无副本可自愈 → 永远拉不下来。
+  // 按"manifest 时间戳"记忆，连续 2 轮失败后本会话不再重试下载，否则会：
+  // ① 每轮白费 1-3 个请求（含抽样试解）刷屏报错；② _skippedDecryptCount 一直 >0 导致
+  // manifest 基准永不记录，每轮全量重处理；③ "云端有、本地没有"被计入"有新内容要下载"，
+  // 保护条每次打开都弹（用户误以为每次都在首次同步——曾发生）。
+  // 时间戳变了（作者设备重新上传过）会自动重试；改口令/手动同步时整体清空重试。
+  let _skipBadNotes = {}; // { id: { t: manifestTs, n: 连续失败轮数 } }
+  function _isKnownBadNote(id, remoteTs) {
+    const e = _skipBadNotes[id];
+    return !!(e && e.t === remoteTs && e.n >= 2);
+  }
+  function _markBadNote(id, remoteTs) {
+    const e = _skipBadNotes[id];
+    if (e && e.t === remoteTs) e.n++;
+    else _skipBadNotes[id] = { t: remoteTs, n: 1 };
+    return _skipBadNotes[id].n;
+  }
+
   /** 抽样试解：从 manifest 里挑 1-2 篇"本轮失败集合之外"的笔记试着解密，
    *  区分「口令真不对」（样本也解不开）和「恰好只拉到旧口令残留密文」（样本解得开）。 */
   async function _sampleKeyCheck(manifest, excludeIds) {
@@ -73737,6 +73772,7 @@ window.storage = storage;
       const localNote = data.notes[id];
       const localTs = localNote ? new Date(localNote.updatedAt || 0).getTime() : 0;
       if (remoteTs > localTs + 1000) {
+        if (_isKnownBadNote(id, remoteTs)) continue; // 已确认拉不下来的僵尸笔记：不再重试
         toDownload.push(id);
       } else if (localNote && !_getBase(id)) {
         const dn = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
@@ -73793,10 +73829,24 @@ window.storage = storage;
             window.storage.markNotesDirtyByIds(healIds);
             setTimeout(() => { try { schedulePut(); } catch (_) {} }, 2000);
           }
-          const rest = dec.length - healIds.length;
-          _skippedDecryptCount = rest;
+          // 本地无副本可自愈的：记入僵尸名单。计数只算"还会重试"的，
+          // 连续 2 轮失败转为永久跳过（不再阻塞 manifest 基准、不再每轮重试）
+          const restIds = dec.map(d => d.item).filter(id => !healIds.includes(id));
+          let stillRetry = 0;
+          const nowPermanent = [];
+          for (const id of restIds) {
+            const rts = (manifest.notes[id] && manifest.notes[id].updatedAt) || 0;
+            const n = _markBadNote(id, rts);
+            if (n === 2) nowPermanent.push(id);
+            if (n < 2) stillRetry++;
+          }
+          _skippedDecryptCount = stillRetry;
+          if (nowPermanent.length) {
+            console.warn('[webdav] 以下云端笔记用当前口令解不开且本地无副本，本会话不再重试（可在"管理云端笔记"中删除）:', nowPermanent);
+            _emit('cloud-sync', { type: 'webdav-notes-unreadable', count: nowPermanent.length, ids: nowPermanent });
+          }
           console.warn(`[webdav] ${dec.length} 篇为旧口令残留密文（当前口令已验证可解其余笔记）：`
-            + `${healIds.length} 篇用本地副本重新加密上传自愈${rest ? `，${rest} 篇本地无副本/较旧，跳过待其作者设备自愈` : ''}`);
+            + `${healIds.length} 篇用本地副本重新加密上传自愈${restIds.length ? `，${restIds.length} 篇本地无副本/较旧，跳过待其作者设备自愈` : ''}`);
         }
       } else {
         _decFailRounds = 0;
@@ -73813,6 +73863,12 @@ window.storage = storage;
         if (healIds.length && window.storage.markNotesDirtyByIds) {
           window.storage.markNotesDirtyByIds(healIds);
           setTimeout(() => { try { schedulePut(); } catch (_) {} }, 2000);
+        }
+        // 本地无副本可修复的损坏文件：同样记入僵尸名单，避免每轮重试下载
+        for (const b of bad) {
+          if (data.notes[b.item]) continue;
+          const rts = (manifest.notes[b.item] && manifest.notes[b.item].updatedAt) || 0;
+          _markBadNote(b.item, rts);
         }
         console.warn(`[webdav] ${bad.length} 篇云端笔记文件损坏已跳过（${healIds.length} 篇将用本地副本重传修复）:`,
           bad.map(b => `${b.item}: ${b.error.message}`));
@@ -74449,6 +74505,7 @@ window.storage = storage;
   async function manualSync() {
     if (!_config) { console.warn('[webdav] manualSync: _config 为空，同步未启动'); return; }
     if (_stopped) { console.warn('[webdav] manualSync: 模块已停止'); return; }
+    _skipBadNotes = {}; // 手动同步是用户主动行为：僵尸名单清空，给所有跳过的笔记一次重试机会
     if (_syncing) await _waitSyncDone();
     const wasPaused = _paused;
     _paused = false;
@@ -81417,6 +81474,7 @@ const editor = (() => {
       },
       onUpdate: ({ editor: ed }) => {
         if (_suppressInput) return;
+        _scrubForeignImageSrcs();
         scheduleSave(null);
       },
     });
@@ -82231,7 +82289,23 @@ const editor = (() => {
   function handleImageDrop(e) {
     if (_internalImgDrag) { _internalImgDrag = false; return; }
     const files = e.dataTransfer?.files;
-    if (!files?.length) return;
+    // iOS Safari 从截图缩略图/照片拖入时 files 常为空，文件在 items 里（文件承诺）。
+    // 必须在这里拦下：放过去的话 WebKit 默认行为会插入 blob:/临时 URL 的 <img>，
+    // 本机当场能看、序列化进 Markdown 同步出去后所有设备都是碎图（已发生过）。
+    if (!files?.length) {
+      const items = e.dataTransfer?.items;
+      if (!items?.length) return;
+      const imgItems = Array.from(items).filter(it => it.kind === 'file' && it.type.startsWith('image/'));
+      if (!imgItems.length) return;
+      e.preventDefault();
+      let got = false;
+      for (const it of imgItems) {
+        const file = it.getAsFile();
+        if (file) { got = true; insertImageFile(file); }
+      }
+      if (!got) window.toast?.('未能读取拖入的图片，请改用复制 → 粘贴插入', 'warning');
+      return;
+    }
     for (const file of files) {
       if (file.type.startsWith('image/')) {
         e.preventDefault();
@@ -82260,6 +82334,51 @@ const editor = (() => {
       insertImageFromDataUrl(reader.result, file.name?.replace(/\.[^.]+$/, '') || 'image');
     };
     reader.readAsDataURL(file);
+  }
+
+  /** 兜底清洗：把混进文档的 blob:/webkit 临时图片地址抢救入库，替换为 zhinote://img 引用。
+   *  这类地址只在产生它的会话内有效，序列化同步出去就是碎图（iOS 拖拽曾绕过入口混入）。
+   *  只在 blob 还活着（fetch 成功）时替换；取不到的不动它——可能是别的设备产生的，
+   *  那台设备还有机会自愈，这里改成占位符反而会把它救回来的版本覆盖掉。 */
+  const _scrubInFlight = new Set();
+  function _scrubForeignImageSrcs() {
+    if (!_editor) return;
+    const found = new Set();
+    _editor.state.doc.descendants((node) => {
+      if (node.type.name !== 'image') return;
+      const src = node.attrs.src || '';
+      if ((src.startsWith('blob:') || src.startsWith('webkit-fake-url:')) && !_scrubInFlight.has(src)) found.add(src);
+    });
+    found.forEach(async (src) => {
+      _scrubInFlight.add(src);
+      try {
+        const blob = await fetch(src).then(r => r.blob());
+        if (!blob || !blob.type.startsWith('image/')) return;
+        const dataUrl = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(r.result);
+          r.onerror = rej;
+          r.readAsDataURL(blob);
+        });
+        const ref = window.storage?.ingestImageDataUrl?.(dataUrl);
+        if (!ref || !_editor) return;
+        _imgDataCache.set(ref.replace('zhinote://img/', '').replace(/#.*$/, ''), dataUrl);
+        // 异步期间文档可能已变，按 src 重新定位再替换
+        const tr = _editor.state.tr;
+        let changed = false;
+        _editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === 'image' && node.attrs.src === src) {
+            tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: ref });
+            changed = true;
+          }
+        });
+        if (changed) _editor.view.dispatch(tr);
+      } catch (_) {
+        // blob 已失效（跨会话/跨设备）：保持原样，不破坏可能被源设备救回的内容
+      } finally {
+        _scrubInFlight.delete(src);
+      }
+    });
   }
 
   /** 用 data URL 插入图片（入库 + 缓存 + setImage） */
@@ -83228,6 +83347,18 @@ async function bootstrap() {
         });
       }).catch(() => {});
     }
+    // Cloudflare Web Analytics：匿名聚合统计（无 Cookie、不收集个人信息），仅网页宿主 + 正式域名注入。
+    // 填入 Cloudflare 后台 Web Analytics 站点的 token 后生效；留空 = 不统计。
+    const CF_ANALYTICS_TOKEN = '';
+    if (CF_ANALYTICS_TOKEN && location.protocol === 'https:' && !['localhost', '127.0.0.1'].includes(location.hostname)) {
+      try {
+        const s = document.createElement('script');
+        s.defer = true;
+        s.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+        s.setAttribute('data-cf-beacon', JSON.stringify({ token: CF_ANALYTICS_TOKEN }));
+        document.head.appendChild(s);
+      } catch (_) {}
+    }
   }
 
   // 窗口自愈放最前（在 storage.init() 等耗时操作之前），尽快复位，减少"一条线"残留时间。
@@ -83431,6 +83562,9 @@ async function bootstrap() {
         _lastSyncFailAt = Date.now();
         toast(_failMsg, 'error', { id: 'webdav-fail', duration: 0 });
       }
+    } else if (payload.type === 'webdav-notes-unreadable') {
+      // 旧口令残留密文且本地无副本：已停止重试。指引用户去"管理云端笔记"删除（笔记 ID 在控制台）
+      toast(`${payload.count} 篇云端笔记无法用当前口令解密且本地无副本，已跳过同步。如确认不再需要，可到 设置 → 同步 → 管理云端笔记 中删除`, 'warning', { id: 'webdav-unreadable', duration: 10000 });
     } else if (payload.type === 'webdav-notes-skipped') {
       // 个别云端笔记文件损坏：已跳过下载，本地有副本的会自动重传修复，无需用户操作
       const _msg = payload.healed > 0
@@ -87153,8 +87287,83 @@ function openDonateCard() {
   document.body.appendChild(overlay);
 }
 
+// ── 网页端"点赞"落点：支持卡 ──
+// Quicker 的内部点赞接口网页端不可用，改为弹卡给两条路：
+// GitHub Star（主推，需 GitHub 账号）/ Quicker 动作页点赞（国内可达）。
+const GH_REPO = 'daloudalou/ZhiNote';
+const GH_STARS_KEY = 'zhinote-gh-stars';
+
+/** 取 GitHub star 数（公开 API 免认证；本地缓存 1 小时；失败返回 null 不报错） */
+async function _githubStars() {
+  let cached = null;
+  try { cached = JSON.parse(localStorage.getItem(GH_STARS_KEY) || 'null'); } catch (_) {}
+  if (cached && Date.now() - cached.t < 3600_000) return cached.n;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${GH_REPO}`, { headers: { Accept: 'application/vnd.github+json' } });
+    if (!r.ok) return cached ? cached.n : null;
+    const n = (await r.json()).stargazers_count;
+    if (typeof n !== 'number') return cached ? cached.n : null;
+    localStorage.setItem(GH_STARS_KEY, JSON.stringify({ n, t: Date.now() }));
+    return n;
+  } catch (_) { return cached ? cached.n : null; }
+}
+
+function openWebSupportCard() {
+  if (document.querySelector('.donate-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'donate-overlay';
+  overlay.innerHTML = `
+    <div class="donate-card support-card">
+      <button type="button" class="donate-close" title="关闭">✕</button>
+      <div class="donate-title">支持枝记</div>
+      <div class="donate-sub">开源免费，顺手点个赞就是最好的鼓励～</div>
+      <button type="button" class="support-option" data-href="https://github.com/${GH_REPO}">
+        <span class="support-option-icon">⭐</span>
+        <span class="support-option-body">
+          <span class="support-option-main">GitHub 上点 Star<span id="support-gh-stars"></span></span>
+          <span class="support-option-desc">需要 GitHub 账号</span>
+        </span>
+      </button>
+      <button type="button" class="support-option" data-href="https://getquicker.net/Sharedaction?code=b5091d78-12cc-4fb9-bd01-08debb8a5d21&fromMyShare=true">
+        <span class="support-option-icon">👍</span>
+        <span class="support-option-body">
+          <span class="support-option-main">Quicker 动作页点赞</span>
+          <span class="support-option-desc">需要 Quicker 账号 · 国内可直接访问</span>
+        </span>
+      </button>
+    </div>`;
+  const close = () => {
+    overlay.classList.add('is-closing');
+    document.removeEventListener('keydown', onKey, true);
+    setTimeout(() => overlay.remove(), 180);
+  };
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); close(); }
+  };
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('.donate-close').addEventListener('click', close);
+  // 选项点击：链接由全局 data-href 委托打开，这里只负责收起卡片
+  overlay.querySelectorAll('.support-option').forEach(b => b.addEventListener('click', () => setTimeout(close, 120)));
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(overlay);
+  _githubStars().then(n => {
+    const el = overlay.querySelector('#support-gh-stars');
+    if (el && n != null) el.textContent = ` · ${n} 颗星`;
+  });
+}
+
 function setupAboutLikeButton(btn) {
   if (!btn) return;
+
+  // 网页端：点赞接口不可用，按钮变为支持卡入口（GitHub Star / Quicker 动作页）
+  if (!window.host.caps.quicker) {
+    btn.title = '支持枝记：GitHub Star / Quicker 动作页点赞';
+    btn.addEventListener('click', () => {
+      _playLikeAnim(btn);
+      openWebSupportCard();
+    });
+    return;
+  }
 
   // 仅用本机记忆决定初始显示，不在启动时读云端（点击时才读）
   if (localStorage.getItem(LIKE_STATE_KEY) === '1') {
@@ -87167,10 +87376,6 @@ function setupAboutLikeButton(btn) {
     _playLikeAnim(btn);
     // 正在请求中 / 已点过 → 只播动画，不再实际操作
     if (busy || btn.classList.contains('liked')) return;
-    if (!window.host.caps.quicker) {
-      toast('请在枝记窗口内点赞', 'info');
-      return;
-    }
     busy = true;
     try {
       // 单次调用：C# 读云端 → 有记录只回 already（不重复点赞），无记录则点赞并写云端
@@ -88739,13 +88944,10 @@ function openSettingsModal(initialTab) {
         <button type="button" id="set-webdav-proxy-copy" class="link-btn" style="margin-top:6px;">📋 复制 Worker 代理代码</button>
       </div>
     </details>`;})()}
-    <div style="display:flex;gap:8px;align-items:center;margin-top:16px;">
+    <div class="sync-actions-row">
       <button id="set-webdav-test" class="link-btn" title="测试连接">测试连接</button>
-      <span style="color:var(--border);">|</span>
       <button id="set-webdav-sync-now" class="link-btn" title="立即同步一次">立即同步</button>
-      <span style="color:var(--border);">|</span>
       <button id="set-webdav-recover" class="link-btn" title="查看 / 恢复 / 删除云端笔记">管理云端笔记</button>
-      <span style="color:var(--border);">|</span>
       <button id="set-webdav-repair" class="link-btn" title="云端清单（manifest.json）损坏、同步反复报错时使用">修复云端清单</button>
     </div>
     <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
@@ -88912,10 +89114,12 @@ function openSettingsModal(initialTab) {
         <div class="about-web-qr" id="about-web-qr">生成中…</div>
         <div class="about-web-info">
           <div class="about-web-name">网页版</div>
-          <div class="about-web-url" data-href="${escapeHtml(_webAppUrl())}" title="点击打开">${escapeHtml(_webAppUrl().replace(/^https?:\/\//, ''))}</div>
+          <div class="about-web-url-row">
+            <div class="about-web-url" data-href="${escapeHtml(_webAppUrl())}" title="点击打开">${escapeHtml(_webAppUrl().replace(/^https?:\/\//, ''))}</div>
+            <button type="button" class="link-btn" id="about-web-copy" title="复制网页版链接">复制链接</button>
+          </div>
           <div class="about-web-desc">枝记网页版 · 扫码或在浏览器输入网址即可使用</div>
           <div class="about-web-actions">
-            <button type="button" class="link-btn" id="about-web-copy" title="复制网页版链接">复制链接</button>
             <button type="button" class="link-btn" id="about-pwa-install" style="display:none;">📲 安装到主屏幕</button>
           </div>
         </div>
@@ -89814,6 +90018,7 @@ window.upgradeSelect = upgradeSelect;
 
 let _modalOnClose = null;
 let _modalClosing = false;
+let _modalCloseTimer = null;
 const OVERLAY_MS = 180;
 
 function openModal({ title, body, footer, onClose, dialogClass }) {
@@ -89822,6 +90027,16 @@ function openModal({ title, body, footer, onClose, dialogClass }) {
   const titleEl = document.getElementById('modal-title');
   const bodyEl = document.getElementById('modal-body');
   const footEl = document.getElementById('modal-footer');
+  // 关闭动画进行中又立刻开新弹窗（如口令确认弹窗"返回检查"重开设置页）：
+  // 必须取消挂起的隐藏定时器，否则 OVERLAY_MS 后会把刚打开的新弹窗一并藏掉
+  if (_modalCloseTimer) {
+    clearTimeout(_modalCloseTimer);
+    _modalCloseTimer = null;
+    if (typeof _modalOnClose === 'function') {
+      const cb = _modalOnClose; _modalOnClose = null;
+      try { cb(); } catch (_) {}
+    }
+  }
   _modalClosing = false;
   // 每次打开都重置弹窗自定义类（不影响 id 选择器的基础样式）
   if (dialog) dialog.className = dialogClass || '';
@@ -89855,7 +90070,8 @@ function closeModal() {
   overlay.classList.add('is-closing');
   dialog?.classList.add('is-closing');
   overlay.removeEventListener('click', onOverlayClick);
-  setTimeout(() => {
+  _modalCloseTimer = setTimeout(() => {
+    _modalCloseTimer = null;
     overlay.classList.add('hidden');
     overlay.classList.remove('is-closing');
     dialog?.classList.remove('is-closing');

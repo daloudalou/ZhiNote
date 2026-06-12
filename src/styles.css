@@ -3185,6 +3185,9 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 #settings-tab-appearance, #settings-tab-sync, #settings-tab-shortcuts, #settings-tab-about { min-height: 410px; opacity: 1; transition: opacity 0.18s ease; }
 #sync-panel-webdav { opacity: 1; transition: opacity 0.18s ease; }
 .sync-panel { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border); }
+/* 同步页操作行：按钮整体换行不折字（窄屏上"管理云端笔记"曾被竖排折成两行） */
+.sync-actions-row { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin-top: 16px; }
+.sync-actions-row .link-btn { white-space: nowrap; }
 
 .settings-tab-hidden { display: none !important; }
 
@@ -3252,14 +3255,16 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 .about-web-qr svg { display: block; }
 .about-web-info { flex: 1; min-width: 0; }
 .about-web-name { font-size: 13px; font-weight: 600; color: var(--text); }
-.about-web-url { font-size: 12px; color: var(--accent); word-break: break-all; margin-top: 3px; cursor: pointer; width: fit-content; }
+.about-web-url-row { display: flex; align-items: center; gap: 12px; margin-top: 3px; min-width: 0; }
+.about-web-url-row .link-btn { white-space: nowrap; flex-shrink: 0; }
+.about-web-url { font-size: 12px; color: var(--accent); word-break: break-all; cursor: pointer; width: fit-content; }
 .about-web-url:hover { text-decoration: underline; }
 .about-web-desc { font-size: 12px; color: var(--text-tertiary); line-height: 1.6; margin-top: 5px; }
-.about-web-actions { margin-top: 6px; display: flex; align-items: center; gap: 14px; }
-.about-web-actions .link-btn { white-space: nowrap; }
-/* 底部一行：左侧文字链接，右侧点赞按钮；左右各留一点内边距让两端不顶死、视觉更平衡 */
-.about-bottom-row { margin-top: 16px; padding: 0 6px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; row-gap: 10px; }
-.about-footer { display: flex; align-items: center; gap: 8px; }
+.about-web-actions { display: flex; align-items: center; gap: 14px; }
+.about-web-actions .link-btn { white-space: nowrap; margin-top: 6px; }
+/* 底部两行整体居中：上行文字链接、下行投喂/点赞，窄屏不再左右挤压换行 */
+.about-bottom-row { margin-top: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.about-footer { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; row-gap: 6px; }
 .about-text-link { background: none; border: none; padding: 0; font: inherit; font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: color .12s ease; white-space: nowrap; }
 .about-text-link:hover { color: var(--accent); text-decoration: underline; }
 .about-footer-sep { font-size: 12px; color: var(--text-tertiary); opacity: .6; user-select: none; }
@@ -3287,6 +3292,17 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 .donate-close:hover { color: var(--text); }
 body.theme-dark .donate-card { box-shadow: 0 16px 50px rgba(0,0,0,.5); }
 body.theme-dark .donate-card img { background: #fff; padding: 6px; }
+
+/* 网页端支持卡（点赞按钮的落点）：两条出路选项 */
+.support-card { width: 320px; padding-bottom: 24px; }
+.support-option { display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 10px; padding: 12px 14px; text-align: left; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 10px; cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .15s ease; }
+.support-option:first-of-type { margin-top: 14px; }
+.support-option:hover { border-color: var(--accent); background: var(--bg-tertiary); transform: translateY(-1px); }
+.support-option:active { transform: translateY(0) scale(.98); }
+.support-option-icon { font-size: 20px; flex-shrink: 0; }
+.support-option-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.support-option-main { font-size: 13px; font-weight: 600; color: var(--text); }
+.support-option-desc { font-size: 11.5px; color: var(--text-tertiary); }
 
 /* 点赞按钮（大拇指） */
 .about-like-btn { display: inline-flex; align-items: center; gap: 5px; padding: 8px 12px; font-size: 13px; font-weight: 500; cursor: pointer; color: var(--text-secondary); background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 999px; white-space: nowrap; flex-shrink: 0; transition: transform .18s cubic-bezier(.34,1.56,.64,1), background .15s ease, color .15s ease, border-color .15s ease, box-shadow .2s ease; }
@@ -4162,9 +4178,8 @@ body.theme-gruvbox .md-ctx-sep {
 
   /* 关于页扫码卡片窄屏改竖排居中：横排时右侧信息列太窄，链接/按钮被挤得逐字换行 */
   .about-web-card { flex-direction: column; align-items: center; text-align: center; }
-  .about-web-url { margin-left: auto; margin-right: auto; }
+  .about-web-url-row { justify-content: center; }
   .about-web-actions { justify-content: center; }
-  .about-bottom-row { flex-wrap: wrap; justify-content: center; row-gap: 10px; }
 
   /* 顶栏压缩：隐藏面包屑、字数统计和低频按钮（置顶/挖空/大纲），标题让位、核心按钮完整可见 */
   #topbar { gap: 4px; padding: 0 8px; }
