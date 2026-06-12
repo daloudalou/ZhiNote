@@ -983,7 +983,9 @@ const MdImage = Image.extend({
         }
         if (attrs.height) {
           img.setAttribute('height', attrs.height);
-          img.style.height = String(attrs.height).includes('%') ? attrs.height : attrs.height + 'px';
+          // 有宽度时高度交给浏览器按原始比例算：小屏上 max-width:100% 压缩宽度后，
+          // 固定像素高度会把图压扁/拉窄（height 属性保留用于序列化与加载占位）
+          img.style.height = attrs.width ? 'auto' : (String(attrs.height).includes('%') ? attrs.height : attrs.height + 'px');
         } else {
           img.removeAttribute('height');
           img.style.height = '';
