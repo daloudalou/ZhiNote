@@ -1,0 +1,10 @@
+// Cloudflare Workers 部署配置：纯静态资源托管（无服务端代码）
+// 控制台连接 GitHub 后，部署命令 `npx wrangler deploy` 会按此配置发布 dist/web
+{
+  "name": "zhinote",
+  "compatibility_date": "2026-06-01",
+  "assets": {
+    "directory": "./dist/web",
+    "not_found_handling": "single-page-application"
+  }
+}
