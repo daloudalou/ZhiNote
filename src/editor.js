@@ -1733,6 +1733,26 @@ const editor = (() => {
       openImageGallery(img);
     });
 
+    // 触屏：自实现图片双击检测——iOS 对触摸双击经常不派发 dblclick，上面的处理在 iPhone 上时灵时不灵。
+    // 两次单指轻点（<350ms、位移<30px）落在同一图片 → 弹图片菜单，并阻止合成 click/dblclick。
+    let _imgTap = { t: 0, x: 0, y: 0 };
+    editorEl.addEventListener('touchend', (e) => {
+      if (e.touches.length || e.changedTouches.length !== 1) { _imgTap.t = 0; return; }
+      const t = e.changedTouches[0];
+      const img = e.target.closest && e.target.closest('img');
+      if (!img) { _imgTap.t = 0; return; }
+      const now = Date.now();
+      if (now - _imgTap.t < 350 && Math.hypot(t.clientX - _imgTap.x, t.clientY - _imgTap.y) < 30) {
+        _imgTap.t = 0;
+        if (e.cancelable) e.preventDefault();
+        clearTimeout(_imgClickTimer);
+        _imgClickTimer = null;
+        img.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: t.clientX, clientY: t.clientY }));
+      } else {
+        _imgTap = { t: now, x: t.clientX, y: t.clientY };
+      }
+    }, { passive: false });
+
     _editor.on('selectionUpdate', () => {
       requestAnimationFrame(syncImageResizeOverlay);
       // 选区变化且没有右键菜单时，解除浮动菜单抑制（自愈，避免卡死）

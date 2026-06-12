@@ -2154,6 +2154,7 @@ function setupTouchGestures(mq) {
   document.addEventListener('gesturestart', (e) => e.preventDefault());
 
   document.addEventListener('touchstart', (e) => {
+    window._mdTouchActive = true; // 供键盘错位纠正参考：手指按着时不要强制滚动（会打断 iOS 长按选字）
     if (e.touches.length === 2) {
       g3 = null;
       const pts = {};
@@ -2213,7 +2214,16 @@ function setupTouchGestures(mq) {
     }
   }, { passive: false });
 
+  document.addEventListener('touchcancel', (e) => {
+    if (e.touches.length === 0) window._mdTouchActive = false;
+  }, { passive: true });
+
   document.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) {
+      window._mdTouchActive = false;
+      // 手指全部离开后补一次键盘错位纠正（按压期间被暂缓的那次）
+      if (window._mdKbLift) setTimeout(() => window._mdKbLift(), 50);
+    }
     // 三指轻点 → 阅读模式
     if (g3 && e.touches.length === 0) {
       const ok = !g3.moved && Date.now() - g3.t0 < 350;
@@ -2424,6 +2434,8 @@ function setupMobileKbToolbar() {
       const layoutH = document.documentElement.clientHeight;
       const gap = Math.max(0, layoutH - vv.height - vv.offsetTop);
       bar.style.transform = gap > 1 ? `translateY(${-gap}px)` : '';
+      // 暴露键盘高度给 CSS（触屏吸附式浮动条用它悬在键盘上方）
+      document.documentElement.style.setProperty('--kb-gap', (gap > 1 ? Math.round(gap) : 0) + 'px');
       // iOS：工具条的显隐直接跟着软键盘走——键盘在场(gap>60)且焦点在编辑器才显示。
       // 解决两个顽疾：① 键盘已收起但焦点未走，工具条残留在屏幕底部；
       // ② 聚焦瞬间键盘还没弹出，工具条先闪现在底部再跳到键盘上方。
@@ -2436,14 +2448,17 @@ function setupMobileKbToolbar() {
         document.documentElement.style.setProperty('--vv-h', Math.round(vv.height) + 'px');
         document.body.classList.toggle('kb-open', gap > 60);
         // 防 Safari 把布局视口顶上去造成整体错位：键盘在场时纠正；
-        // 键盘收起后（gap≈0）也要清残留滚动，否则顶栏/侧栏图标整体偏移跑出屏幕
-        if (window.scrollY && (gap > 60 || gap <= 1)) window.scrollTo(0, 0);
+        // 键盘收起后（gap≈0）也要清残留滚动，否则顶栏/侧栏图标整体偏移跑出屏幕。
+        // 但手指还按着时不纠正——iOS 长按选字过程中系统会微调滚动（放大镜跟随），
+        // 这时强行拽回会打断选字手势（曾被反馈"键盘弹出后长按无法选字"）；松手后由 touchend 补一次
+        if (window.scrollY && (gap > 60 || gap <= 1) && !window._mdTouchActive) window.scrollTo(0, 0);
       }
     };
     vv.addEventListener('resize', lift);
     vv.addEventListener('scroll', lift);
     lift();
   }
+  window._mdKbLift = lift; // 手势层在 touchend 时补调（按压期间暂缓的滚动纠正）
 
   // 编辑器聚焦显示、失焦隐藏（小延迟：点工具条按钮瞬间 activeElement 会暂时跳走）
   // iOS 的"显示"交给上面的 lift 按键盘高度驱动，这里只负责非 iOS 的即时显示
@@ -5680,6 +5695,7 @@ function openSettingsModal(initialTab) {
         <div class="about-logo">📖</div>
         <div class="about-title">枝记 ZhiNote</div>
         <div class="about-subtitle">轻量 Markdown 笔记工具</div>
+        <div class="about-version" title="运行版本标记">版本 ${escapeHtml(window.__MD_VER__ || '未知')}</div>
       </div>
       <div class="about-web-card">
         <div class="about-web-qr" id="about-web-qr">生成中…</div>
