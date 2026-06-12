@@ -5774,6 +5774,8 @@ function openSettingsModal(initialTab) {
           <span class="about-footer-sep">·</span>
           <button type="button" class="about-text-link" data-href="https://getquicker.net/Sharedaction?code=b5091d78-12cc-4fb9-bd01-08debb8a5d21&amp;fromMyShare=true" title="枝记动作的分享页">动作链接</button>
           <span class="about-footer-sep">·</span>
+          <button type="button" class="about-text-link" data-href="https://github.com/daloudalou/ZhiNote" title="开源仓库（AGPL-3.0）：源码、自托管部署与单文件下载">GitHub 开源</button>
+          <span class="about-footer-sep">·</span>
           <button type="button" class="about-text-link" id="set-import-legacy" title="从记事本 2.0 导入旧数据">数据迁移</button>
         </div>
         <div class="about-support-group">
