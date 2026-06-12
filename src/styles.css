@@ -4254,8 +4254,13 @@ body.theme-gruvbox .md-ctx-sep {
     max-width: calc(100vw - 12px);
     z-index: 10004;
   }
+  /* 浮动条出现时顶替键盘工具条的位置（同槽互斥，键盘上方永远只有一条） */
   body:has(#kb-toolbar.visible) #bubble-menu {
-    bottom: calc(var(--kb-gap, 0px) + 58px) !important;
+    bottom: calc(var(--kb-gap, 0px) + 6px) !important;
+  }
+  body.md-bubble-open #kb-toolbar {
+    opacity: 0 !important;
+    pointer-events: none !important;
   }
   /* 吸附在底部 → 下拉一律向上弹，否则伸进键盘里 */
   #bubble-menu .bubble-heading-dropdown, #bubble-menu .bubble-code-dropdown, #bubble-menu .bubble-list-dropdown,

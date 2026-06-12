@@ -1469,6 +1469,9 @@ const storage = (() => {
   }
   function markAllNotesDirty() {
     for (const id in _data.notes) _dirtyNoteIds.add(id);
+    // 回收站一并标脏：换加密口令后「上传覆盖云端」要把 trash/ 也重新加密，
+    // 否则云端回收站永远留在旧钥上（扫描恢复/还原时解不开，还可能触发口令误报）
+    for (const id in (_data.trash || {})) _dirtyNoteIds.add(id);
     _globalDirty = true;
   }
 

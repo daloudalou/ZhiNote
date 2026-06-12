@@ -1088,6 +1088,15 @@ const editor = (() => {
       if (bubbleMenuEl) bubbleMenuEl.classList.toggle('md-bubble-hidden', !!v);
     };
     window.isBubbleSuppressed = () => _bubbleSuppressed;
+    // 触屏：浮动条与键盘工具条同槽互斥——浮动条（选中文字时）出现就藏键盘工具条，
+    // 键盘上方永远只有一条。BubbleMenu 的显示/隐藏 = 挂载/摘除 DOM，用 MutationObserver 跟踪。
+    if (_coarsePtr) {
+      const updBubbleOpen = () => {
+        const open = !!bubbleMenuEl && bubbleMenuEl.isConnected && !bubbleMenuEl.classList.contains('md-bubble-hidden');
+        document.body.classList.toggle('md-bubble-open', open);
+      };
+      new MutationObserver(updBubbleOpen).observe(document.body, { childList: true, subtree: true });
+    }
     editorEl.addEventListener('mouseup', (e) => {
       if (!_bubbleLocked) _lastMouseUp = { x: e.clientX, y: e.clientY };
     });
@@ -1752,6 +1761,76 @@ const editor = (() => {
         _imgTap = { t: now, x: t.clientX, y: t.clientY };
       }
     }, { passive: false });
+
+    // iOS：聚焦编辑区里长按的原生行为是"放大镜移光标"而非选词（安卓是选词），键盘弹出后几乎没法选字。
+    // 自实现长按选词：单指按住 420ms 位移 <10px → 程序化选中按点处的词（Intl.Segmenter 分词，
+    // 中文也能选出词组），DOM 选区一出系统自动配手柄，可继续拖动扩选。仅 iOS 启用，不动安卓原生选词。
+    const _isIOSSel = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (_isIOSSel && _coarsePtr) {
+      let _lpTimer = null, _lpStart = null, _lpSel = null;
+      const _lpCancel = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
+      const _wordRangeAt = (x, y) => {
+        const view = _editor && _editor.view;
+        if (!view) return null;
+        const hit = view.posAtCoords({ left: x, top: y });
+        if (!hit) return null;
+        const $pos = view.state.doc.resolve(hit.pos);
+        if (!$pos.parent.isTextblock) return null;
+        // 非文本叶子（公式/图片等）占 1 位，用占位符对齐"字符偏移 ↔ 文档位置"
+        const text = $pos.parent.textBetween(0, $pos.parent.content.size, '\u0000', '\u0000');
+        let off = Math.min($pos.parentOffset, Math.max(0, text.length - 1));
+        if (!text.length) return null;
+        let from = -1, to = -1;
+        if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+          try {
+            for (const s of new Intl.Segmenter('zh-Hans', { granularity: 'word' }).segment(text)) {
+              if (off >= s.index && off < s.index + s.segment.length) {
+                if (s.segment.trim() && s.segment !== '\u0000') { from = s.index; to = s.index + s.segment.length; }
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+        if (from < 0) { // 兜底：按"字母数字/汉字"连续段向两侧扩
+          const isW = (ch) => /[A-Za-z0-9_\u4e00-\u9fff]/.test(ch);
+          if (!isW(text[off])) return null;
+          from = off; to = off + 1;
+          while (from > 0 && isW(text[from - 1])) from--;
+          while (to < text.length && isW(text[to])) to++;
+        }
+        const base = $pos.start();
+        return { from: base + from, to: base + to };
+      };
+      editorEl.addEventListener('touchstart', (e) => {
+        _lpCancel(); _lpSel = null;
+        if (e.touches.length !== 1 || e.target.closest('img')) return;
+        const t = e.touches[0];
+        _lpStart = { x: t.clientX, y: t.clientY };
+        _lpTimer = setTimeout(() => {
+          _lpTimer = null;
+          const r = _wordRangeAt(_lpStart.x, _lpStart.y);
+          if (!r || r.to <= r.from) return;
+          _lpSel = r;
+          try { _editor.chain().focus().setTextSelection(r).run(); } catch (_) {}
+        }, 420);
+      }, { passive: true });
+      editorEl.addEventListener('touchmove', (e) => {
+        if (!_lpTimer || !_lpStart) return;
+        const t = e.touches[0];
+        if (Math.hypot(t.clientX - _lpStart.x, t.clientY - _lpStart.y) > 10) _lpCancel();
+      }, { passive: true });
+      editorEl.addEventListener('touchend', (e) => {
+        _lpCancel();
+        if (_lpSel) {
+          // 松手时压掉 iOS 默认的"把光标挪到按点"——否则刚做出的选区立刻被清掉
+          if (e.cancelable) e.preventDefault();
+          const r = _lpSel; _lpSel = null;
+          setTimeout(() => { try { _editor.chain().setTextSelection(r).run(); } catch (_) {} }, 0);
+        }
+      }, { passive: false });
+      editorEl.addEventListener('touchcancel', () => { _lpCancel(); _lpSel = null; }, { passive: true });
+    }
 
     _editor.on('selectionUpdate', () => {
       requestAnimationFrame(syncImageResizeOverlay);

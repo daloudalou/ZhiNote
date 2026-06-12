@@ -513,12 +513,72 @@
       }
       const hasData = !!manifest || (propfindOk && noteCount > 0);
       if (!hasData) return { hasData: false };
-      return { hasData: true, noteCount, updatedAt: (manifest && manifest.updatedAt) || 0 };
+      // 口令试解（可选）：用指定口令试解 1-2 篇云端笔记，告知调用方"这把口令解不解得开云端数据"。
+      // keyMatch: true=解得开 / false=解不开 / null=无法判断（无笔记、明文存储或网络问题）
+      let keyMatch = null;
+      if (config.testCryptoPass !== undefined && manifest && manifest.notes) {
+        const ids = Object.keys(manifest.notes).filter(id => !(manifest.deleted && manifest.deleted[id]));
+        for (const id of ids.slice(0, 2)) {
+          try {
+            const resp = await webdavGet(`notes/${id}.json`, { allow404: true });
+            if (!resp) continue;
+            const text = (await resp.text()).trim();
+            if (!text || text.startsWith('<')) continue;   // 限流/拦截页：换一篇
+            if (text.startsWith('{')) break;               // 明文存储（未加密）：无口令可言
+            const pass = (config.testCryptoPass || '').trim();
+            const keyP = pass ? _deriveAesKey('zhinote-user:' + pass) : _getAesKey();
+            try { await _aesDecryptWith(keyP, text); keyMatch = true; }
+            catch (_) { keyMatch = false; }
+            break;
+          } catch (_) { /* 网络抖动：换下一篇 */ }
+        }
+      }
+      return { hasData: true, noteCount, updatedAt: (manifest && manifest.updatedAt) || 0, keyMatch };
     } catch (e) {
       return { hasData: false, error: e.message };
     } finally {
       _config = prev;
       _authFailCount = prevFailCount;
+      _stopped = prevStopped;
+      _syncing = false;
+      _drainPending();
+    }
+  }
+
+  /** 用指定口令试解云端现有笔记（沿用当前已保存的连接配置，与 probeCloudState 的临时配置不同）。
+   *  仅改口令的保存流程用它判断方向：解得开=口令对上直接生效；解不开=输错或要换锁。
+   *  返回 { hasData, keyMatch }：keyMatch true=解得开 / false=解不开 / null=无法判断（明文存储/网络问题） */
+  async function checkCloudKey(testPass) {
+    if (!_config) { const ok = await loadConfig(); if (!ok) return { hasData: false, keyMatch: null }; }
+    if (_syncing) await _waitSyncDone();
+    _syncing = true;
+    const prevStopped = _stopped;
+    _stopped = false;
+    try {
+      const manifest = await webdavGetJson('manifest.json', { allow404: true });
+      const ids = manifest && manifest.notes
+        ? Object.keys(manifest.notes).filter(id => !(manifest.deleted && manifest.deleted[id]))
+        : [];
+      if (!ids.length) return { hasData: false, keyMatch: null };
+      let keyMatch = null;
+      for (const id of ids.slice(0, 2)) {
+        try {
+          const resp = await webdavGet(`notes/${id}.json`, { allow404: true });
+          if (!resp) continue;
+          const text = (await resp.text()).trim();
+          if (!text || text.startsWith('<')) continue;  // 限流/拦截页：换一篇
+          if (text.startsWith('{')) break;              // 明文存储（未加密）：无口令可言
+          const pass = (testPass || '').trim();
+          const keyP = pass ? _deriveAesKey('zhinote-user:' + pass) : _getAesKey();
+          try { await _aesDecryptWith(keyP, text); keyMatch = true; }
+          catch (_) { keyMatch = false; }
+          break;
+        } catch (_) { /* 网络抖动：换下一篇 */ }
+      }
+      return { hasData: true, keyMatch };
+    } catch (e) {
+      return { hasData: false, keyMatch: null, error: e.message };
+    } finally {
       _stopped = prevStopped;
       _syncing = false;
       _drainPending();
@@ -785,6 +845,9 @@
     };
     _applyProviderTuning(_config.provider);
     _ensureClientId();
+    // 重载配置（含改口令后）即解除"口令不一致"上传闸，让新口令重新接受 doGet 检验
+    _decMismatch = false;
+    _decFailRounds = 0;
     return true;
   }
 
@@ -949,6 +1012,25 @@
   let _lastDownloadedIds = new Set();
   let _decFailRounds = 0;        // 连续"整批解密全失败"的轮数（区分口令错 vs 瞬时损坏）
   let _skippedDecryptCount = 0;  // 本轮因解密失败被跳过的笔记数（>0 时不记录 manifest 基准，下轮重试）
+  let _decMismatch = false;      // 已确认口令与云端不一致：禁止上传笔记正文，防止把另一把钥匙的密文写上云端（混钥污染）
+
+  /** 抽样试解：从 manifest 里挑 1-2 篇"本轮失败集合之外"的笔记试着解密，
+   *  区分「口令真不对」（样本也解不开）和「恰好只拉到旧口令残留密文」（样本解得开）。 */
+  async function _sampleKeyCheck(manifest, excludeIds) {
+    const ids = Object.keys(manifest.notes || {}).filter(id =>
+      !excludeIds.has(id) && !(manifest.deleted && manifest.deleted[id]));
+    for (const id of ids.slice(0, 2)) {
+      try {
+        const n = await webdavGetNote(`notes/${id}.json`, { allow404: true });
+        if (n) return true;
+      } catch (e) {
+        if (e instanceof RateLimitError) throw e;
+        if (e.decryptFail) return false;
+        // transient / parseFail：换下一篇试
+      }
+    }
+    return null; // 没有可供判断的样本
+  }
 
   async function _applyRemoteChanges(manifest, opts = {}) {
     const adoptMode = !!opts.adoptMode;
@@ -982,22 +1064,54 @@
       });
       const rl = errors.find(e => e.error instanceof RateLimitError);
       if (rl) throw rl.error; // 命中限流：整体上抛，让上层退避并降档
-      // 解密失败分两种（都绝不重传覆盖云端）：
-      // ① 整批全军覆没 → 大概率是加密口令不一致，如实报错让用户核对；
-      // ② 个别失败、其余正常 → 多半是读到了别的设备写到一半的密文（瞬时损坏），
-      //    静默跳过这几篇且本轮不记录 manifest 基准，下轮自动重试，不再误弹"密码不一致"。
+      // 解密失败的判定与自愈：
+      // ① 本轮有笔记解密成功（或抽样可解）→ 钥匙没问题，失败的是旧口令残留密文（换口令期间
+      //    另一台设备用旧钥上传过）。本地副本不旧于云端的 → 标脏用当前钥重新加密上传（自愈）；
+      //    本地没有/更旧的 → 跳过且不记 manifest 基准，下轮重试，不弹"口令不一致"。
+      // ② 全军覆没且抽样也解不开 → 口令真不一致：报错让用户核对，并锁死上传（防止把本设备
+      //    这把钥匙的密文写上云端，造成新旧混钥、所有设备反复误报——曾发生）。
       const dec = errors.filter(e => e.error && e.error.decryptFail);
       if (dec.length) {
-        const allFailed = _fetched.size === 0;
-        _decFailRounds = allFailed ? _decFailRounds + 1 : 0;
-        if (allFailed && (dec.length >= 2 || _decFailRounds >= 2)) {
-          throw new Error('云端笔记解密失败：本设备的同步加密口令与云端数据不一致，请到 设置 → 同步 核对口令');
+        let keyOk = _fetched.size > 0;
+        if (!keyOk) {
+          const failedIds = new Set(dec.map(d => d.item));
+          const sample = await _sampleKeyCheck(manifest, failedIds);
+          keyOk = sample === true;
+          if (sample === null) {
+            // 无样本可判（云端几乎只剩这些失败文件）：保守按口令不一致处理
+            keyOk = false;
+          }
         }
-        _skippedDecryptCount = dec.length;
-        console.warn(`[webdav] ${dec.length} 篇笔记解密失败，本轮跳过稍后重试（多为另一设备写入中读到半截密文，并非口令问题）:`,
-          dec.map(d => `${d.item}: ${d.error.message}`));
+        if (!keyOk) {
+          _decFailRounds += 1;
+          if (dec.length >= 2 || _decFailRounds >= 2) {
+            _decMismatch = true;
+            throw new Error('云端笔记解密失败：本设备的同步加密口令与云端数据不一致，请到 设置 → 同步 核对口令（核对一致前已暂停上传，避免污染云端）');
+          }
+          _skippedDecryptCount = dec.length;
+        } else {
+          _decFailRounds = 0;
+          _decMismatch = false;
+          // 自愈：本地副本不旧于云端记录的 → 用当前钥重新加密上传，逐步洗掉旧钥残留
+          const healIds = dec.map(d => d.item).filter(id => {
+            const ln = data.notes[id];
+            if (!ln) return false;
+            const lts = new Date(ln.updatedAt || 0).getTime();
+            const rts = (manifest.notes[id] && manifest.notes[id].updatedAt) || 0;
+            return lts >= rts;
+          });
+          if (healIds.length && window.storage.markNotesDirtyByIds) {
+            window.storage.markNotesDirtyByIds(healIds);
+            setTimeout(() => { try { schedulePut(); } catch (_) {} }, 2000);
+          }
+          const rest = dec.length - healIds.length;
+          _skippedDecryptCount = rest;
+          console.warn(`[webdav] ${dec.length} 篇为旧口令残留密文（当前口令已验证可解其余笔记）：`
+            + `${healIds.length} 篇用本地副本重新加密上传自愈${rest ? `，${rest} 篇本地无副本/较旧，跳过待其作者设备自愈` : ''}`);
+        }
       } else {
         _decFailRounds = 0;
+        _decMismatch = false;
       }
       // 瞬时错误（限流页/超时等）：上抛让整轮稍后重试，避免这些笔记被悄悄跳过
       const tr = errors.find(e => e.error && e.error.transient);
@@ -1277,6 +1391,15 @@
   // strict 含义同 doGet：手动同步时错误原样上抛
   async function doPut({ force = false, strict = false } = {}) {
     if (!_config || _stopped) return;
+    // 口令不一致闸：确认与云端口令不符后绝不上传笔记正文——否则会把本设备这把钥匙的密文
+    // 写上云端，造成新旧混钥，所有设备从此反复误报"口令不一致"且无法自愈（曾发生）。
+    // 改动留在本地脏集合里，口令核对一致（doGet 成功）后自动恢复上传。
+    if (_decMismatch) {
+      console.warn('[webdav] 加密口令与云端不一致，暂停上传（待口令核对一致后自动恢复）');
+      _emit('cloud-sync', { type: 'webdav-sync-error', error: '加密口令与云端不一致，已暂停上传' });
+      if (strict) throw new Error('加密口令与云端数据不一致，已暂停上传：请到 设置 → 同步 核对口令');
+      return;
+    }
     if (_syncing) { _pendingPut = true; return; }
     if (!_hasDirtyData() && !force) return;
     if (_paused && !force) return;
@@ -2184,6 +2307,9 @@
   async function mirrorLocalToCloud(opts) {
     const dryRun = !!(opts && opts.dryRun);
     if (!_config) { const ok = await loadConfig(); if (!ok) return { ok: false, error: '同步未配置' }; }
+    // 镜像覆盖是用户主动发起的修复动作，允许在 stop() 之后、startAutoSync 之前执行
+    // （切换/改口令流程先完成重加密再启动自动同步，避免轮询用新口令拉旧口令云端而误报）
+    _stopped = false;
     try {
       if (_syncing) await _waitSyncDone();
       const data = window.storage.getAll();
@@ -2252,6 +2378,8 @@
 
       // 把本地全部标脏并上传，确保云端拿到本地完整内容。
       // strict：上传失败必须上抛——否则 doPut 内部吞掉错误后这里会误报 ok，用户以为覆盖成功
+      _decMismatch = false; // 镜像覆盖 = 用当前口令整体重新加密云端，正是"口令不一致"的修复动作，解除上传闸
+      _decFailRounds = 0;
       if (window.storage.markAllNotesDirty) window.storage.markAllNotesDirty();
       await doPut({ force: true, strict: true });
       return { ok: true, removed };
@@ -2289,6 +2417,7 @@
   window.webdavSync = {
     testConnection,
     probeCloudState,
+    checkCloudKey,
     resolveProxy,
     loadConfig,
     startAutoSync,

@@ -4274,8 +4274,13 @@ body.theme-gruvbox .md-ctx-sep {
     max-width: calc(100vw - 12px);
     z-index: 10004;
   }
+  /* 浮动条出现时顶替键盘工具条的位置（同槽互斥，键盘上方永远只有一条） */
   body:has(#kb-toolbar.visible) #bubble-menu {
-    bottom: calc(var(--kb-gap, 0px) + 58px) !important;
+    bottom: calc(var(--kb-gap, 0px) + 6px) !important;
+  }
+  body.md-bubble-open #kb-toolbar {
+    opacity: 0 !important;
+    pointer-events: none !important;
   }
   /* 吸附在底部 → 下拉一律向上弹，否则伸进键盘里 */
   #bubble-menu .bubble-heading-dropdown, #bubble-menu .bubble-code-dropdown, #bubble-menu .bubble-list-dropdown,
@@ -4587,7 +4592,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = '20260612t84b-touch-polish';
+    window.__MD_VER__ = '20260612t86-sync-hardening';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -72342,6 +72347,9 @@ const storage = (() => {
   }
   function markAllNotesDirty() {
     for (const id in _data.notes) _dirtyNoteIds.add(id);
+    // 回收站一并标脏：换加密口令后「上传覆盖云端」要把 trash/ 也重新加密，
+    // 否则云端回收站永远留在旧钥上（扫描恢复/还原时解不开，还可能触发口令误报）
+    for (const id in (_data.trash || {})) _dirtyNoteIds.add(id);
     _globalDirty = true;
   }
 
@@ -73191,12 +73199,72 @@ window.storage = storage;
       }
       const hasData = !!manifest || (propfindOk && noteCount > 0);
       if (!hasData) return { hasData: false };
-      return { hasData: true, noteCount, updatedAt: (manifest && manifest.updatedAt) || 0 };
+      // 口令试解（可选）：用指定口令试解 1-2 篇云端笔记，告知调用方"这把口令解不解得开云端数据"。
+      // keyMatch: true=解得开 / false=解不开 / null=无法判断（无笔记、明文存储或网络问题）
+      let keyMatch = null;
+      if (config.testCryptoPass !== undefined && manifest && manifest.notes) {
+        const ids = Object.keys(manifest.notes).filter(id => !(manifest.deleted && manifest.deleted[id]));
+        for (const id of ids.slice(0, 2)) {
+          try {
+            const resp = await webdavGet(`notes/${id}.json`, { allow404: true });
+            if (!resp) continue;
+            const text = (await resp.text()).trim();
+            if (!text || text.startsWith('<')) continue;   // 限流/拦截页：换一篇
+            if (text.startsWith('{')) break;               // 明文存储（未加密）：无口令可言
+            const pass = (config.testCryptoPass || '').trim();
+            const keyP = pass ? _deriveAesKey('zhinote-user:' + pass) : _getAesKey();
+            try { await _aesDecryptWith(keyP, text); keyMatch = true; }
+            catch (_) { keyMatch = false; }
+            break;
+          } catch (_) { /* 网络抖动：换下一篇 */ }
+        }
+      }
+      return { hasData: true, noteCount, updatedAt: (manifest && manifest.updatedAt) || 0, keyMatch };
     } catch (e) {
       return { hasData: false, error: e.message };
     } finally {
       _config = prev;
       _authFailCount = prevFailCount;
+      _stopped = prevStopped;
+      _syncing = false;
+      _drainPending();
+    }
+  }
+
+  /** 用指定口令试解云端现有笔记（沿用当前已保存的连接配置，与 probeCloudState 的临时配置不同）。
+   *  仅改口令的保存流程用它判断方向：解得开=口令对上直接生效；解不开=输错或要换锁。
+   *  返回 { hasData, keyMatch }：keyMatch true=解得开 / false=解不开 / null=无法判断（明文存储/网络问题） */
+  async function checkCloudKey(testPass) {
+    if (!_config) { const ok = await loadConfig(); if (!ok) return { hasData: false, keyMatch: null }; }
+    if (_syncing) await _waitSyncDone();
+    _syncing = true;
+    const prevStopped = _stopped;
+    _stopped = false;
+    try {
+      const manifest = await webdavGetJson('manifest.json', { allow404: true });
+      const ids = manifest && manifest.notes
+        ? Object.keys(manifest.notes).filter(id => !(manifest.deleted && manifest.deleted[id]))
+        : [];
+      if (!ids.length) return { hasData: false, keyMatch: null };
+      let keyMatch = null;
+      for (const id of ids.slice(0, 2)) {
+        try {
+          const resp = await webdavGet(`notes/${id}.json`, { allow404: true });
+          if (!resp) continue;
+          const text = (await resp.text()).trim();
+          if (!text || text.startsWith('<')) continue;  // 限流/拦截页：换一篇
+          if (text.startsWith('{')) break;              // 明文存储（未加密）：无口令可言
+          const pass = (testPass || '').trim();
+          const keyP = pass ? _deriveAesKey('zhinote-user:' + pass) : _getAesKey();
+          try { await _aesDecryptWith(keyP, text); keyMatch = true; }
+          catch (_) { keyMatch = false; }
+          break;
+        } catch (_) { /* 网络抖动：换下一篇 */ }
+      }
+      return { hasData: true, keyMatch };
+    } catch (e) {
+      return { hasData: false, keyMatch: null, error: e.message };
+    } finally {
       _stopped = prevStopped;
       _syncing = false;
       _drainPending();
@@ -73463,6 +73531,9 @@ window.storage = storage;
     };
     _applyProviderTuning(_config.provider);
     _ensureClientId();
+    // 重载配置（含改口令后）即解除"口令不一致"上传闸，让新口令重新接受 doGet 检验
+    _decMismatch = false;
+    _decFailRounds = 0;
     return true;
   }
 
@@ -73627,6 +73698,25 @@ window.storage = storage;
   let _lastDownloadedIds = new Set();
   let _decFailRounds = 0;        // 连续"整批解密全失败"的轮数（区分口令错 vs 瞬时损坏）
   let _skippedDecryptCount = 0;  // 本轮因解密失败被跳过的笔记数（>0 时不记录 manifest 基准，下轮重试）
+  let _decMismatch = false;      // 已确认口令与云端不一致：禁止上传笔记正文，防止把另一把钥匙的密文写上云端（混钥污染）
+
+  /** 抽样试解：从 manifest 里挑 1-2 篇"本轮失败集合之外"的笔记试着解密，
+   *  区分「口令真不对」（样本也解不开）和「恰好只拉到旧口令残留密文」（样本解得开）。 */
+  async function _sampleKeyCheck(manifest, excludeIds) {
+    const ids = Object.keys(manifest.notes || {}).filter(id =>
+      !excludeIds.has(id) && !(manifest.deleted && manifest.deleted[id]));
+    for (const id of ids.slice(0, 2)) {
+      try {
+        const n = await webdavGetNote(`notes/${id}.json`, { allow404: true });
+        if (n) return true;
+      } catch (e) {
+        if (e instanceof RateLimitError) throw e;
+        if (e.decryptFail) return false;
+        // transient / parseFail：换下一篇试
+      }
+    }
+    return null; // 没有可供判断的样本
+  }
 
   async function _applyRemoteChanges(manifest, opts = {}) {
     const adoptMode = !!opts.adoptMode;
@@ -73660,22 +73750,54 @@ window.storage = storage;
       });
       const rl = errors.find(e => e.error instanceof RateLimitError);
       if (rl) throw rl.error; // 命中限流：整体上抛，让上层退避并降档
-      // 解密失败分两种（都绝不重传覆盖云端）：
-      // ① 整批全军覆没 → 大概率是加密口令不一致，如实报错让用户核对；
-      // ② 个别失败、其余正常 → 多半是读到了别的设备写到一半的密文（瞬时损坏），
-      //    静默跳过这几篇且本轮不记录 manifest 基准，下轮自动重试，不再误弹"密码不一致"。
+      // 解密失败的判定与自愈：
+      // ① 本轮有笔记解密成功（或抽样可解）→ 钥匙没问题，失败的是旧口令残留密文（换口令期间
+      //    另一台设备用旧钥上传过）。本地副本不旧于云端的 → 标脏用当前钥重新加密上传（自愈）；
+      //    本地没有/更旧的 → 跳过且不记 manifest 基准，下轮重试，不弹"口令不一致"。
+      // ② 全军覆没且抽样也解不开 → 口令真不一致：报错让用户核对，并锁死上传（防止把本设备
+      //    这把钥匙的密文写上云端，造成新旧混钥、所有设备反复误报——曾发生）。
       const dec = errors.filter(e => e.error && e.error.decryptFail);
       if (dec.length) {
-        const allFailed = _fetched.size === 0;
-        _decFailRounds = allFailed ? _decFailRounds + 1 : 0;
-        if (allFailed && (dec.length >= 2 || _decFailRounds >= 2)) {
-          throw new Error('云端笔记解密失败：本设备的同步加密口令与云端数据不一致，请到 设置 → 同步 核对口令');
+        let keyOk = _fetched.size > 0;
+        if (!keyOk) {
+          const failedIds = new Set(dec.map(d => d.item));
+          const sample = await _sampleKeyCheck(manifest, failedIds);
+          keyOk = sample === true;
+          if (sample === null) {
+            // 无样本可判（云端几乎只剩这些失败文件）：保守按口令不一致处理
+            keyOk = false;
+          }
         }
-        _skippedDecryptCount = dec.length;
-        console.warn(`[webdav] ${dec.length} 篇笔记解密失败，本轮跳过稍后重试（多为另一设备写入中读到半截密文，并非口令问题）:`,
-          dec.map(d => `${d.item}: ${d.error.message}`));
+        if (!keyOk) {
+          _decFailRounds += 1;
+          if (dec.length >= 2 || _decFailRounds >= 2) {
+            _decMismatch = true;
+            throw new Error('云端笔记解密失败：本设备的同步加密口令与云端数据不一致，请到 设置 → 同步 核对口令（核对一致前已暂停上传，避免污染云端）');
+          }
+          _skippedDecryptCount = dec.length;
+        } else {
+          _decFailRounds = 0;
+          _decMismatch = false;
+          // 自愈：本地副本不旧于云端记录的 → 用当前钥重新加密上传，逐步洗掉旧钥残留
+          const healIds = dec.map(d => d.item).filter(id => {
+            const ln = data.notes[id];
+            if (!ln) return false;
+            const lts = new Date(ln.updatedAt || 0).getTime();
+            const rts = (manifest.notes[id] && manifest.notes[id].updatedAt) || 0;
+            return lts >= rts;
+          });
+          if (healIds.length && window.storage.markNotesDirtyByIds) {
+            window.storage.markNotesDirtyByIds(healIds);
+            setTimeout(() => { try { schedulePut(); } catch (_) {} }, 2000);
+          }
+          const rest = dec.length - healIds.length;
+          _skippedDecryptCount = rest;
+          console.warn(`[webdav] ${dec.length} 篇为旧口令残留密文（当前口令已验证可解其余笔记）：`
+            + `${healIds.length} 篇用本地副本重新加密上传自愈${rest ? `，${rest} 篇本地无副本/较旧，跳过待其作者设备自愈` : ''}`);
+        }
       } else {
         _decFailRounds = 0;
+        _decMismatch = false;
       }
       // 瞬时错误（限流页/超时等）：上抛让整轮稍后重试，避免这些笔记被悄悄跳过
       const tr = errors.find(e => e.error && e.error.transient);
@@ -73955,6 +74077,15 @@ window.storage = storage;
   // strict 含义同 doGet：手动同步时错误原样上抛
   async function doPut({ force = false, strict = false } = {}) {
     if (!_config || _stopped) return;
+    // 口令不一致闸：确认与云端口令不符后绝不上传笔记正文——否则会把本设备这把钥匙的密文
+    // 写上云端，造成新旧混钥，所有设备从此反复误报"口令不一致"且无法自愈（曾发生）。
+    // 改动留在本地脏集合里，口令核对一致（doGet 成功）后自动恢复上传。
+    if (_decMismatch) {
+      console.warn('[webdav] 加密口令与云端不一致，暂停上传（待口令核对一致后自动恢复）');
+      _emit('cloud-sync', { type: 'webdav-sync-error', error: '加密口令与云端不一致，已暂停上传' });
+      if (strict) throw new Error('加密口令与云端数据不一致，已暂停上传：请到 设置 → 同步 核对口令');
+      return;
+    }
     if (_syncing) { _pendingPut = true; return; }
     if (!_hasDirtyData() && !force) return;
     if (_paused && !force) return;
@@ -74862,6 +74993,9 @@ window.storage = storage;
   async function mirrorLocalToCloud(opts) {
     const dryRun = !!(opts && opts.dryRun);
     if (!_config) { const ok = await loadConfig(); if (!ok) return { ok: false, error: '同步未配置' }; }
+    // 镜像覆盖是用户主动发起的修复动作，允许在 stop() 之后、startAutoSync 之前执行
+    // （切换/改口令流程先完成重加密再启动自动同步，避免轮询用新口令拉旧口令云端而误报）
+    _stopped = false;
     try {
       if (_syncing) await _waitSyncDone();
       const data = window.storage.getAll();
@@ -74930,6 +75064,8 @@ window.storage = storage;
 
       // 把本地全部标脏并上传，确保云端拿到本地完整内容。
       // strict：上传失败必须上抛——否则 doPut 内部吞掉错误后这里会误报 ok，用户以为覆盖成功
+      _decMismatch = false; // 镜像覆盖 = 用当前口令整体重新加密云端，正是"口令不一致"的修复动作，解除上传闸
+      _decFailRounds = 0;
       if (window.storage.markAllNotesDirty) window.storage.markAllNotesDirty();
       await doPut({ force: true, strict: true });
       return { ok: true, removed };
@@ -74967,6 +75103,7 @@ window.storage = storage;
   window.webdavSync = {
     testConnection,
     probeCloudState,
+    checkCloudKey,
     resolveProxy,
     loadConfig,
     startAutoSync,
@@ -81024,6 +81161,15 @@ const editor = (() => {
       if (bubbleMenuEl) bubbleMenuEl.classList.toggle('md-bubble-hidden', !!v);
     };
     window.isBubbleSuppressed = () => _bubbleSuppressed;
+    // 触屏：浮动条与键盘工具条同槽互斥——浮动条（选中文字时）出现就藏键盘工具条，
+    // 键盘上方永远只有一条。BubbleMenu 的显示/隐藏 = 挂载/摘除 DOM，用 MutationObserver 跟踪。
+    if (_coarsePtr) {
+      const updBubbleOpen = () => {
+        const open = !!bubbleMenuEl && bubbleMenuEl.isConnected && !bubbleMenuEl.classList.contains('md-bubble-hidden');
+        document.body.classList.toggle('md-bubble-open', open);
+      };
+      new MutationObserver(updBubbleOpen).observe(document.body, { childList: true, subtree: true });
+    }
     editorEl.addEventListener('mouseup', (e) => {
       if (!_bubbleLocked) _lastMouseUp = { x: e.clientX, y: e.clientY };
     });
@@ -81688,6 +81834,76 @@ const editor = (() => {
         _imgTap = { t: now, x: t.clientX, y: t.clientY };
       }
     }, { passive: false });
+
+    // iOS：聚焦编辑区里长按的原生行为是"放大镜移光标"而非选词（安卓是选词），键盘弹出后几乎没法选字。
+    // 自实现长按选词：单指按住 420ms 位移 <10px → 程序化选中按点处的词（Intl.Segmenter 分词，
+    // 中文也能选出词组），DOM 选区一出系统自动配手柄，可继续拖动扩选。仅 iOS 启用，不动安卓原生选词。
+    const _isIOSSel = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (_isIOSSel && _coarsePtr) {
+      let _lpTimer = null, _lpStart = null, _lpSel = null;
+      const _lpCancel = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
+      const _wordRangeAt = (x, y) => {
+        const view = _editor && _editor.view;
+        if (!view) return null;
+        const hit = view.posAtCoords({ left: x, top: y });
+        if (!hit) return null;
+        const $pos = view.state.doc.resolve(hit.pos);
+        if (!$pos.parent.isTextblock) return null;
+        // 非文本叶子（公式/图片等）占 1 位，用占位符对齐"字符偏移 ↔ 文档位置"
+        const text = $pos.parent.textBetween(0, $pos.parent.content.size, '\u0000', '\u0000');
+        let off = Math.min($pos.parentOffset, Math.max(0, text.length - 1));
+        if (!text.length) return null;
+        let from = -1, to = -1;
+        if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+          try {
+            for (const s of new Intl.Segmenter('zh-Hans', { granularity: 'word' }).segment(text)) {
+              if (off >= s.index && off < s.index + s.segment.length) {
+                if (s.segment.trim() && s.segment !== '\u0000') { from = s.index; to = s.index + s.segment.length; }
+                break;
+              }
+            }
+          } catch (_) {}
+        }
+        if (from < 0) { // 兜底：按"字母数字/汉字"连续段向两侧扩
+          const isW = (ch) => /[A-Za-z0-9_\u4e00-\u9fff]/.test(ch);
+          if (!isW(text[off])) return null;
+          from = off; to = off + 1;
+          while (from > 0 && isW(text[from - 1])) from--;
+          while (to < text.length && isW(text[to])) to++;
+        }
+        const base = $pos.start();
+        return { from: base + from, to: base + to };
+      };
+      editorEl.addEventListener('touchstart', (e) => {
+        _lpCancel(); _lpSel = null;
+        if (e.touches.length !== 1 || e.target.closest('img')) return;
+        const t = e.touches[0];
+        _lpStart = { x: t.clientX, y: t.clientY };
+        _lpTimer = setTimeout(() => {
+          _lpTimer = null;
+          const r = _wordRangeAt(_lpStart.x, _lpStart.y);
+          if (!r || r.to <= r.from) return;
+          _lpSel = r;
+          try { _editor.chain().focus().setTextSelection(r).run(); } catch (_) {}
+        }, 420);
+      }, { passive: true });
+      editorEl.addEventListener('touchmove', (e) => {
+        if (!_lpTimer || !_lpStart) return;
+        const t = e.touches[0];
+        if (Math.hypot(t.clientX - _lpStart.x, t.clientY - _lpStart.y) > 10) _lpCancel();
+      }, { passive: true });
+      editorEl.addEventListener('touchend', (e) => {
+        _lpCancel();
+        if (_lpSel) {
+          // 松手时压掉 iOS 默认的"把光标挪到按点"——否则刚做出的选区立刻被清掉
+          if (e.cancelable) e.preventDefault();
+          const r = _lpSel; _lpSel = null;
+          setTimeout(() => { try { _editor.chain().setTextSelection(r).run(); } catch (_) {} }, 0);
+        }
+      }, { passive: false });
+      editorEl.addEventListener('touchcancel', () => { _lpCancel(); _lpSel = null; }, { passive: true });
+    }
 
     _editor.on('selectionUpdate', () => {
       requestAnimationFrame(syncImageResizeOverlay);
@@ -84793,13 +85009,19 @@ window.openRecoverDialog = openRecoverDialog;
 /** 同步策略弹窗：立即弹出（云端数据量后台探测、原地更新），不让用户对着无反应的界面干等。
  *  probePromise 为 probeCloudState 的进行中 Promise；探测完成前「下载云端 / 上传本地」禁用（方向选择依赖云端数据量），取消随时可点。
  *  两边都为空时自动返回 'switch'（无需用户选择）。 */
-function _askSyncStrategy(providerName, localCount, probePromise) {
+function _askSyncStrategy(providerName, localCount, probePromise, opts = {}) {
+  const passChanged = !!opts.passChanged;
   return new Promise((resolve) => {
     const body = document.createElement('div');
     body.style.cssText = 'padding:4px 0;color:var(--text);font-size:14px;line-height:1.7;';
     const localDesc = localCount > 0 ? `本地有 <b>${localCount}</b> 篇笔记` : `本地暂无笔记`;
+    const passLine = passChanged
+      ? `<span style="color:var(--text-secondary);font-size:13px;">🔑 你修改了加密口令：选「上传本地」会用新口令<b>重新加密整个云端</b>（其它设备随后需改成同一口令）。</span><br>`
+      : '';
     body.innerHTML = `即将切换到 <b>${providerName}</b>：${localDesc}。<br>`
-      + `<span id="strategy-cloud-line" style="color:var(--text-tertiary);">⏳ 正在检测云端数据…</span><br><br>`
+      + `<span id="strategy-cloud-line" style="color:var(--text-tertiary);">⏳ 正在检测云端数据…</span><br>`
+      + `<span id="strategy-key-line"></span>`
+      + passLine + `<br>`
       + `<span style="color:var(--text-tertiary);font-size:13px;">⚠ 选择任一方向将覆盖另一方数据，建议先通过"导出"功能备份；点「取消」则不切换、保持当前同步不变。</span><br><br>`
       + `请选择同步策略：`;
     let done = false;
@@ -84833,8 +85055,42 @@ function _askSyncStrategy(providerName, localCount, probePromise) {
         line.style.color = '';
         line.innerHTML = cloudCount > 0 ? `云端已有 <b>${cloudCount}</b> 篇笔记${timeInfo}` : '云端暂无笔记';
       }
-      if (dlBtn) dlBtn.disabled = (cloudCount === 0); // 云端为空时无"下载"可言
+      // 口令试解结果：解不开云端数据时「下载云端」必然失败，直接禁用并说明原因
+      const keyLine = document.getElementById('strategy-key-line');
+      const keyMismatch = cloudCount > 0 && cloudState && cloudState.keyMatch === false;
+      if (keyLine) {
+        if (keyMismatch) {
+          keyLine.innerHTML = `<span style="color:var(--danger,#d05);font-size:13px;">🔒 当前口令<b>解不开</b>云端现有数据——`
+            + (passChanged ? `请选「上传本地」重新加密云端；若想沿用云端数据，请先取消并改回原口令。` : `请检查加密口令是否与上传设备一致；强行「上传本地」会用本口令覆盖云端。`)
+            + `</span><br>`;
+        } else if (cloudState && cloudState.keyMatch === true) {
+          keyLine.innerHTML = `<span style="color:var(--text-tertiary);font-size:13px;">🔓 当前口令可以解开云端数据。</span><br>`;
+        }
+      }
+      if (dlBtn) dlBtn.disabled = (cloudCount === 0) || keyMismatch; // 云端为空/解不开时无"下载"可言
       if (upBtn) upBtn.disabled = false;
+    });
+  });
+}
+
+/** 仅改口令且新口令解不开云端时的确认：区分"输错了"和"确实要换锁"。返回是否重新加密云端。 */
+function _confirmReencryptCloud() {
+  return new Promise((resolve) => {
+    const body = document.createElement('div');
+    body.style.cssText = 'padding:4px 0;color:var(--text);font-size:14px;line-height:1.7;';
+    body.innerHTML = '这个口令<b>解不开云端现有笔记</b>。<br><br>'
+      + '• 如果你是想输入<b>已有口令</b>（其它设备上设置过的）：多半是<b>输错了</b>，请返回检查重输；<br>'
+      + '• 如果你是想<b>更换新口令</b>：确认后会用它把云端全部笔记重新加密，'
+      + '<b>其它设备之后必须改成同一口令</b>才能继续同步。';
+    let done = false;
+    openModal({
+      title: '口令解不开云端数据',
+      body,
+      footer: [
+        { label: '返回检查', class: 'secondary-btn', onClick: () => { done = true; closeModal(); resolve(false); } },
+        { label: '更换口令并重新加密云端', class: 'primary-btn', onClick: () => { done = true; closeModal(); resolve(true); } },
+      ],
+      onClose: () => { if (!done) resolve(false); },
     });
   });
 }
@@ -85378,11 +85634,11 @@ function setupMobileKbToolbar() {
         // 不处理的话正文滚动区下半截藏在键盘后面，光标一到下方就被盖住。
         document.documentElement.style.setProperty('--vv-h', Math.round(vv.height) + 'px');
         document.body.classList.toggle('kb-open', gap > 60);
-        // 防 Safari 把布局视口顶上去造成整体错位：键盘在场时纠正；
-        // 键盘收起后（gap≈0）也要清残留滚动，否则顶栏/侧栏图标整体偏移跑出屏幕。
+        // 防 Safari 把布局视口顶上去造成整体错位：我们是全屏应用，布局视口滚动永远应该是 0，
+        // 任何残留滚动（键盘、地址栏伸缩等任意来源）都立即归零，否则顶栏/侧栏图标整体偏移跑出屏幕。
         // 但手指还按着时不纠正——iOS 长按选字过程中系统会微调滚动（放大镜跟随），
         // 这时强行拽回会打断选字手势（曾被反馈"键盘弹出后长按无法选字"）；松手后由 touchend 补一次
-        if (window.scrollY && (gap > 60 || gap <= 1) && !window._mdTouchActive) window.scrollTo(0, 0);
+        if (window.scrollY && !window._mdTouchActive) window.scrollTo(0, 0);
       }
     };
     vv.addEventListener('resize', lift);
@@ -88746,6 +89002,48 @@ function openSettingsModal(initialTab) {
           storage.setSetting('webdavCryptoPass', newCryptoPass);
         }
 
+        // 仅改口令（服务商/地址/账号/密码都没动）：方向是确定的，不弹"上传/下载"策略弹窗——
+        // ① 新口令能解开云端（其它设备已换好锁，这台补口令）→ 直接生效；
+        // ② 解不开 → 要么输错、要么是要给云端换锁：明确确认后才整体重新加密上传；
+        // ③ 云端没数据 → 直接保存。
+        const passOnlyChange = cryptoPassChanged && curSyncMethod === 'webdav' && selectedMethod === curProvider
+          && newUrl === (storage.getSetting('webdavUrl') || '')
+          && newUser === (storage.getSetting('webdavUser') || '')
+          && !(newPass && newPass !== _initialPassValue);
+        if (passOnlyChange) {
+          const oldCryptoPass = storage.getSetting('webdavCryptoPass') || '';
+          try {
+            const res = await window.webdavSync.checkCloudKey(newCryptoPass);
+            if (!res.hasData || res.keyMatch === true) {
+              storage.setSetting('webdavCryptoPass', newCryptoPass);
+              await window.webdavSync.loadConfig(); // 新钥即时生效 + 解除"口令不一致"上传闸
+              toast(res.keyMatch === true ? '加密口令已生效（与云端数据一致）' : '加密口令已保存', 'success');
+            } else {
+              const go = await _confirmReencryptCloud();
+              if (!go) { openSettingsModal('sync'); return; } // 返回检查：不保存口令，重开设置页
+              window.webdavSync.stop(); // 重加密期间不让轮询/上传抢跑
+              storage.setSetting('webdavCryptoPass', newCryptoPass);
+              await window.webdavSync.loadConfig();
+              const r = await window.webdavSync.mirrorLocalToCloud();
+              if (r && r.ok) {
+                toast('已用新口令重新加密云端全部笔记；其它设备请改成同一口令', 'success');
+              } else {
+                // 失败回滚口令：云端若已写入少量新钥文件，旧钥下的"解密自愈"会用本地副本重传洗回来
+                storage.setSetting('webdavCryptoPass', oldCryptoPass);
+                await window.webdavSync.loadConfig();
+                toast('重新加密失败：' + (r ? r.error : '未知错误') + '；口令未更换，请稍后重试', 'error');
+              }
+              await window.webdavSync.startAutoSync();
+            }
+          } catch (e) {
+            toast('口令检查失败：' + _zhSyncError(e?.message || e), 'error');
+            return;
+          }
+          await storage.save({ immediate: true });
+          closeModal();
+          return;
+        }
+
         if (syncChanged) {
         if (selectedMethod === 'none') {
           if (storage.getSetting('syncMethod') !== 'none') {
@@ -88772,8 +89070,9 @@ function openSettingsModal(initialTab) {
             const probePromise = window.webdavSync.probeCloudState({
               url: newUrl, user: newUser, pass: newPass,
               proxy: window.webdavSync.resolveProxy(_readProxySetting()),
+              testCryptoPass: newCryptoPass, // 用（可能是新的）口令试解云端，弹窗据此提示该选哪边
             });
-            const choice = await _askSyncStrategy(providerName, localNoteCount, probePromise);
+            const choice = await _askSyncStrategy(providerName, localNoteCount, probePromise, { passChanged: cryptoPassChanged });
 
             if (choice === 'cancel') {
               // 取消：不切换、不动当前同步。策略弹窗与设置弹窗共用同一 overlay，
@@ -88793,21 +89092,25 @@ function openSettingsModal(initialTab) {
             });
             _draftCache.clear();
             await window.webdavSync.loadConfig();
-            await window.webdavSync.startAutoSync(); // 清掉 switchSyncMethod 里 stop() 置的 _stopped
             _setCloudSyncDot('syncing');
 
             if (choice === 'upload') {
               // 真正的「覆盖云端」：删云端本地已没有的多余笔记 + epoch+1（其它设备对齐），再传本地全部。
+              // 注意顺序：先镜像（重新加密）完成，再 startAutoSync——否则改口令时轮询会抢先
+              // 用新口令去拉旧口令加密的云端，弹出误导性的"口令不一致"。
               const r = await window.webdavSync.mirrorLocalToCloud();
+              await window.webdavSync.startAutoSync(); // 清掉 switchSyncMethod 里 stop() 置的 _stopped
               if (r && r.ok) toast(`已用本地覆盖云端${r.removed ? `，清理了 ${r.removed} 篇云端多余笔记` : ''}`, 'success');
               else toast(`上传失败：${r ? r.error : '未知错误'}`, 'error');
             } else if (choice === 'download') {
+              await window.webdavSync.startAutoSync();
               // 真正的「下载云端覆盖本地」：强制采纳云端为权威，本地多余笔记进「同步留底」后移除。
               try {
                 await window.webdavSync.doGet({ force: true, adopt: true });
                 toast(`已从云端下载并覆盖本地`, 'success');
               } catch (e) { toast(`下载失败：${e.message}`, 'error'); }
             } else {
+              await window.webdavSync.startAutoSync();
               toast(`已保存并切换到 ${providerName} 同步`, 'success');
             }
           } catch (e) {
