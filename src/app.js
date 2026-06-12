@@ -55,7 +55,26 @@ async function bootstrap() {
       document.head.appendChild(link);
     } catch (_) {}
     if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
-      navigator.serviceWorker.register('sw.js').catch(() => {});
+      navigator.serviceWorker.register('sw.js').then((reg) => {
+        // 后台更新提示：缓存优先策略下新版本要"再启动一次"才生效，这里把"再启动一次"
+        // 变成一个可点的提示——新 SW 在后台装好并接管（controllerchange）后，提示一键刷新。
+        // 首次安装（之前没有 controller）不提示。
+        const hadController = !!navigator.serviceWorker.controller;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!hadController) return;
+          if (window.__swReloadPrompted) return;
+          window.__swReloadPrompted = true;
+          const show = () => {
+            try {
+              const el = toast('新版本已在后台更新完成，点击立即启用', 'info', { id: 'sw-updated', duration: 12000 });
+              // 点击 = 立即重载启用新版（toast 自身的点击关闭逻辑先走，稍延迟再刷）
+              if (el) el.addEventListener('click', () => setTimeout(() => location.reload(), 150));
+            } catch (_) { /* toast 未就绪：下次启动自然生效 */ }
+          };
+          // UI 可能还没初始化完，稍等再弹
+          if (document.readyState === 'complete') setTimeout(show, 1500); else window.addEventListener('load', () => setTimeout(show, 1500));
+        });
+      }).catch(() => {});
     }
   }
 

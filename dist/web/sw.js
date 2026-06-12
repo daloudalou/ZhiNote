@@ -8,7 +8,7 @@
  * - 跨域请求（CDN 依赖 / WebDAV / 代理）：完全不拦截，交给浏览器自身的 HTTP 缓存与网络。
  *   网盘数据绝不能被 SW 缓存，否则会读到陈旧的同步状态。
  *
- * v1.0.193 由发布脚本替换为版本号；版本变化 → 缓存名变化 → 旧缓存在 activate 时清除。
+ * v1.0.194 由发布脚本替换为版本号；版本变化 → 缓存名变化 → 旧缓存在 activate 时清除。
  */
 const VERSION = '__SW_VER__';
 const CACHE = 'zhinote-' + VERSION;

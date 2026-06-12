@@ -347,7 +347,10 @@ html, body {
   color: var(--text);
   margin: 0;
   padding: 0;
+  /* dvh = 实际可视高度：iPad/iPhone 上 100vh 比可视区高（含状态栏/工具栏），
+     侧栏底部一排按钮会被推出屏幕下沿；不支持 dvh 的旧内核回退 100vh */
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   overflow: hidden;
   /* 强制独立合成层：让 Chromium 在 resize 时尽量复用旧 frame，缓解右侧白条 */
