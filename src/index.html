@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#26282c">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>枝记</title>
+  <link rel="icon" type="image/svg+xml" href="icon.svg">
+  <!-- iOS 不支持 SVG 的主屏图标，必须 PNG（满幅不透明，系统自行裁圆角） -->
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <!-- iOS 安装到主屏：全屏运行；状态栏用 default（black-translucent 的白字在浅色主题下看不见） -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="枝记">
+  <link rel="stylesheet" href="styles.css?v=20260611t83">
+  <style>body:not(.app-ready) { opacity: 0; }</style>
+</head>
+<body class="theme-light">
+  <script>
+    (function(){
+      var t = localStorage.getItem('zhinote-theme');
+      if (t) {
+        document.body.className = 'theme-' + t;
+      }
+    })();
+  </script>
+  <div id="titlebar">
+    <div id="titlebar-drag">
+      <div id="titlebar-resize-top"></div>
+      <span class="titlebar-app-icon" style="font-size:14px;line-height:1;">📖</span>
+      <span class="titlebar-title-text">枝记</span>
+    </div>
+    <div class="titlebar-actions">
+      <button id="btn-titlebar-pin" class="titlebar-btn" title="窗口置顶">
+        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="4" x2="19" y2="4"/><line x1="12" y1="20" x2="12" y2="9"/><polyline points="8 13 12 9 16 13"/></svg>
+      </button>
+      <button id="btn-titlebar-min" class="titlebar-btn" title="最小化">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><line x1="2.5" y1="6" x2="9.5" y2="6"/></svg>
+      </button>
+      <button id="btn-titlebar-max" class="titlebar-btn" title="最大化 / 还原">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="7" height="7" rx="0.6"/></svg>
+      </button>
+      <button id="btn-titlebar-close" class="titlebar-btn titlebar-btn-close" title="关闭窗口">
+        <svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><line x1="3" y1="3" x2="9" y2="9"/><line x1="9" y1="3" x2="3" y2="9"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <button id="workspace-switcher" class="workspace-switcher" title="切换 / 新建笔记本">
+          <span class="ws-icon">📒</span>
+          <span class="ws-name">默认笔记本</span>
+          <svg class="ws-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="sidebar-actions">
+          <button id="btn-new-root" class="icon-btn" title="新建根笔记">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+          </button>
+          <button id="btn-templates" class="icon-btn" title="模板：左键插入，右键管理">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2.5"/><line x1="8" y1="9" x2="16" y2="9"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>
+          </button>
+          <button id="btn-cmd-palette" class="icon-btn" title="命令面板">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 10l3 2-3 2"/><line x1="13" y1="14" x2="16" y2="14"/></svg>
+          </button>
+          <button id="btn-search" class="icon-btn" title="搜索">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="20" y1="20" x2="16.5" y2="16.5"/></svg>
+          </button>
+          <button id="btn-collapse-all" class="icon-btn" title="展开/折叠 全部笔记">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/><polyline points="6 4 12 10 18 4"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="search-box" class="hidden">
+        <input type="text" id="search-input" placeholder="搜索 标题/正文/拼音 (zw)..." autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-form-type="other">
+        <span id="search-match-count" class="search-match-count"></span>
+        <button id="btn-search-close" class="icon-btn" title="关闭搜索">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+      </div>
+
+      <div id="tree-container" class="tree-root"></div>
+
+      <div class="sidebar-footer">
+        <button id="btn-trash" class="icon-btn" title="回收站">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V7"/><path d="M6 7l1 12.5a2 2 0 0 0 2 1.5h6a2 2 0 0 0 2-1.5L18 7"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+          <span id="trash-count" class="badge hidden">0</span>
+        </button>
+        <button id="btn-import" class="icon-btn" title="导入">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="5" x2="12" y2="16"/></svg>
+        </button>
+        <button id="btn-export" class="icon-btn" title="导出">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><polyline points="8 9 12 5 16 9"/><line x1="12" y1="5" x2="12" y2="16"/></svg>
+        </button>
+        <button id="btn-theme" class="icon-btn" title="主题">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.55 0 1-.45 1-1 0-.27-.11-.52-.29-.71-.18-.18-.29-.43-.29-.71 0-.55.45-1 1-1H15c3.31 0 6-2.69 6-6 0-4.96-4.04-9-9-9z"/></svg>
+        </button>
+        <button id="btn-settings" class="icon-btn" title="设置">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <div id="resizer"></div>
+    <div id="sidebar-backdrop"></div>
+
+    <aside id="outline-panel" class="hidden">
+      <div class="outline-header">大纲</div>
+      <div id="outline-content"></div>
+    </aside>
+    <div id="outline-resizer"></div>
+
+    <main id="main">
+      <div id="topbar">
+        <button id="btn-toggle-sidebar" class="icon-btn" title="侧边栏">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
+        </button>
+        <div id="breadcrumb"></div>
+        <input type="text" id="title-input" placeholder="无标题" disabled spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+        <span id="editor-mode-bar" class="editor-mode-bar hidden" role="status" aria-live="polite"></span>
+        <div class="topbar-right">
+          <span id="word-count" class="word-count"></span>
+          <span id="save-status" class="save-status saved" title="已保存">●</span>
+          <button id="btn-pin" class="icon-btn" title="置顶当前笔记">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M8 4h8"/><path d="M9 4v5l-2 4h10l-2-4V4"/></svg>
+          </button>
+          <button id="btn-readonly" class="icon-btn" title="阅读模式">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          </button>
+          <button id="btn-outline-toggle" class="icon-btn" title="大纲">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M8 12h12"/><path d="M8 18h12"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/></svg>
+          </button>
+          <button id="btn-cloze" class="icon-btn" title="挖空复习">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a17 17 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
+          </button>
+          <button id="btn-cloud-sync" class="icon-btn" title="云同步">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0 0-9h-1.27A8 8 0 1 0 3 16.3"/><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/></svg>
+            <span id="cloud-sync-dot" class="cloud-badge"></span>
+          </button>
+        </div>
+      </div>
+
+      <div id="editor-container">
+        <div id="empty-state">
+          <div class="welcome">
+            <div class="welcome-icon">
+              <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+            </div>
+            <h1 class="welcome-title">开始记录</h1>
+            <p class="welcome-subtitle">选择下方一个动作，或直接打开侧边栏的笔记开始编辑</p>
+            <div class="welcome-actions">
+              <button id="btn-new-welcome" class="welcome-card primary">
+                <span class="welcome-card-icon">📝</span>
+                <span class="welcome-card-text">新建笔记</span>
+                <span class="welcome-card-kbd">Ctrl + Alt + N</span>
+              </button>
+              <button id="btn-cmd-welcome" class="welcome-card">
+                <span class="welcome-card-icon">🎛️</span>
+                <span class="welcome-card-text">打开命令面板</span>
+                <span class="welcome-card-kbd">Ctrl + P</span>
+              </button>
+              <button id="btn-template-welcome" class="welcome-card">
+                <span class="welcome-card-icon">📋</span>
+                <span class="welcome-card-text">插入模板…</span>
+                <span class="welcome-card-kbd">/</span>
+              </button>
+              <button id="btn-switch-welcome" class="welcome-card">
+                <span class="welcome-card-icon">🗂️</span>
+                <span class="welcome-card-text">切换笔记本</span>
+                <span class="welcome-card-kbd">Ctrl + Shift + N</span>
+              </button>
+            </div>
+            <div id="welcome-recent" class="welcome-recent"></div>
+          </div>
+        </div>
+        <div id="editor-wrap" class="hidden">
+          <!-- Bubble Menu (浮动工具栏) -->
+          <div id="bubble-menu" class="bubble-menu">
+            <button data-cmd="copySelection"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg></button>
+            <span class="bubble-sep"></span>
+            <button data-cmd="toggleBold"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 11H12.5C13.8807 11 15 9.88071 15 8.5C15 7.11929 13.8807 6 12.5 6H8V11ZM18 15.5C18 17.9853 15.9853 20 13.5 20H6V4H12.5C14.9853 4 17 6.01472 17 8.5C17 9.70431 16.5269 10.7981 15.7564 11.6058C17.0979 12.3847 18 13.837 18 15.5ZM8 13V18H13.5C14.8807 18 16 16.8807 16 15.5C16 14.1193 14.8807 13 13.5 13H8Z"/></svg></button>
+            <button data-cmd="toggleItalic"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15 20H7V18H9.92661L12.0425 6H9V4H17V6H14.0734L11.9575 18H15V20Z"/></svg></button>
+            <button data-cmd="toggleUnderline"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 3V12C8 14.2091 9.79086 16 12 16C14.2091 16 16 14.2091 16 12V3H18V12C18 15.3137 15.3137 18 12 18C8.68629 18 6 15.3137 6 12V3H8ZM4 20H20V22H4V20Z"/></svg></button>
+            <button data-cmd="toggleStrike"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13 9H11V6H5V4H19V6H13V9ZM13 15V20H11V15H13ZM3 11H21V13H3V11Z"/></svg></button>
+            <button data-cmd="setHorizontalRule" title="分割线 (Ctrl+Shift+H)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M2 11H22V13H2V11Z"/></svg></button>
+            <span class="bubble-dropdown-wrap">
+              <button id="bubble-highlight-trigger"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.2427 4.5115L8.50547 11.2487L7.79836 13.37L6.7574 14.411L9.58583 17.2394L10.6268 16.1985L12.7481 15.4914L19.4853 8.75414L15.2427 4.5115ZM21.6066 8.04704C21.9972 8.43756 21.9972 9.07073 21.6066 9.46125L13.8285 17.2394L11.7071 17.9465L10.2929 19.3607C9.90241 19.7513 9.26925 19.7513 8.87872 19.3607L4.63608 15.1181C4.24556 14.7276 4.24556 14.0944 4.63608 13.7039L6.0503 12.2897L6.7574 10.1684L14.5356 2.39018C14.9261 1.99966 15.5593 1.99966 15.9498 2.39018L21.6066 8.04704ZM15.2427 7.33993L16.6569 8.75414L11.7071 13.7039L10.2929 12.2897L15.2427 7.33993ZM4.28253 16.8859L7.11096 19.7143L5.69674 21.1285L1.4541 19.7143L4.28253 16.8859Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
+              <div class="bubble-highlight-dropdown hidden bubble-dd-row">
+                <button data-cmd="setHighlight" data-color="" class="bubble-dd-item" title="黄色"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#fef08a;border:1px solid #d4aa00;"></span></button>
+                <button data-cmd="setHighlight" data-color="#bbf7d0" class="bubble-dd-item" title="绿色"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#bbf7d0;border:1px solid #22c55e;"></span></button>
+                <button data-cmd="setHighlight" data-color="#bfdbfe" class="bubble-dd-item" title="蓝色"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#bfdbfe;border:1px solid #3b82f6;"></span></button>
+                <button data-cmd="setHighlight" data-color="#fecaca" class="bubble-dd-item" title="红色"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#fecaca;border:1px solid #ef4444;"></span></button>
+                <button data-cmd="setHighlight" data-color="#e9d5ff" class="bubble-dd-item" title="紫色"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#e9d5ff;border:1px solid #a855f7;"></span></button>
+                <button data-cmd="setHighlight" data-color="#fed7aa" class="bubble-dd-item" title="橙色"><span style="display:inline-block;width:14px;height:14px;border-radius:3px;background:#fed7aa;border:1px solid #f97316;"></span></button>
+                <button data-cmd="unsetHighlight" class="bubble-dd-item" title="取消高亮"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22ZM12 20C16.4183 20 20 16.4183 20 12C20 7.58172 16.4183 4 12 4C7.58172 4 4 7.58172 4 12C4 16.4183 7.58172 20 12 20ZM8.52 7.10L16.89 15.47L15.47 16.89L7.10 8.52L8.52 7.10Z"/></svg></button>
+              </div>
+            </span>
+            <button data-cmd="toggleLink"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M18.3638 15.5355L16.9496 14.1213L18.3638 12.7071C20.3164 10.7545 20.3164 7.58866 18.3638 5.63604C16.4112 3.68341 13.2453 3.68341 11.2927 5.63604L9.87849 7.05025L8.46428 5.63604L9.87849 4.22182C12.6122 1.48815 17.0443 1.48815 19.778 4.22182C22.5117 6.95549 22.5117 11.3876 19.778 14.1213L18.3638 15.5355ZM15.5353 18.364L14.1211 19.7782C11.3875 22.5118 6.95531 22.5118 4.22164 19.7782C1.48797 17.0445 1.48797 12.6123 4.22164 9.87868L5.63585 8.46446L7.05007 9.87868L5.63585 11.2929C3.68323 13.2455 3.68323 16.4113 5.63585 18.364C7.58847 20.3166 10.7543 20.3166 12.7069 18.364L14.1211 16.9497L15.5353 18.364ZM14.8282 7.75736L16.2425 9.17157L9.17139 16.2426L7.75717 14.8284L14.8282 7.75736Z"/></svg></button>
+            <span class="bubble-sep"></span>
+            <!-- 标题下拉 -->
+            <span class="bubble-dropdown-wrap">
+              <button id="bubble-heading-trigger"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13 20H11V13H4V20H2V4H4V11H11V4H13V20ZM21.0005 8V20H19.0005L19 10.204L17 10.74V8.67L19.5005 8H21.0005Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
+              <div class="bubble-heading-dropdown hidden bubble-dd-row">
+                <button data-cmd="toggleHeading" data-level="1" class="bubble-dd-item bubble-dd-text" title="一级标题">H1</button>
+                <button data-cmd="toggleHeading" data-level="2" class="bubble-dd-item bubble-dd-text" title="二级标题">H2</button>
+                <button data-cmd="toggleHeading" data-level="3" class="bubble-dd-item bubble-dd-text" title="三级标题">H3</button>
+                <button data-cmd="toggleHeading" data-level="4" class="bubble-dd-item bubble-dd-text" title="四级标题">H4</button>
+                <button data-cmd="toggleHeading" data-level="5" class="bubble-dd-item bubble-dd-text" title="五级标题">H5</button>
+                <button data-cmd="toggleHeading" data-level="6" class="bubble-dd-item bubble-dd-text" title="六级标题">H6</button>
+                <button data-cmd="setParagraph" class="bubble-dd-item bubble-dd-text" title="正文">T</button>
+              </div>
+            </span>
+            <!-- 列表下拉 -->
+            <span class="bubble-dropdown-wrap">
+              <button id="bubble-list-trigger"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 4H21V6H8V4ZM4.5 6.5C3.67 6.5 3 5.83 3 5S3.67 3.5 4.5 3.5 6 4.17 6 5 5.33 6.5 4.5 6.5ZM4.5 13.5C3.67 13.5 3 12.83 3 12S3.67 10.5 4.5 10.5 6 11.17 6 12 5.33 13.5 4.5 13.5ZM4.5 20.4C3.67 20.4 3 19.73 3 18.9S3.67 17.4 4.5 17.4 6 18.07 6 18.9 5.33 20.4 4.5 20.4ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
+              <div class="bubble-list-dropdown hidden bubble-dd-row">
+                <button data-cmd="toggleBulletList" class="bubble-dd-item bubble-dd-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 4H21V6H8V4ZM4.5 6.5C3.67 6.5 3 5.83 3 5S3.67 3.5 4.5 3.5 6 4.17 6 5 5.33 6.5 4.5 6.5ZM4.5 13.5C3.67 13.5 3 12.83 3 12S3.67 10.5 4.5 10.5 6 11.17 6 12 5.33 13.5 4.5 13.5ZM4.5 20.4C3.67 20.4 3 19.73 3 18.9S3.67 17.4 4.5 17.4 6 18.07 6 18.9 5.33 20.4 4.5 20.4ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"/></svg></button>
+                <button data-cmd="toggleOrderedList" class="bubble-dd-item bubble-dd-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 4H21V6H8V4ZM5 3V6H6V7H3V6H4V4H3V3H5ZM3 14V11.5H5V11H3V10H6V12.5H4V13H6V14H3ZM5 19.5H3V18.5H5V18H3V17H6V21H3V20H5V19.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"/></svg></button>
+                <button data-cmd="toggleTaskList" class="bubble-dd-item bubble-dd-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4 3H20C20.55 3 21 3.45 21 4V20C21 20.55 20.55 21 20 21H4C3.45 21 3 20.55 3 20V4C3 3.45 3.45 3 4 3ZM5 5V19H19V5H5ZM11 16.17L6.83 12 8.24 10.59 11 13.34 15.76 8.59 17.17 10 11 16.17Z"/></svg></button>
+              </div>
+            </span>
+            <!-- 对齐下拉 -->
+            <span class="bubble-dropdown-wrap">
+              <button id="bubble-align-trigger" title="对齐"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H15V16H3V14ZM3 9H15V11H3V9Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
+              <div class="bubble-align-dropdown hidden bubble-dd-row">
+                <button data-cmd="setTextAlign" data-align="left" class="bubble-dd-item bubble-dd-icon" title="左对齐 (Ctrl+Shift+L)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H15V16H3V14ZM3 9H15V11H3V9Z"/></svg></button>
+                <button data-cmd="setTextAlign" data-align="center" class="bubble-dd-item bubble-dd-icon" title="居中 (Ctrl+Shift+E)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM5 14H19V16H5V14ZM5 9H19V11H5V9Z"/></svg></button>
+                <button data-cmd="setTextAlign" data-align="right" class="bubble-dd-item bubble-dd-icon" title="右对齐 (Ctrl+Shift+R)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM9 14H21V16H9V14ZM9 9H21V11H9V9Z"/></svg></button>
+                <button data-cmd="setTextAlign" data-align="justify" class="bubble-dd-item bubble-dd-icon" title="两端对齐 (Ctrl+Shift+J)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H21V16H3V14ZM3 9H21V11H3V9Z"/></svg></button>
+              </div>
+            </span>
+            <!-- 引用/代码下拉 -->
+            <span class="bubble-dropdown-wrap">
+              <button id="bubble-code-trigger"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M4.58 17.32C3.55 16.23 3 15 3 13.01 3 9.51 5.46 6.37 9.03 4.82L9.92 6.2C6.59 8.01 5.94 10.35 5.68 11.82 6.21 11.54 6.92 11.45 7.6 11.51 9.41 11.68 10.83 13.16 10.83 15 10.83 16.93 9.26 18.5 7.33 18.5 6.26 18.5 5.23 18.01 4.58 17.32ZM14.58 17.32C13.55 16.23 13 15 13 13.01 13 9.51 15.46 6.37 19.03 4.82L19.92 6.2C16.59 8.01 15.94 10.35 15.68 11.82 16.21 11.54 16.92 11.45 17.6 11.51 19.41 11.68 20.83 13.16 20.83 15 20.83 16.93 19.26 18.5 17.33 18.5 16.26 18.5 15.23 18.01 14.58 17.32Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
+              <div class="bubble-code-dropdown hidden bubble-dd-row">
+                <button data-cmd="toggleBlockquote" class="bubble-dd-item bubble-dd-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4.58 17.32C3.55 16.23 3 15 3 13.01 3 9.51 5.46 6.37 9.03 4.82L9.92 6.2C6.59 8.01 5.94 10.35 5.68 11.82 6.21 11.54 6.92 11.45 7.6 11.51 9.41 11.68 10.83 13.16 10.83 15 10.83 16.93 9.26 18.5 7.33 18.5 6.26 18.5 5.23 18.01 4.58 17.32Z"/></svg></button>
+                <button data-cmd="toggleCode" class="bubble-dd-item bubble-dd-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M16.95 8.46L18.36 7.05 23.31 12 18.36 16.95 16.95 15.54 20.49 12 16.95 8.46ZM7.05 8.46L3.51 12 7.05 15.54 5.64 16.95.69 12 5.64 7.05 7.05 8.46Z"/></svg></button>
+                <button data-cmd="toggleCodeBlock" class="bubble-dd-item bubble-dd-icon"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 3H21C21.55 3 22 3.45 22 4V20C22 20.55 21.55 21 21 21H3C2.45 21 2 20.55 2 20V4C2 3.45 2.45 3 3 3ZM4 5V19H20V5H4ZM20 12L16.46 15.54 15.05 14.12 17.17 12 15.05 9.88 16.46 8.46 20 12ZM6.83 12L8.95 14.12 7.54 15.54 4 12 7.54 8.46 8.95 9.88 6.83 12Z"/></svg></button>
+              </div>
+            </span>
+            <span class="bubble-sep"></span>
+            <button data-cmd="unsetAllMarks"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12.6512 14.0654L11.6047 20H9.57389L10.9247 12.339L3.51465 4.92892L4.92886 3.51471L20.4852 19.0711L19.071 20.4853L12.6512 14.0654ZM11.7727 7.53009L12.0425 5.99999H10.2426L8.24257 3.99999H19.9999V5.99999H14.0733L13.4991 9.25652L11.7727 7.53009Z"/></svg></button>
+          </div>
+          <!-- Editor area -->
+          <div id="editor"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="context-menu" class="context-menu hidden"></div>
+
+  <div id="cmd-palette-overlay" class="hidden">
+    <div id="cmd-palette">
+      <div class="cmd-palette-input-wrap">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="cmd-palette-input" placeholder="搜索笔记标题/正文，或按 Tab 切换命令模式" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-form-type="other">
+      </div>
+      <div id="cmd-palette-list"></div>
+      <div class="cmd-palette-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> 选笔记</span>
+        <span><kbd>←</kbd><kbd>→</kbd> 切命中</span>
+        <span><kbd>Enter</kbd> 打开并定位</span>
+        <span><kbd>Tab</kbd> 命令模式</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-overlay" class="hidden">
+    <div id="modal-dialog">
+      <div id="modal-title" class="modal-title"></div>
+      <div id="modal-body" class="modal-body"></div>
+      <div id="modal-footer" class="modal-footer"></div>
+    </div>
+  </div>
+
+  <div id="emoji-popover" class="hidden"></div>
+  <div id="toast-container"></div>
+
+  <!-- CDN dependencies (non-editor) -->
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.18.6/dist/index.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
+
+  <script>
+    window.__MD_VER__ = '20260611t83-mobile-fixes';
+    console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
+  </script>
+  <script src="donate-qr.js?v=20260611t70"></script>
+  <script src="host.js?v=20260610t27"></script>
+  <script src="text-search-engine.js"></script>
+  <script src="storage.js?v=20260611t82"></script>
+  <script src="webdav-sync.js?v=20260611t83"></script>
+
+  <script src="tree.js?v=20260610t52"></script>
+  <script src="search.js?v=20260610t37"></script>
+  <script src="template.js?v=20260609t18"></script>
+  <script src="palette.js?v=20260609t25"></script>
+  <script src="tiptap.bundle.js"></script>
+  <script src="editor.js?v=20260611t83"></script>
+  <script src="app.js?v=20260611t83"></script>
+</body>
+</html>
