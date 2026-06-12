@@ -10,11 +10,11 @@
   <meta http-equiv="Expires" content="0">
   <title>枝记</title>
   <link rel="icon" type="image/svg+xml" href="icon.svg">
-  <!-- iOS 不支�?SVG 的主屏图标，必须 PNG（满幅不透明，系统自行裁圆角�?-->
+  <!-- iOS 不支持 SVG 的主屏图标，必须 PNG（满幅不透明，系统自行裁圆角） -->
   <link rel="apple-touch-icon" href="apple-touch-icon.png">
-  <!-- iOS 安装到主屏：全屏运行；状态栏�?default（black-translucent 的白字在浅色主题下看不见�?-->
-  <meta name="mobile-web-app-capable" content="yes">
+  <!-- iOS 安装到主屏：全屏运行；状态栏用 default（black-translucent 的白字在浅色主题下看不见） -->
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="枝记">
   <style>
@@ -4347,13 +4347,13 @@ body.theme-gruvbox .md-ctx-sep {
   <div id="app">
     <aside id="sidebar">
       <div class="sidebar-header">
-        <button id="workspace-switcher" class="workspace-switcher" title="切换 / 新建笔记�?>
+        <button id="workspace-switcher" class="workspace-switcher" title="切换 / 新建笔记本">
           <span class="ws-icon">📒</span>
-          <span class="ws-name">默认笔记�?/span>
+          <span class="ws-name">默认笔记本</span>
           <svg class="ws-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
         <div class="sidebar-actions">
-          <button id="btn-new-root" class="icon-btn" title="新建根笔�?>
+          <button id="btn-new-root" class="icon-btn" title="新建根笔记">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
           </button>
           <button id="btn-templates" class="icon-btn" title="模板：左键插入，右键管理">
@@ -4382,7 +4382,7 @@ body.theme-gruvbox .md-ctx-sep {
       <div id="tree-container" class="tree-root"></div>
 
       <div class="sidebar-footer">
-        <button id="btn-trash" class="icon-btn" title="回收�?>
+        <button id="btn-trash" class="icon-btn" title="回收站">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M9 7V4.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1V7"/><path d="M6 7l1 12.5a2 2 0 0 0 2 1.5h6a2 2 0 0 0 2-1.5L18 7"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
           <span id="trash-count" class="badge hidden">0</span>
         </button>
@@ -4412,15 +4412,15 @@ body.theme-gruvbox .md-ctx-sep {
 
     <main id="main">
       <div id="topbar">
-        <button id="btn-toggle-sidebar" class="icon-btn" title="侧边�?>
+        <button id="btn-toggle-sidebar" class="icon-btn" title="侧边栏">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
         </button>
         <div id="breadcrumb"></div>
-        <input type="text" id="title-input" placeholder="无标�? disabled spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
+        <input type="text" id="title-input" placeholder="无标题" disabled spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
         <span id="editor-mode-bar" class="editor-mode-bar hidden" role="status" aria-live="polite"></span>
         <div class="topbar-right">
           <span id="word-count" class="word-count"></span>
-          <span id="save-status" class="save-status saved" title="已保�?>�?/span>
+          <span id="save-status" class="save-status saved" title="已保存">●</span>
           <button id="btn-pin" class="icon-btn" title="置顶当前笔记">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M8 4h8"/><path d="M9 4v5l-2 4h10l-2-4V4"/></svg>
           </button>
@@ -4433,7 +4433,7 @@ body.theme-gruvbox .md-ctx-sep {
           <button id="btn-cloze" class="icon-btn" title="挖空复习">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a17 17 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>
           </button>
-          <button id="btn-cloud-sync" class="icon-btn" title="云同�?>
+          <button id="btn-cloud-sync" class="icon-btn" title="云同步">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 1 0 0-9h-1.27A8 8 0 1 0 3 16.3"/><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/></svg>
             <span id="cloud-sync-dot" class="cloud-badge"></span>
           </button>
@@ -4446,8 +4446,8 @@ body.theme-gruvbox .md-ctx-sep {
             <div class="welcome-icon">
               <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
             </div>
-            <h1 class="welcome-title">开始记�?/h1>
-            <p class="welcome-subtitle">选择下方一个动作，或直接打开侧边栏的笔记开始编�?/p>
+            <h1 class="welcome-title">开始记录</h1>
+            <p class="welcome-subtitle">选择下方一个动作，或直接打开侧边栏的笔记开始编辑</p>
             <div class="welcome-actions">
               <button id="btn-new-welcome" class="welcome-card primary">
                 <span class="welcome-card-icon">📝</span>
@@ -4455,18 +4455,18 @@ body.theme-gruvbox .md-ctx-sep {
                 <span class="welcome-card-kbd">Ctrl + Alt + N</span>
               </button>
               <button id="btn-cmd-welcome" class="welcome-card">
-                <span class="welcome-card-icon">🎛�?/span>
+                <span class="welcome-card-icon">🎛️</span>
                 <span class="welcome-card-text">打开命令面板</span>
                 <span class="welcome-card-kbd">Ctrl + P</span>
               </button>
               <button id="btn-template-welcome" class="welcome-card">
                 <span class="welcome-card-icon">📋</span>
-                <span class="welcome-card-text">插入模板�?/span>
+                <span class="welcome-card-text">插入模板…</span>
                 <span class="welcome-card-kbd">/</span>
               </button>
               <button id="btn-switch-welcome" class="welcome-card">
-                <span class="welcome-card-icon">🗂�?/span>
-                <span class="welcome-card-text">切换笔记�?/span>
+                <span class="welcome-card-icon">🗂️</span>
+                <span class="welcome-card-text">切换笔记本</span>
                 <span class="welcome-card-kbd">Ctrl + Shift + N</span>
               </button>
             </div>
@@ -4474,7 +4474,7 @@ body.theme-gruvbox .md-ctx-sep {
           </div>
         </div>
         <div id="editor-wrap" class="hidden">
-          <!-- Bubble Menu (浮动工具�? -->
+          <!-- Bubble Menu (浮动工具栏) -->
           <div id="bubble-menu" class="bubble-menu">
             <button data-cmd="copySelection"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg></button>
             <span class="bubble-sep"></span>
@@ -4482,7 +4482,7 @@ body.theme-gruvbox .md-ctx-sep {
             <button data-cmd="toggleItalic"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15 20H7V18H9.92661L12.0425 6H9V4H17V6H14.0734L11.9575 18H15V20Z"/></svg></button>
             <button data-cmd="toggleUnderline"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 3V12C8 14.2091 9.79086 16 12 16C14.2091 16 16 14.2091 16 12V3H18V12C18 15.3137 15.3137 18 12 18C8.68629 18 6 15.3137 6 12V3H8ZM4 20H20V22H4V20Z"/></svg></button>
             <button data-cmd="toggleStrike"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13 9H11V6H5V4H19V6H13V9ZM13 15V20H11V15H13ZM3 11H21V13H3V11Z"/></svg></button>
-            <button data-cmd="setHorizontalRule" title="分割�?(Ctrl+Shift+H)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M2 11H22V13H2V11Z"/></svg></button>
+            <button data-cmd="setHorizontalRule" title="分割线 (Ctrl+Shift+H)"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M2 11H22V13H2V11Z"/></svg></button>
             <span class="bubble-dropdown-wrap">
               <button id="bubble-highlight-trigger"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M15.2427 4.5115L8.50547 11.2487L7.79836 13.37L6.7574 14.411L9.58583 17.2394L10.6268 16.1985L12.7481 15.4914L19.4853 8.75414L15.2427 4.5115ZM21.6066 8.04704C21.9972 8.43756 21.9972 9.07073 21.6066 9.46125L13.8285 17.2394L11.7071 17.9465L10.2929 19.3607C9.90241 19.7513 9.26925 19.7513 8.87872 19.3607L4.63608 15.1181C4.24556 14.7276 4.24556 14.0944 4.63608 13.7039L6.0503 12.2897L6.7574 10.1684L14.5356 2.39018C14.9261 1.99966 15.5593 1.99966 15.9498 2.39018L21.6066 8.04704ZM15.2427 7.33993L16.6569 8.75414L11.7071 13.7039L10.2929 12.2897L15.2427 7.33993ZM4.28253 16.8859L7.11096 19.7143L5.69674 21.1285L1.4541 19.7143L4.28253 16.8859Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
               <div class="bubble-highlight-dropdown hidden bubble-dd-row">
@@ -4501,7 +4501,7 @@ body.theme-gruvbox .md-ctx-sep {
             <span class="bubble-dropdown-wrap">
               <button id="bubble-heading-trigger"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13 20H11V13H4V20H2V4H4V11H11V4H13V20ZM21.0005 8V20H19.0005L19 10.204L17 10.74V8.67L19.5005 8H21.0005Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
               <div class="bubble-heading-dropdown hidden bubble-dd-row">
-                <button data-cmd="toggleHeading" data-level="1" class="bubble-dd-item bubble-dd-text" title="一级标�?>H1</button>
+                <button data-cmd="toggleHeading" data-level="1" class="bubble-dd-item bubble-dd-text" title="一级标题">H1</button>
                 <button data-cmd="toggleHeading" data-level="2" class="bubble-dd-item bubble-dd-text" title="二级标题">H2</button>
                 <button data-cmd="toggleHeading" data-level="3" class="bubble-dd-item bubble-dd-text" title="三级标题">H3</button>
                 <button data-cmd="toggleHeading" data-level="4" class="bubble-dd-item bubble-dd-text" title="四级标题">H4</button>
@@ -4523,9 +4523,9 @@ body.theme-gruvbox .md-ctx-sep {
             <span class="bubble-dropdown-wrap">
               <button id="bubble-align-trigger" title="对齐"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H15V16H3V14ZM3 9H15V11H3V9Z"/></svg><svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor" style="margin-left:1px;opacity:0.5;"><path d="M12 16L6 10H18L12 16Z"/></svg></button>
               <div class="bubble-align-dropdown hidden bubble-dd-row">
-                <button data-cmd="setTextAlign" data-align="left" class="bubble-dd-item bubble-dd-icon" title="左对�?(Ctrl+Shift+L)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H15V16H3V14ZM3 9H15V11H3V9Z"/></svg></button>
+                <button data-cmd="setTextAlign" data-align="left" class="bubble-dd-item bubble-dd-icon" title="左对齐 (Ctrl+Shift+L)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H15V16H3V14ZM3 9H15V11H3V9Z"/></svg></button>
                 <button data-cmd="setTextAlign" data-align="center" class="bubble-dd-item bubble-dd-icon" title="居中 (Ctrl+Shift+E)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM5 14H19V16H5V14ZM5 9H19V11H5V9Z"/></svg></button>
-                <button data-cmd="setTextAlign" data-align="right" class="bubble-dd-item bubble-dd-icon" title="右对�?(Ctrl+Shift+R)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM9 14H21V16H9V14ZM9 9H21V11H9V9Z"/></svg></button>
+                <button data-cmd="setTextAlign" data-align="right" class="bubble-dd-item bubble-dd-icon" title="右对齐 (Ctrl+Shift+R)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM9 14H21V16H9V14ZM9 9H21V11H9V9Z"/></svg></button>
                 <button data-cmd="setTextAlign" data-align="justify" class="bubble-dd-item bubble-dd-icon" title="两端对齐 (Ctrl+Shift+J)"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M3 4H21V6H3V4ZM3 19H21V21H3V19ZM3 14H21V16H3V14ZM3 9H21V11H3V9Z"/></svg></button>
               </div>
             </span>
@@ -4554,13 +4554,13 @@ body.theme-gruvbox .md-ctx-sep {
     <div id="cmd-palette">
       <div class="cmd-palette-input-wrap">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="cmd-palette-input" placeholder="搜索笔记标题/正文，或�?Tab 切换命令模式" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-form-type="other">
+        <input type="text" id="cmd-palette-input" placeholder="搜索笔记标题/正文，或按 Tab 切换命令模式" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" data-form-type="other">
       </div>
       <div id="cmd-palette-list"></div>
       <div class="cmd-palette-footer">
-        <span><kbd>�?/kbd><kbd>�?/kbd> 选笔�?/span>
-        <span><kbd>�?/kbd><kbd>�?/kbd> 切命�?/span>
-        <span><kbd>Enter</kbd> 打开并定�?/span>
+        <span><kbd>↑</kbd><kbd>↓</kbd> 选笔记</span>
+        <span><kbd>←</kbd><kbd>→</kbd> 切命中</span>
+        <span><kbd>Enter</kbd> 打开并定位</span>
         <span><kbd>Tab</kbd> 命令模式</span>
       </div>
     </div>
@@ -4587,7 +4587,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = '20260612t84-touch-polish';
+    window.__MD_VER__ = '20260612t84b-touch-polish';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
