@@ -17,7 +17,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="枝记">
-  <link rel="stylesheet" href="styles.css?v=20260612t87">
+  <link rel="stylesheet" href="styles.css?v=20260612t88">
   <style>body:not(.app-ready) { opacity: 0; }</style>
 </head>
 <body class="theme-light">
@@ -183,6 +183,9 @@
         <div id="editor-wrap" class="hidden">
           <!-- Bubble Menu (浮动工具栏) -->
           <div id="bubble-menu" class="bubble-menu">
+            <button data-cmd="undo" class="bubble-touch-only" title="撤销"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.2 2.5L3 13"/></svg></button>
+            <button data-cmd="redo" class="bubble-touch-only" title="重做"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6.2 2.5L21 13"/></svg></button>
+            <span class="bubble-sep bubble-touch-only"></span>
             <button data-cmd="copySelection"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg></button>
             <span class="bubble-sep"></span>
             <button data-cmd="toggleBold"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 11H12.5C13.8807 11 15 9.88071 15 8.5C15 7.11929 13.8807 6 12.5 6H8V11ZM18 15.5C18 17.9853 15.9853 20 13.5 20H6V4H12.5C14.9853 4 17 6.01472 17 8.5C17 9.70431 16.5269 10.7981 15.7564 11.6058C17.0979 12.3847 18 13.837 18 15.5ZM8 13V18H13.5C14.8807 18 16 16.8807 16 15.5C16 14.1193 14.8807 13 13.5 13H8Z"/></svg></button>
@@ -294,21 +297,21 @@
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = '20260612t87-pwa-polish';
+    window.__MD_VER__ = '20260614t98-sidebar-kb-fix';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script src="donate-qr.js?v=20260611t70"></script>
   <script src="host.js?v=20260610t27"></script>
   <script src="text-search-engine.js"></script>
   <script src="storage.js?v=20260611t82"></script>
-  <script src="webdav-sync.js?v=20260612t87"></script>
+  <script src="webdav-sync.js?v=20260613t88"></script>
 
   <script src="tree.js?v=20260610t52"></script>
   <script src="search.js?v=20260610t37"></script>
   <script src="template.js?v=20260609t18"></script>
   <script src="palette.js?v=20260609t25"></script>
   <script src="tiptap.bundle.js"></script>
-  <script src="editor.js?v=20260612t87"></script>
-  <script src="app.js?v=20260612t87"></script>
+  <script src="editor.js?v=20260612t88"></script>
+  <script src="app.js?v=20260612t88"></script>
 </body>
 </html>

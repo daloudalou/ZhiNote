@@ -1085,20 +1085,13 @@ const editor = (() => {
     // 导致 md-bubble-hidden 永久卡在被 detach 的元素上 → 浮动菜单"再也不出现、重开也无效"。
     // 这里统一改为：抑制状态存布尔量（shouldShow 读它），class 始终切在 bubbleMenuEl 引用上。
     let _bubbleSuppressed = false;
+    let _updateDockBar = null; // 触屏 dock 浮动条的显隐刷新（创建编辑器后赋值）
     window.setBubbleSuppressed = (v) => {
       _bubbleSuppressed = !!v;
       if (bubbleMenuEl) bubbleMenuEl.classList.toggle('md-bubble-hidden', !!v);
+      if (_updateDockBar) _updateDockBar();
     };
     window.isBubbleSuppressed = () => _bubbleSuppressed;
-    // 触屏：浮动条与键盘工具条同槽互斥——浮动条（选中文字时）出现就藏键盘工具条，
-    // 键盘上方永远只有一条。BubbleMenu 的显示/隐藏 = 挂载/摘除 DOM，用 MutationObserver 跟踪。
-    if (_coarsePtr) {
-      const updBubbleOpen = () => {
-        const open = !!bubbleMenuEl && bubbleMenuEl.isConnected && !bubbleMenuEl.classList.contains('md-bubble-hidden');
-        document.body.classList.toggle('md-bubble-open', open);
-      };
-      new MutationObserver(updBubbleOpen).observe(document.body, { childList: true, subtree: true });
-    }
     editorEl.addEventListener('mouseup', (e) => {
       if (!_bubbleLocked) _lastMouseUp = { x: e.clientX, y: e.clientY };
     });
@@ -1166,7 +1159,11 @@ const editor = (() => {
         Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
         MathInline,
         MathBlock,
-        BubbleMenu.configure({
+        // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
+        // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
+        // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
+        //   CSS 固定悬于键盘上方（--kb-gap），不再依赖插件的挂载/卸载与焦点判断。
+        ...(_coarsePtr ? [] : [BubbleMenu.configure({
           element: bubbleMenuEl,
           shouldShow: ({ editor: ed, state }) => {
             if (_bubbleSuppressed) return false;
@@ -1188,8 +1185,7 @@ const editor = (() => {
               try {
                 const range = sel.getRangeAt(0);
                 const rects = range.getClientRects();
-                // 桌面锚选区首行（菜单在上方）；触屏锚末行（菜单在下方，避开系统菜单）
-                if (rects && rects.length) rect = _coarsePtr ? rects[rects.length - 1] : rects[0];
+                if (rects && rects.length) rect = rects[0];
                 if (!rect || (!rect.width && !rect.height)) rect = range.getBoundingClientRect();
               } catch (_) {}
             }
@@ -1209,9 +1205,9 @@ const editor = (() => {
           },
           updateDelay: 80,
           options: {
-            placement: _coarsePtr ? 'bottom' : 'top',
-            offset: { mainAxis: _coarsePtr ? 14 : 8 },
-            flip: { fallbackPlacements: [_coarsePtr ? 'top' : 'bottom'] },
+            placement: 'top',
+            offset: { mainAxis: 8 },
+            flip: { fallbackPlacements: ['bottom'] },
             shift: { padding: 8 },
           },
           tippyOptions: {
@@ -1219,7 +1215,7 @@ const editor = (() => {
             animation: 'shift-away-subtle',
             moveTransition: 'transform 0.15s cubic-bezier(.2,0,.4,1)',
           },
-        }),
+        })]),
       ],
       editorProps: {
         attributes: { class: 'tiptap-editor' },
@@ -1314,6 +1310,18 @@ const editor = (() => {
           return text;
         },
         handlePaste: (view, event) => {
+          // 图片在 PM 层接管（先于 ProseMirror 解析剪贴板 HTML）：iOS/Safari 粘贴图片时
+          // 剪贴板常同时带一份 webkit-fake-url:// 的 HTML 表示，DOM 层监听跑在 PM 之后拦不住，
+          // 一旦进文档同步出去就是所有设备都打不开的碎图。
+          const clipItems = event.clipboardData?.items;
+          if (clipItems) {
+            for (const item of clipItems) {
+              if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) { insertImageFile(file); return true; }
+              }
+            }
+          }
           const { $from } = view.state.selection;
           if ($from.parent.type.name === 'codeBlock') {
             // 代码块内：强制只插入纯文本，避免剪贴板里的 text/html 被解析成段落/表格而"跑出"代码块
@@ -1338,6 +1346,52 @@ const editor = (() => {
           }
           return false;
         },
+        // 文件/图片拖入在 PM 层接管（运行先于 ProseMirror 默认的"解析 dataTransfer HTML 插入"）。
+        // iOS 从照片/截图缩略图拖入时，dataTransfer 里是 items 文件承诺 + 一份 blob:/webkit-fake-url
+        // 的 HTML 表示；旧实现挂在 DOM 事件上时序太晚，PM 先把 HTML 表示插进文档 → 同步后碎图。
+        handleDrop: (view, event, slice, moved) => {
+          if (moved || _internalImgDrag) { _internalImgDrag = false; return false; } // 编辑器内部拖动（图片换位）走 PM 默认
+          const dt = event.dataTransfer;
+          if (!dt) return false;
+          let files = Array.from(dt.files || []);
+          const hadImgItems = !files.length && dt.items
+            && Array.from(dt.items).some((it) => it.kind === 'file' && it.type.startsWith('image/'));
+          if (!files.length && dt.items) {
+            files = Array.from(dt.items)
+              .filter((it) => it.kind === 'file')
+              .map((it) => it.getAsFile())
+              .filter(Boolean);
+          }
+          if (!files.length) {
+            if (hadImgItems) {
+              // 文件承诺读不出来：宁可不插也不让 PM 插入碎图地址
+              window.toast?.('未能读取拖入的图片，请改用复制 → 粘贴插入', 'warning');
+              return true;
+            }
+            return false; // 纯文本/HTML 拖放交给 PM（transformPastedHTML 已剥不可移植图片）
+          }
+          const hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
+          if (hit) { try { _editor.commands.setTextSelection(hit.pos); } catch (_) {} }
+          const imgs = files.filter((f) => f.type.startsWith('image/'));
+          for (const f of imgs) insertImageFile(f);
+          if (!imgs.length) {
+            // 非图片文件：插入文件名链接（浏览器拿不到完整路径）
+            for (const f of files) {
+              const label = f.name || 'file';
+              _editor.chain().focus().insertContent({
+                type: 'text',
+                text: label,
+                marks: [{ type: 'link', attrs: { href: _encodeFileHref(label), target: null } }],
+              }).run();
+            }
+            window.toast?.('提示：复制文件后粘贴可插入完整路径链接', 'info');
+          }
+          return true; // 已接管：PM 不再解析 dataTransfer 里的 HTML 表示
+        },
+        // 粘贴/拖放的 HTML 进 schema 前剥掉 webkit-fake-url 图片：该地址只在产生它的
+        // WebKit 会话内有效且 fetch 不到（兜底清洗也救不回），进文档必成碎图。
+        // blob: 不在这里剥——本会话内还活着，留给 _scrubForeignImageSrcs 抢救入库。
+        transformPastedHTML: (html) => html.replace(/<img\b[^>]*src=["']?webkit-fake-url:[^>]*>/gi, ''),
       },
       onUpdate: ({ editor: ed }) => {
         if (_suppressInput) return;
@@ -1347,6 +1401,53 @@ const editor = (() => {
     });
 
     _ensureMarkedPatched();
+
+    // ── 触屏 dock 浮动条控制器（替代 BubbleMenu 插件）──
+    // 显隐只由「选区是否非空」驱动（外加抑制态/右键菜单），不看焦点——
+    // iOS 上系统选区手柄、键盘收起等会乱发 focus/blur，靠焦点判断正是以前"浮动条不出现"的根源。
+    // 定位完全交给 CSS（iOS 固定吸在标题栏下方、其它触屏悬于底部），JS 不碰几何。
+    if (_coarsePtr && bubbleMenuEl) {
+      // 必须挂到 body 下：#app/#main 的 contain:layout paint 会让 fixed 以它们为包含块并裁剪，
+      // 浮动条会错位/被裁掉（以前是 BubbleMenu 插件显示时替我们挪的）
+      if (bubbleMenuEl.parentElement !== document.body) document.body.appendChild(bubbleMenuEl);
+
+      // 键盘完全交给浏览器原生处理：点正文即弹键盘、点别处即收，和系统所有 App 一致。
+      // 不再屏蔽 inputmode、不再造唤起浮标（iOS 无法程序化唤起软键盘，硬造只会时灵时不灵）。
+      // 残留清理：旧版本可能在 body 上留过 #kb-fab / #kb-primer，干掉以防显示。
+      const _oldFab = document.getElementById('kb-fab');
+      if (_oldFab) _oldFab.remove();
+      const _oldPrimer = document.getElementById('kb-primer');
+      if (_oldPrimer) _oldPrimer.remove();
+
+      const updateDock = () => {
+        let open = false;
+        // 手指还按着（_mdTouchActive）时不弹条：否则长按选字、拖选区手柄过程中浮动条会突然
+        // 出现在手指下方/底部，挡住或抢走 iOS 选区手柄的触摸，正是"键盘开着时很难选中"的帮凶。
+        if (_editor && !_bubbleSuppressed && !window._mdTouchActive && !document.querySelector('.md-editor-ctx')) {
+          const sel = _editor.state.selection;
+          let nonEmpty = sel.from !== sel.to && !sel.node && !_editor.isActive('image');
+          // iOS 系统原生选字（长按/双击/拖手柄）只改 DOM 选区，未必同步进 PM 的 state.selection，
+          // 只看 PM 选区会导致浮动条"从来不出现"（用户反馈 #3）。补判 DOM 选区作为兜底。
+          if (!nonEmpty) {
+            const s = window.getSelection && window.getSelection();
+            if (s && s.rangeCount && !s.isCollapsed) {
+              const a = s.anchorNode, node = a && (a.nodeType === 3 ? a.parentElement : a);
+              if (node && node.closest && node.closest('#editor .ProseMirror') && !node.closest('img')) nonEmpty = true;
+            }
+          }
+          open = nonEmpty;
+        }
+        bubbleMenuEl.classList.toggle('is-docked-open', open);
+      };
+      _updateDockBar = updateDock;
+      _editor.on('selectionUpdate', updateDock);
+      _editor.on('destroy', () => { if (_updateDockBar === updateDock) _updateDockBar = null; });
+      // DOM 选区变化也驱动（iOS 原生选字的唯一可靠信号）；rAF 合并抖动
+      document.addEventListener('selectionchange', () => requestAnimationFrame(updateDock));
+      // 手指松开后下一帧补求值一次：选字拖动期间被压住没弹的条，松手后再显示（此时 _mdTouchActive 已复位）
+      document.addEventListener('touchend', () => requestAnimationFrame(updateDock), { passive: true });
+      updateDock();
+    }
 
     if (bubbleMenuEl) {
       const headingTrigger = document.getElementById('bubble-heading-trigger');
@@ -1451,6 +1552,7 @@ const editor = (() => {
         const btn = e.target.closest('button[data-cmd]');
         if (!btn) return;
         const cmd = btn.dataset.cmd;
+        // 触屏点格式按钮是排版而非打字：execCommand 内 .chain().focus() 会聚焦编辑器（键盘交给浏览器）。
         if (cmd === 'copySelection') {
           document.execCommand('copy');
         } else if (cmd === 'setHighlight') {
@@ -1586,7 +1688,7 @@ const editor = (() => {
         }
       }
     }, true);
-    editorEl.addEventListener('paste', handleImagePaste);
+    // 图片粘贴 / 文件拖入已上移到 editorProps.handlePaste / handleDrop（PM 层，时序先于 PM 默认解析）
     editorEl.addEventListener('paste', handleFilePaste);
 
     // Inline code hover copy button (floating overlay, not injected into code element)
@@ -1656,8 +1758,6 @@ const editor = (() => {
       if (related && codeEl.contains(related)) return;
       _scheduleHideInlineCopy();
     });
-    editorEl.addEventListener('drop', handleImageDrop);
-
     async function _openLocalFile(href) {
       const path = decodeURIComponent(href.replace(/^file:\/\/\//, ''));
       if (window.host?.caps.file) {
@@ -1745,95 +1845,57 @@ const editor = (() => {
       openImageGallery(img);
     });
 
-    // 触屏：自实现图片双击检测——iOS 对触摸双击经常不派发 dblclick，上面的处理在 iPhone 上时灵时不灵。
-    // 两次单指轻点（<350ms、位移<30px）落在同一图片 → 弹图片菜单，并阻止合成 click/dblclick。
+    // 触屏图片交互（修复 iOS"点过一次键盘后点图就弹键盘 / 双击不出菜单"的总根）：
+    // 把接管提前到 touchstart——单指落在图片上立刻 preventDefault，掐掉 iOS 原生的
+    // "聚焦 contenteditable + 放光标 + 弹软键盘"。无论编辑器当前是否已聚焦都拦得住。
+    // 根因：原先的"防误唤"只在 focusin（失焦→聚焦那一下）生效；键盘已弹出=已聚焦时再点图
+    // 不再触发 focusin，防误唤彻底失效，于是点图被原生当成"移动光标"，键盘赖着不走、双击被原生抢。
+    // touchstart 拦下后，合成的 click/dblclick 也不再派发，双击检测改由这里的 touchend 自管理。
     let _imgTap = { t: 0, x: 0, y: 0 };
+    let _imgTouchOn = false;
+    const _blurEditor = () => {
+      const ae = document.activeElement;
+      if (ae && ae.closest && ae.closest('#editor .ProseMirror')) { try { ae.blur(); } catch (_) {} }
+    };
+    editorEl.addEventListener('touchstart', (e) => {
+      // 仅单指落在图片上才接管；多指（双指唤菜单/缩放）放行给手势中枢
+      if (e.touches.length !== 1) { _imgTouchOn = false; return; }
+      const img = e.target.closest && e.target.closest('img');
+      _imgTouchOn = !!img;
+      if (img && e.cancelable) e.preventDefault();
+    }, { passive: false });
     editorEl.addEventListener('touchend', (e) => {
-      if (e.touches.length || e.changedTouches.length !== 1) { _imgTap.t = 0; return; }
+      if (!_imgTouchOn) return;
+      _imgTouchOn = false;
+      if (e.changedTouches.length !== 1) { _imgTap.t = 0; return; }
       const t = e.changedTouches[0];
       const img = e.target.closest && e.target.closest('img');
       if (!img) { _imgTap.t = 0; return; }
+      if (e.cancelable) e.preventDefault();
+      _blurEditor(); // 点图绝不是要打字 → 主动收键盘
       const now = Date.now();
       if (now - _imgTap.t < 350 && Math.hypot(t.clientX - _imgTap.x, t.clientY - _imgTap.y) < 30) {
+        // 双击 → 图片菜单（「查看大图」是第一项）
         _imgTap.t = 0;
-        if (e.cancelable) e.preventDefault();
-        clearTimeout(_imgClickTimer);
-        _imgClickTimer = null;
+        clearTimeout(_imgClickTimer); _imgClickTimer = null;
         img.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: t.clientX, clientY: t.clientY }));
       } else {
+        // 单击 → 选中图片（出缩放手柄）；延时等待可能的第二击
         _imgTap = { t: now, x: t.clientX, y: t.clientY };
+        clearTimeout(_imgClickTimer);
+        _imgClickTimer = setTimeout(() => {
+          _imgClickTimer = null;
+          selectImageNode(img);
+          _blurEditor(); // setNodeSelection 可能重新聚焦 → 再收一次
+        }, 320);
       }
     }, { passive: false });
 
-    // iOS：聚焦编辑区里长按的原生行为是"放大镜移光标"而非选词（安卓是选词），键盘弹出后几乎没法选字。
-    // 自实现长按选词：单指按住 420ms 位移 <10px → 程序化选中按点处的词（Intl.Segmenter 分词，
-    // 中文也能选出词组），DOM 选区一出系统自动配手柄，可继续拖动扩选。仅 iOS 启用，不动安卓原生选词。
-    const _isIOSSel = /iPad|iPhone|iPod/.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    if (_isIOSSel && _coarsePtr) {
-      let _lpTimer = null, _lpStart = null, _lpSel = null;
-      const _lpCancel = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
-      const _wordRangeAt = (x, y) => {
-        const view = _editor && _editor.view;
-        if (!view) return null;
-        const hit = view.posAtCoords({ left: x, top: y });
-        if (!hit) return null;
-        const $pos = view.state.doc.resolve(hit.pos);
-        if (!$pos.parent.isTextblock) return null;
-        // 非文本叶子（公式/图片等）占 1 位，用占位符对齐"字符偏移 ↔ 文档位置"
-        const text = $pos.parent.textBetween(0, $pos.parent.content.size, '\u0000', '\u0000');
-        let off = Math.min($pos.parentOffset, Math.max(0, text.length - 1));
-        if (!text.length) return null;
-        let from = -1, to = -1;
-        if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-          try {
-            for (const s of new Intl.Segmenter('zh-Hans', { granularity: 'word' }).segment(text)) {
-              if (off >= s.index && off < s.index + s.segment.length) {
-                if (s.segment.trim() && s.segment !== '\u0000') { from = s.index; to = s.index + s.segment.length; }
-                break;
-              }
-            }
-          } catch (_) {}
-        }
-        if (from < 0) { // 兜底：按"字母数字/汉字"连续段向两侧扩
-          const isW = (ch) => /[A-Za-z0-9_\u4e00-\u9fff]/.test(ch);
-          if (!isW(text[off])) return null;
-          from = off; to = off + 1;
-          while (from > 0 && isW(text[from - 1])) from--;
-          while (to < text.length && isW(text[to])) to++;
-        }
-        const base = $pos.start();
-        return { from: base + from, to: base + to };
-      };
-      editorEl.addEventListener('touchstart', (e) => {
-        _lpCancel(); _lpSel = null;
-        if (e.touches.length !== 1 || e.target.closest('img')) return;
-        const t = e.touches[0];
-        _lpStart = { x: t.clientX, y: t.clientY };
-        _lpTimer = setTimeout(() => {
-          _lpTimer = null;
-          const r = _wordRangeAt(_lpStart.x, _lpStart.y);
-          if (!r || r.to <= r.from) return;
-          _lpSel = r;
-          try { _editor.chain().focus().setTextSelection(r).run(); } catch (_) {}
-        }, 420);
-      }, { passive: true });
-      editorEl.addEventListener('touchmove', (e) => {
-        if (!_lpTimer || !_lpStart) return;
-        const t = e.touches[0];
-        if (Math.hypot(t.clientX - _lpStart.x, t.clientY - _lpStart.y) > 10) _lpCancel();
-      }, { passive: true });
-      editorEl.addEventListener('touchend', (e) => {
-        _lpCancel();
-        if (_lpSel) {
-          // 松手时压掉 iOS 默认的"把光标挪到按点"——否则刚做出的选区立刻被清掉
-          if (e.cancelable) e.preventDefault();
-          const r = _lpSel; _lpSel = null;
-          setTimeout(() => { try { _editor.chain().setTextSelection(r).run(); } catch (_) {} }, 0);
-        }
-      }, { passive: false });
-      editorEl.addEventListener('touchcancel', () => { _lpCancel(); _lpSel = null; }, { passive: true });
-    }
+    // 选字不再自实现（曾有"长按 420ms 程序化选词"，与 iOS 系统放大镜/光标手势同时跑、
+    // 松手还 preventDefault 抢选区，多方互踩 = 用户反馈的"选字紊乱"主因，已整体删除）。
+    // 现在完全交给系统原生：iOS 双击选词 + 拖手柄扩选，安卓长按选词——所有人的肌肉记忆。
+
+    // 键盘完全交给浏览器原生处理，这里不做任何 inputmode/聚焦干预（反应式改 inputmode 会与 iOS 选词手势互踩）。
 
     _editor.on('selectionUpdate', () => {
       requestAnimationFrame(syncImageResizeOverlay);
@@ -1906,6 +1968,12 @@ const editor = (() => {
       counter.textContent = `${idx + 1} / ${list.length}`;
       btnPrev.style.visibility = list.length > 1 ? 'visible' : 'hidden';
       btnNext.style.visibility = list.length > 1 ? 'visible' : 'hidden';
+      // 切换图片时复位缩放/平移/旋转与遮罩底色
+      _rotation = 0; _scale = 1; _tx = 0; _ty = 0;
+      imgEl.style.transition = 'none';
+      imgEl.style.transform = '';
+      imgEl.classList.remove('zoomed');
+      overlay.style.background = '';
     }
 
     const close = () => {
@@ -1920,39 +1988,142 @@ const editor = (() => {
       else if (e.key === 'ArrowRight') { e.preventDefault(); showAt(idx + 1); }
     }
 
-    let _scale = 1;
+    // ── 视图变换（参照 PhotoSwipe 交互模型）：缩放 scale + 平移 tx,ty + 旋转 rotation ──
+    // 缩放以手指中点/光标为锚（看哪放哪）；放大后可拖动平移看局部（带边界）；
+    // 双击定点放大/还原；未放大时单指下拉=渐隐关闭；桌面滚轮以光标为锚、放大后可按住拖动。
+    let _scale = 1, _tx = 0, _ty = 0, _rotation = 0;
     let _lastNavTime = 0;
+    const MIN_S = 1, MAX_S = 6;
+    const stageEl = overlay.querySelector('.lightbox-stage');
+
+    const applyTransform = (anim) => {
+      imgEl.style.transition = anim ? 'transform .22s cubic-bezier(.2,0,.2,1)' : 'none';
+      imgEl.style.transform = `translate(${_tx}px,${_ty}px) scale(${_scale}) rotate(${_rotation}deg)`;
+      imgEl.classList.toggle('zoomed', _scale > 1.01);
+    };
+    const resetView = (anim) => { _scale = MIN_S; _tx = 0; _ty = 0; applyTransform(anim); };
+    // 平移边界：放大后只允许拖到图像各边贴住可视区，未放大回弹到 0（不让图拖飞）
+    const clampPan = () => {
+      const st = stageEl.getBoundingClientRect();
+      const sw = imgEl.offsetWidth * _scale, sh = imgEl.offsetHeight * _scale;
+      const mx = Math.max(0, (sw - st.width) / 2), my = Math.max(0, (sh - st.height) / 2);
+      _tx = Math.max(-mx, Math.min(mx, _tx));
+      _ty = Math.max(-my, Math.min(my, _ty));
+    };
+    // 以屏幕点 (cx,cy) 为锚缩放到 target：保持该点在图像上的位置不动
+    const zoomAt = (cx, cy, target, anim) => {
+      const ns = Math.max(MIN_S, Math.min(MAX_S, target));
+      const st = stageEl.getBoundingClientRect();
+      const mcx = st.left + st.width / 2, mcy = st.top + st.height / 2;
+      const ox = cx - mcx - _tx, oy = cy - mcy - _ty;
+      const k = ns / _scale;
+      _tx -= ox * (k - 1); _ty -= oy * (k - 1);
+      _scale = ns; clampPan(); applyTransform(anim);
+    };
 
     btnClose.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); close(); });
-    btnPrev.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); _lastNavTime = Date.now(); _scale = 1; _rotation = 0; applyTransform(); showAt(idx - 1); });
-    btnNext.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); _lastNavTime = Date.now(); _scale = 1; _rotation = 0; applyTransform(); showAt(idx + 1); });
+    const goNav = (d) => { _lastNavTime = Date.now(); showAt(idx + d); };
+    btnPrev.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); goNav(-1); });
+    btnNext.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); goNav(1); });
     for (const btn of [btnPrev, btnNext, btnClose]) {
       btn.addEventListener('mousedown', (e) => e.stopPropagation());
       btn.addEventListener('mouseup', (e) => e.stopPropagation());
       btn.addEventListener('pointerdown', (e) => e.stopPropagation());
     }
-    imgEl.addEventListener('click', (e) => {
+
+    // 桌面：双击定点放大/还原；滚轮以光标为锚缩放；放大后按住拖动平移
+    imgEl.addEventListener('dblclick', (e) => {
       e.stopPropagation(); e.preventDefault();
       _lastNavTime = Date.now();
-      _scale = _scale > 1 ? 1 : 2;
-      applyTransform();
+      if (_scale > 1.01) resetView(true); else zoomAt(e.clientX, e.clientY, 2.5, true);
     });
-    imgEl.addEventListener('mousedown', (e) => e.stopPropagation());
     overlay.addEventListener('wheel', (e) => {
       e.preventDefault();
-      _scale = Math.min(5, Math.max(0.2, _scale + (e.deltaY < 0 ? 0.15 : -0.15)));
-      applyTransform();
+      zoomAt(e.clientX, e.clientY, _scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), false);
     }, { passive: false });
-    let _rotation = 0;
-    const applyTransform = () => {
-      const t = [];
-      if (_scale !== 1) t.push(`scale(${_scale})`);
-      if (_rotation) t.push(`rotate(${_rotation}deg)`);
-      imgEl.style.transform = t.length ? t.join(' ') : '';
-      imgEl.classList.toggle('zoomed', _scale > 1);
-    };
+    let _mPan = null;
+    imgEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse') { e.stopPropagation(); return; }
+      e.stopPropagation();
+      if (_scale <= 1.01) return;
+      _mPan = { x: e.clientX, y: e.clientY, tx: _tx, ty: _ty };
+      try { imgEl.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    imgEl.addEventListener('pointermove', (e) => {
+      if (!_mPan) return;
+      _tx = _mPan.tx + (e.clientX - _mPan.x); _ty = _mPan.ty + (e.clientY - _mPan.y);
+      clampPan(); applyTransform(false);
+    });
+    const _endMPan = () => { _mPan = null; };
+    imgEl.addEventListener('pointerup', _endMPan);
+    imgEl.addEventListener('pointercancel', _endMPan);
+
+    // 触屏：双指捏合(中点为锚)缩放；单指放大后平移；未放大单指下拉渐隐关闭；轻点双击定点放大
+    let _tMode = null, _tDist = 1, _tScale0 = 1, _tPCx = 0, _tPCy = 0;
+    let _tx0 = 0, _ty0 = 0, _px0 = 0, _py0 = 0, _swipe = false, _tapT = 0, _tapX = 0, _tapY = 0;
+    stageEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        const [a, b] = e.touches;
+        _tMode = 'pinch';
+        _tDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+        _tScale0 = _scale;
+        _tPCx = (a.clientX + b.clientX) / 2; _tPCy = (a.clientY + b.clientY) / 2;
+        e.preventDefault();
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        _tMode = _scale > 1.01 ? 'pan' : 'swipe';
+        _px0 = t.clientX; _py0 = t.clientY; _tx0 = _tx; _ty0 = _ty; _swipe = false;
+      }
+    }, { passive: false });
+    stageEl.addEventListener('touchmove', (e) => {
+      if (_tMode === 'pinch' && e.touches.length === 2) {
+        const [a, b] = e.touches;
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+        zoomAt(_tPCx, _tPCy, _tScale0 * (d / _tDist), false);
+        e.preventDefault();
+      } else if (_tMode === 'pan' && e.touches.length === 1) {
+        const t = e.touches[0];
+        _tx = _tx0 + (t.clientX - _px0); _ty = _ty0 + (t.clientY - _py0);
+        clampPan(); applyTransform(false); e.preventDefault();
+      } else if (_tMode === 'swipe' && e.touches.length === 1) {
+        const t = e.touches[0];
+        const dx = t.clientX - _px0, dy = t.clientY - _py0;
+        if (_swipe || (dy > 8 && dy > Math.abs(dx))) {
+          _swipe = true;
+          imgEl.style.transition = 'none';
+          imgEl.style.transform = `translate(${dx * 0.5}px,${dy}px) scale(${Math.max(0.5, 1 - dy / 900)})`;
+          overlay.style.background = `rgba(0,0,0,${Math.max(0.15, 0.92 - dy / 600)})`;
+          e.preventDefault();
+        }
+      }
+    }, { passive: false });
+    stageEl.addEventListener('touchend', (e) => {
+      if (_tMode === 'pinch') {
+        if (_scale < 1.05) resetView(true); else { clampPan(); applyTransform(true); }
+        _tMode = null; return;
+      }
+      if (_tMode === 'swipe') {
+        if (_swipe) {
+          const dy = (e.changedTouches[0]?.clientY || 0) - _py0;
+          overlay.style.background = '';
+          if (dy > 110) { close(); return; }
+          resetView(true);
+        } else {
+          const t = e.changedTouches[0] || {};
+          const now = Date.now();
+          if (now - _tapT < 300 && Math.hypot((t.clientX || 0) - _tapX, (t.clientY || 0) - _tapY) < 30) {
+            _tapT = 0;
+            if (_scale > 1.01) resetView(true); else zoomAt(t.clientX, t.clientY, 2.5, true);
+          } else { _tapT = now; _tapX = t.clientX || 0; _tapY = t.clientY || 0; }
+        }
+        _tMode = null; return;
+      }
+      _tMode = null;
+    }, { passive: false });
+
     overlay.addEventListener('click', (e) => {
       if (Date.now() - _lastNavTime < 300) return;
+      if (_scale > 1.01) return; // 放大态点击不关闭，避免误触
       const t = e.target;
       if (t.closest('.lightbox-nav, .lightbox-close, .lightbox-img, .lightbox-ctx, .lightbox-toolbar, .lightbox-stage')) return;
       if (t === overlay || (t.classList && t.classList.contains('lightbox-shell'))) {
@@ -1974,9 +2145,9 @@ const editor = (() => {
             setTimeout(() => srcImg.classList.remove('img-locate-flash'), 1800);
           }
         }},
-        { label: '顺时针旋转', icon: '↻', action: () => { _rotation = (_rotation + 90) % 360; applyTransform(); } },
-        { label: '逆时针旋转', icon: '↺', action: () => { _rotation = (_rotation - 90 + 360) % 360; applyTransform(); } },
-        { label: '重置', icon: '⟲', action: () => { _scale = 1; _rotation = 0; applyTransform(); } },
+        { label: '顺时针旋转', icon: '↻', action: () => { _rotation = (_rotation + 90) % 360; clampPan(); applyTransform(true); } },
+        { label: '逆时针旋转', icon: '↺', action: () => { _rotation = (_rotation - 90 + 360) % 360; clampPan(); applyTransform(true); } },
+        { label: '重置', icon: '⟲', action: () => { _rotation = 0; resetView(true); } },
         { label: '复制图片', icon: '⎘', action: () => {
           const c = document.createElement('canvas');
           const ctx2 = c.getContext('2d');
@@ -2100,19 +2271,6 @@ const editor = (() => {
     _imgResizeLayer = layer;
   }
 
-  function handleImagePaste(e) {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) insertImageFile(file);
-        return;
-      }
-    }
-  }
-
   async function handleFilePaste(e) {
     if (!window.host?.caps.file) return;
     const items = e.clipboardData?.items;
@@ -2151,48 +2309,6 @@ const editor = (() => {
   function _encodeFileHref(rawPath) {
     const normalized = rawPath.replace(/\\/g, '/');
     return 'file:///' + encodeURI(normalized).replace(/\(/g, '%28').replace(/\)/g, '%29');
-  }
-
-  function handleImageDrop(e) {
-    if (_internalImgDrag) { _internalImgDrag = false; return; }
-    const files = e.dataTransfer?.files;
-    // iOS Safari 从截图缩略图/照片拖入时 files 常为空，文件在 items 里（文件承诺）。
-    // 必须在这里拦下：放过去的话 WebKit 默认行为会插入 blob:/临时 URL 的 <img>，
-    // 本机当场能看、序列化进 Markdown 同步出去后所有设备都是碎图（已发生过）。
-    if (!files?.length) {
-      const items = e.dataTransfer?.items;
-      if (!items?.length) return;
-      const imgItems = Array.from(items).filter(it => it.kind === 'file' && it.type.startsWith('image/'));
-      if (!imgItems.length) return;
-      e.preventDefault();
-      let got = false;
-      for (const it of imgItems) {
-        const file = it.getAsFile();
-        if (file) { got = true; insertImageFile(file); }
-      }
-      if (!got) window.toast?.('未能读取拖入的图片，请改用复制 → 粘贴插入', 'warning');
-      return;
-    }
-    for (const file of files) {
-      if (file.type.startsWith('image/')) {
-        e.preventDefault();
-        insertImageFile(file);
-        return;
-      }
-    }
-    // 非图片文件：插入文件名链接（无完整路径）
-    e.preventDefault();
-    for (const file of files) {
-      if (file.type.startsWith('image/')) continue;
-      const label = file.name || 'file';
-      const href = _encodeFileHref(label);
-      _editor.chain().focus().insertContent({
-        type: 'text',
-        text: label,
-        marks: [{ type: 'link', attrs: { href, target: null } }],
-      }).run();
-    }
-    window.toast?.('提示：复制文件后粘贴可插入完整路径链接', 'info');
   }
 
   function insertImageFile(file) {
@@ -2359,6 +2475,8 @@ const editor = (() => {
   function execCommand(cmd, opts) {
     if (!_editor) return;
     switch (cmd) {
+      case 'undo': _editor.chain().focus().undo().run(); break;
+      case 'redo': _editor.chain().focus().redo().run(); break;
       case 'toggleBold': _editor.chain().focus().toggleBold().run(); break;
       case 'toggleItalic': _editor.chain().focus().toggleItalic().run(); break;
       case 'toggleStrike': _editor.chain().focus().toggleStrike().run(); break;

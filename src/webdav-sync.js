@@ -265,6 +265,14 @@
     throw lastErr;
   }
 
+  // manifest.json 是同步的"总账本"：读到 404(null) 多半是真的不存在，但部分 WebDAV 服务器在
+  // 资源被锁/限流期间偶尔会吐假 404。一旦误判"清单丢失"，空库设备就会用空清单去重建、把云端
+  // 清单清零（已发生）。故 404 后延时再确认一次，仍为 null 才认定真的没有。返回 manifest 或 null。
+  async function _recheckManifest() {
+    await sleep(800);
+    return webdavGetJson('manifest.json', { allow404: true });
+  }
+
   /**
    * 写 manifest.json 并立即读回校验（防 0 字节/截断）。
    * manifest 是同步的"总账本"，一旦在云端变成空文件，所有设备读取都会失败、同步卡死
@@ -934,16 +942,27 @@
     if (_paused && !force) return;
     if (!force && (Date.now() - _lastGetTime < GET_COOLDOWN_MS)) return;
     if (!navigator.onLine) return;
+    // 存储未就绪硬闸：storage.init() 抛错或尚未水合时 _data 为 null（getAll() 返回 null）。
+    // 此时绝不能进同步——否则会拿"空库"去判断、甚至触发 _firstSync 清零云端清单。
+    // 注意：水合成功但确实没有笔记时 getAll() 是空骨架对象（truthy），不受此闸影响，仍可正常下载采纳。
+    if (!window.storage.getAll()) {
+      console.warn('[webdav] 本地存储未就绪（getAll 为 null），本轮同步跳过');
+      if (force) _emit('cloud-sync', { type: 'webdav-sync-fail', error: '本地数据未加载完成或加载失败，已暂停同步以防误清空云端；请重启应用后再试' });
+      return;
+    }
 
     _syncing = true;
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'get', silent });
     try {
-      const manifest = await webdavGetJson('manifest.json', { allow404: true });
+      let manifest = await webdavGetJson('manifest.json', { allow404: true });
       _lastGetTime = Date.now();
       _transientFailStreak = 0; // 读到了（含 404）：清空熔断计数
 
+      // 404 二次确认：规避服务器加锁/限流期间的假 404 被误判成"清单丢失"（会触发空清单重建）
+      if (!manifest) manifest = await _recheckManifest();
+
       if (!manifest) {
-        const data = window.storage.getAll();
+        const data = window.storage.getAll() || {};
         const hasLocalNotes = data.notes && Object.keys(data.notes).length > 0;
         if (hasLocalNotes || _hasDirtyData()) await _firstSync();
         _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-empty', silent });
@@ -1445,6 +1464,12 @@
     if (!_hasDirtyData() && !force) return;
     if (_paused && !force) return;
     if (!navigator.onLine) return;
+    // 存储未就绪硬闸（同 doGet）：_data 为 null 时绝不上传——否则空库 + false-404 会清零云端清单。
+    if (!window.storage.getAll()) {
+      console.warn('[webdav] 本地存储未就绪（getAll 为 null），本轮上传跳过');
+      if (force) _emit('cloud-sync', { type: 'webdav-sync-fail', error: '本地数据未加载完成或加载失败，已暂停同步以防误清空云端；请重启应用后再试' });
+      return;
+    }
 
     _syncing = true;
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'put' });
@@ -1461,10 +1486,17 @@
       // 先取云端 manifest：既用于「上传前单篇冲突防护」(Fix A)，也作为后续 read-modify-write 的基底。
       let manifest = await webdavGetJson('manifest.json', { allow404: true });
       _transientFailStreak = 0; // 读到了（含 404）：清空熔断计数
+      // 404 二次确认：manifest 是总账本，假 404 误判成"清单丢失"会把云端清空（曾发生）
+      if (!manifest) manifest = await _recheckManifest();
       if (!manifest) {
-        // 云端 manifest 不存在（被删除 / 还未建立）：改走完整首次同步，把本地所有笔记重建进 manifest，
-        // 避免这里只写脏笔记、导致云端其它笔记在 manifest 里"孤悬"（文件还在但列表里查不到）。
-        await _firstSync();
+        // 云端 manifest 确实不存在（被删除 / 还未建立）：仅在本地确有内容时才重建，
+        // 避免"空库 + globalDirty（改设置/切笔记本即置位）"把云端清单清零。
+        // —— 这是"清单莫名变 0"的主路径：doPut 旧实现无条件 _firstSync，空库即清零。
+        // _firstSync 内还有一道空库护栏兜底（双保险）。
+        const d = window.storage.getAll() || {};
+        const hasLocal = (d.notes && Object.keys(d.notes).length > 0) || (d.trash && Object.keys(d.trash).length > 0);
+        if (hasLocal) await _firstSync();
+        else _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-skip-empty-local' });
         return;
       }
 
@@ -1654,6 +1686,20 @@
   // ─── 首次同步 ────────────────────────────────────────────────────────────────
   async function _firstSync() {
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'first' });
+    // 空库护栏（数据安全总闸，无条件）：本地 0 笔记 0 回收站时绝不发布清单——不管云端读到什么。
+    // 根因：清零 = false-404（服务器把"其实存在的清单"瞬时回 404）+ 本地恰为空 → _firstSync 拿空库
+    // 覆盖云端真实清单。空库本就没东西可发布；真·新用户等"有了第一篇笔记"再建清单，零代价。
+    // 不再"先探云端是否非空"——那次探测本身也可能 false-404，护栏会失效；直接无条件跳过最稳。
+    {
+      const d0 = window.storage.getAll() || {};
+      const nCount = d0.notes ? Object.keys(d0.notes).length : 0;
+      const tCount = d0.trash ? Object.keys(d0.trash).length : 0;
+      if (nCount === 0 && tCount === 0) {
+        console.warn('[webdav] 本地空库，跳过首次同步（不发布空清单，防 false-404 清零云端）');
+        _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'first-skip-empty-local' });
+        return;
+      }
+    }
     await webdavMkcol('');
     await webdavMkcol('notes');
     await webdavMkcol('trash');
@@ -2441,7 +2487,14 @@
     if (_syncing) await _waitSyncDone();
     _syncing = true;
     try {
-      await webdavDelete('manifest.json');
+      // 本地无任何笔记时从本地重建只会得到空清单 → 反把云端清空。拒绝并明确提示。
+      const d = window.storage.getAll() || {};
+      const hasLocal = (d.notes && Object.keys(d.notes).length > 0) || (d.trash && Object.keys(d.trash).length > 0);
+      if (!hasLocal) {
+        return { ok: false, error: '本地没有笔记，无法从本地重建清单。请在保有完整笔记的设备上执行修复。' };
+      }
+      // 不再 DELETE manifest.json：部分 WebDAV 服务器对加锁文件回 423 Locked（用户实测过），
+      // 且没必要——_firstSync 用 PUT 直接覆盖重写清单（内容寻址的图片/已存在笔记文件会跳过，开销很小）。
       await _firstSync();
       _transientFailStreak = 0;
       _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'repair-manifest' });

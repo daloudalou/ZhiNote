@@ -2414,7 +2414,7 @@ function setupTouchGestures(mq) {
   // 都会把焦点送进 contenteditable，移动端浏览器随即弹键盘，严重干扰非打字操作。
   // 规则：焦点进入编辑器时，回看最近一次 touchstart——
   //   · 落在编辑区文字上（非图片/缩放手柄）→ 用户要打字，放行；
-  //   · 落在键盘工具条及其上弹下拉上 → 键盘已在用，放行；
+  //   · 落在浮动条（含其下拉）上 → 正在格式化，放行；
   //   · 其余（图片、手柄、菜单项、树行、或无触摸=纯程序化聚焦）→ 立即 blur 收回键盘。
   let _lastTouchEl = null, _lastTouchAt = 0;
   document.addEventListener('touchstart', (e) => {
@@ -2426,7 +2426,7 @@ function setupTouchGestures(mq) {
     const el = (Date.now() - _lastTouchAt < 900) ? _lastTouchEl : null;
     const tapText = el && el.closest && el.closest('#editor')
       && !el.closest('img, .md-img-resize-layer, .md-img-resize-handle');
-    const tapKbBar = el && el.closest && el.closest('#kb-toolbar, .bubble-heading-dropdown, .bubble-code-dropdown, .bubble-list-dropdown, .bubble-highlight-dropdown, .bubble-align-dropdown');
+    const tapKbBar = el && el.closest && el.closest('#bubble-menu');
     // 菜单开着时的聚焦都是附带产物。注意 #context-menu 常驻 DOM 靠 .hidden 隐藏，
     // 必须排除——否则 menuOpen 恒为真，所有聚焦被收回，光标永远出不来（t74 的回归）。
     const menuSel = '.md-editor-ctx, .context-menu:not(.hidden)';
@@ -2444,88 +2444,44 @@ function setupTouchGestures(mq) {
     }
   });
 
-  setupMobileKbToolbar();
+  setupKeyboardViewportTracking();
 }
 
-/** 触屏键盘工具条：编辑器聚焦时浮在键盘上方。
- *  只保留浮动条没有的输入辅助（撤销/重做、挖空、缩进、语音、命令面板）——
- *  格式化（加粗/高亮/标题…）由选中文本时的浮动条负责，两处不重复。
- *  mousedown 阻止默认避免抢编辑器焦点导致键盘收起。 */
-function setupMobileKbToolbar() {
-  if (document.getElementById('kb-toolbar')) return;
-  const bar = document.createElement('div');
-  bar.id = 'kb-toolbar';
-  const B = (act, label, title, extra = '') => `<button type="button" data-act="${act}" title="${title}" ${extra}>${label}</button>`;
-  bar.innerHTML = [
-    B('undo', '↶', '撤销'),
-    B('redo', '↷', '重做'),
-    '<span class="kb-sep"></span>',
-    B('clozeMark', '<span style="background:currentColor;border-radius:3px;padding:0 3px;"><span style="color:var(--bg-secondary);">挖</span></span>', '标记挖空（选中文字后点）'),
-    B('outdent', '⇤', '减少缩进'),
-    B('indent', '⇥', '增加缩进'),
-    '<span class="kb-sep"></span>',
-    B('voice', '🎤', '语音输入'),
-    B('palette', '⌘', '命令面板'),
-  ].join('');
-  document.body.appendChild(bar);
-
-  bar.addEventListener('mousedown', (e) => e.preventDefault());
-
-  // ── 按钮（data-act）──
-  bar.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-act]');
-    if (!btn) return;
-    const act = btn.dataset.act;
-    if (act === 'palette') { palette.open(); return; }
-    if (act === 'voice') { toggleVoiceInput(btn); return; }
-    if (act === 'clozeMark') { toggleMarkOnSelection(); return; }
-    const ed = editor.instance && editor.instance();
-    if (!ed) return;
-    try {
-      switch (act) {
-        case 'undo': ed.chain().focus().undo().run(); break;
-        case 'redo': ed.chain().focus().redo().run(); break;
-        case 'indent':
-          if (!ed.chain().focus().sinkListItem('taskItem').run()) ed.chain().focus().sinkListItem('listItem').run();
-          break;
-        case 'outdent':
-          if (!ed.chain().focus().liftListItem('taskItem').run()) ed.chain().focus().liftListItem('listItem').run();
-          break;
-      }
-    } catch (_) {}
-  });
-
-  // iOS/iPadOS：软键盘不压缩布局视口（viewport 的 resizes-content 仅 Android Chrome 支持），
-  // 固定 bottom:0 的工具条会被键盘整个盖住。用 visualViewport 实时算键盘高度，把工具条顶到键盘上方。
-  // 注意基准必须用 documentElement.clientHeight（布局视口）：iOS 的 window.innerHeight 跟随
-  // 视觉视口（键盘弹出即变小），用它算 gap 恒为 0，工具条永远不抬升——这正是 iPad 被盖住的原因。
-  // Android 上布局视口已被键盘压缩，gap 恒为 0，此逻辑自然不生效。
+/** 触屏键盘视口追踪（键盘工具条已整体移除，撤销/重做并入选中文字时的浮动条）。
+ *  职责单一：把软键盘高度实时写进 CSS 变量 --kb-gap，供 dock 浮动条悬于键盘上方。
+ *  iOS/iPadOS：软键盘不压缩布局视口（viewport 的 resizes-content 仅 Android Chrome 支持），
+ *  必须用 visualViewport 算键盘高度；基准用 documentElement.clientHeight（布局视口）——
+ *  iOS 的 window.innerHeight 跟随视觉视口（键盘弹出即变小），用它算 gap 恒为 0。
+ *  Android 上布局视口已被键盘压缩，gap 恒为 0，CSS 兜底为贴屏幕底部，天然正确。 */
+function setupKeyboardViewportTracking() {
   const isIOS = document.body.classList.contains('is-ios');
   let lift = () => {};
+  // 编辑器内是否有"非折叠"文本选区：有则 scrollTo 纠正必须让路，否则会取消 iOS 系统选字
+  const _selActiveInEditor = () => {
+    const s = window.getSelection && window.getSelection();
+    if (!s || s.rangeCount === 0 || s.isCollapsed) return false;
+    const a = s.anchorNode;
+    const node = a && (a.nodeType === 3 ? a.parentElement : a);
+    return !!(node && node.closest && node.closest('#editor .ProseMirror'));
+  };
   if (window.visualViewport) {
     const vv = window.visualViewport;
     lift = () => {
       const layoutH = document.documentElement.clientHeight;
       const gap = Math.max(0, layoutH - vv.height - vv.offsetTop);
-      bar.style.transform = gap > 1 ? `translateY(${-gap}px)` : '';
-      // 暴露键盘高度给 CSS（触屏吸附式浮动条用它悬在键盘上方）
       document.documentElement.style.setProperty('--kb-gap', (gap > 1 ? Math.round(gap) : 0) + 'px');
-      // iOS：工具条的显隐直接跟着软键盘走——键盘在场(gap>60)且焦点在编辑器才显示。
-      // 解决两个顽疾：① 键盘已收起但焦点未走，工具条残留在屏幕底部；
-      // ② 聚焦瞬间键盘还没弹出，工具条先闪现在底部再跳到键盘上方。
-      // 代价：外接实体键盘时（无软键盘）不显示工具条，可接受。
-      if (isIOS) {
-        const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#editor');
-        bar.classList.toggle('visible', gap > 60 && !!focused);
+      // 手指还按着时冻结所有 iOS 布局变动：长按选字需手指静止约 0.5s，期间任何 --vv-h 改动 / kb-open
+      // 切换 / scrollTo 触发的重排都会打断系统长按手势 → "键盘开着时选不中、没高光"的主因。
+      // 松手后由 touchend 的 _mdKbLift 补这一次。（--kb-gap 上面照常更新，只影响浮动条定位、且选字时浮动条本就不显示。）
+      if (isIOS && !window._mdTouchActive) {
         // 键盘在场时把 body 压到可视视口高度：iOS 键盘不压缩布局视口，
         // 不处理的话正文滚动区下半截藏在键盘后面，光标一到下方就被盖住。
         document.documentElement.style.setProperty('--vv-h', Math.round(vv.height) + 'px');
         document.body.classList.toggle('kb-open', gap > 60);
         // 防 Safari 把布局视口顶上去造成整体错位：我们是全屏应用，布局视口滚动永远应该是 0，
-        // 任何残留滚动（键盘、地址栏伸缩等任意来源）都立即归零，否则顶栏/侧栏图标整体偏移跑出屏幕。
-        // 但手指还按着时不纠正——iOS 长按选字过程中系统会微调滚动（放大镜跟随），
-        // 这时强行拽回会打断选字手势（曾被反馈"键盘弹出后长按无法选字"）；松手后由 touchend 补一次
-        if (window.scrollY && !window._mdTouchActive) window.scrollTo(0, 0);
+        // 残留滚动立即归零，否则顶栏/侧栏图标整体偏移跑出屏幕。但编辑器内有非折叠选区时不纠正
+        // （touchend 后系统仍在维持选区，拽回视口会被判为滚动→取消选区）。
+        if (window.scrollY && !_selActiveInEditor()) window.scrollTo(0, 0);
       }
     };
     vv.addEventListener('resize', lift);
@@ -2533,58 +2489,6 @@ function setupMobileKbToolbar() {
     lift();
   }
   window._mdKbLift = lift; // 手势层在 touchend 时补调（按压期间暂缓的滚动纠正）
-
-  // 编辑器聚焦显示、失焦隐藏（小延迟：点工具条按钮瞬间 activeElement 会暂时跳走）
-  // iOS 的"显示"交给上面的 lift 按键盘高度驱动，这里只负责非 iOS 的即时显示
-  document.addEventListener('focusin', (e) => {
-    if (e.target.closest && e.target.closest('#editor')) { if (!isIOS) bar.classList.add('visible'); lift(); }
-  });
-  document.addEventListener('focusout', () => {
-    setTimeout(() => {
-      const ae = document.activeElement;
-      if (!ae || !ae.closest || !ae.closest('#editor')) bar.classList.remove('visible');
-    }, 120);
-  });
-}
-
-/** 语音输入（Web Speech API，Chrome/Edge 安卓与桌面可用）：点一次开始连续听写，再点停止 */
-let _voiceRec = null;
-function toggleVoiceInput(btn) {
-  if (_voiceRec) {
-    try { _voiceRec.stop(); } catch (_) {}
-    return;
-  }
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast('当前浏览器不支持语音识别', 'error'); return; }
-  const rec = new SR();
-  rec.lang = 'zh-CN';
-  rec.continuous = true;
-  rec.interimResults = false;
-  rec.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        const t = (e.results[i][0]?.transcript || '').trim();
-        if (t) editor.insertAtCursor(t);
-      }
-    }
-  };
-  rec.onend = () => {
-    _voiceRec = null;
-    btn?.classList.remove('active');
-    toast('语音输入结束', 'info', { id: 'voice-input', duration: 900 });
-  };
-  rec.onerror = (e) => {
-    _voiceRec = null;
-    btn?.classList.remove('active');
-    if (e.error === 'not-allowed') toast('麦克风权限被拒绝', 'error');
-    else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('语音识别出错：' + e.error, 'error');
-  };
-  try {
-    rec.start();
-    _voiceRec = rec;
-    btn?.classList.add('active');
-    toast('正在听写…再点 🎤 停止', 'info', { id: 'voice-input', duration: 1800 });
-  } catch (_) { toast('语音识别启动失败', 'error'); }
 }
 
 /** 大纲分隔条拖拽调宽。大纲在左时拖右缘（宽 = 起始 + dx），在右时拖左缘（宽 = 起始 - dx）。 */
@@ -5793,7 +5697,6 @@ function openSettingsModal(initialTab) {
             ['回到顶部', '双击顶栏'],
             ['立即同步', '编辑区顶部下拉'],
             ['阅读模式', '三指轻点'],
-            ['命令面板', '键盘工具条 ⌘'],
           ]},
           { title: '笔记树', items: [
             ['多选笔记', '双指轻点行'],
@@ -5801,15 +5704,14 @@ function openSettingsModal(initialTab) {
             ['拖拽排序 / 改层级', '长按拾起后拖动'],
           ]},
           { title: '编辑', items: [
-            ['选中文字', '长按拖选（系统原生）'],
+            ['选中文字', '安卓长按 / 苹果双击，拖手柄扩选（系统原生）'],
             ['右键菜单', '双指轻点正文'],
             ['图片菜单', '双击图片 / 双指轻点'],
             ['表格菜单', '双指轻点表格'],
             ['调整字号', '编辑区双指捏合'],
-            ['撤销', '摇一摇（安卓）'],
-            ['格式工具条', '聚焦输入时自动浮于键盘上方'],
-            ['语音输入', '键盘工具条 🎤'],
-            ['标记挖空', '选中文字 → 工具条「挖」'],
+            ['格式浮动条', '选中文字时悬于键盘上方（含撤销/重做）'],
+            ['撤销', '浮动条 ↶ / 摇一摇（安卓）'],
+            ['标记挖空', '选中文字 → 浮动条高亮'],
           ]},
         ];
         const gesturesHtml = renderGroups(gestureGroups);

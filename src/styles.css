@@ -2133,6 +2133,8 @@ body.hl-applied-preview #editor .ProseMirror mark::selection {
   pointer-events: none !important;
   transition: opacity 0.1s ease, visibility 0.1s;
 }
+/* 仅触屏的按钮（撤销/重做）：桌面隐藏（有 Ctrl+Z），触屏媒体块里恢复显示 */
+#bubble-menu .bubble-touch-only { display: none; }
 body.theme-dark #bubble-menu {
   background: var(--bg-elevated, #2c2c2c);
   border-color: var(--border, #444);
@@ -4007,6 +4009,8 @@ body.theme-gruvbox .md-ctx-sep {
   justify-content: center;
   overflow: hidden;
   z-index: 1;
+  /* 自管理捏合缩放/拖动平移：禁用浏览器默认的双指页面缩放与滚动，否则手势会被系统抢走 */
+  touch-action: none;
 }
 .lightbox-img {
   max-width: 100%;
@@ -4016,12 +4020,16 @@ body.theme-gruvbox .md-ctx-sep {
   box-shadow: 0 8px 40px rgba(0,0,0,0.4);
   user-select: none;
   -webkit-user-drag: none;
-  transition: transform 0.2s ease;
+  touch-action: none;
+  /* 缩放/平移全部走内联 transform（JS 控制 transition 开关），这里不写默认 transition 以免覆盖 */
+  transform-origin: center center;
+  will-change: transform;
 }
 .lightbox-img.zoomed {
-  max-width: none;
-  max-height: none;
-  cursor: zoom-out;
+  cursor: grab;
+}
+.lightbox-img.zoomed:active {
+  cursor: grabbing;
 }
 .lightbox-nav {
   position: absolute;
@@ -4058,6 +4066,14 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .lightbox-prev { left: 16px; }
 .lightbox-next { right: 16px; }
+
+/* 手机端：图片用满宽、上下留白更小，便于看清；箭头更贴边、半透明浮在图上 */
+@media (max-width: 768px) {
+  .lightbox-stage { max-width: 100%; max-height: calc(100% - 56px); }
+  .lightbox-img { max-height: calc(100dvh - 72px); }
+  .lightbox-prev { left: 6px; }
+  .lightbox-next { right: 6px; }
+}
 
 /* ========== 图片缩放手柄定位 ========== */
 .md-img-resize-nw { top: -2px; left: -2px; cursor: nwse-resize; }
@@ -4209,11 +4225,15 @@ body.theme-gruvbox .md-ctx-sep {
   #editor .ProseMirror img { -webkit-touch-callout: none; }
   /* iOS 软键盘在场（app.js 检测加类）：body 压到可视视口高度，正文滚动区不被键盘盖住 */
   body.is-ios.kb-open { height: var(--vv-h, 100vh) !important; }
+  /* 但 body 压缩会把侧栏整列、连带左下角设置等图标一起顶上来。让侧栏脱离压缩、保持整屏高：
+     底部图标留在真实屏底、自然沉到键盘后面，不再上浮。#app 的 contain:paint 会把超出键盘线的部分裁掉。 */
+  body.is-ios.kb-open #sidebar {
+    align-self: flex-start;
+    height: 100vh;
+    height: 100dvh;
+  }
   /* iOS PWA 全屏（viewport-fit=cover）：内容避开状态栏/刘海 */
   body.pwa-standalone #app { padding-top: env(safe-area-inset-top, 0px); }
-  /* 键盘工具条在场时编辑区让出底部一条：最后几行/光标不再藏在工具条后面
-     （#editor 是 #editor-wrap 的 flex 子项，margin 会真实压缩滚动区高度） */
-  body:has(#kb-toolbar.visible) #editor { margin-bottom: calc(46px + env(safe-area-inset-bottom, 0px)); }
   body { overscroll-behavior: none; }
   /* 笔记行加高，手指好点；长按弹菜单时不要选中文字 */
   .tree-row { height: 38px; }
@@ -4222,64 +4242,30 @@ body.theme-gruvbox .md-ctx-sep {
   .tree-actions { display: flex; }
   .tree-act-btn { width: 30px; height: 30px; }
 
-  /* 键盘工具条：编辑器聚焦时浮在键盘上方，一排横滑的 Markdown 高频按钮 */
-  #kb-toolbar {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    z-index: 1500;
-    display: none;
-    align-items: center;
-    gap: 2px;
-    padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px));
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  #kb-toolbar::-webkit-scrollbar { display: none; }
-  #kb-toolbar.visible { display: flex; }
-  /* 平板等宽屏（侧栏常驻）：工具条避开侧栏，不盖住侧栏底部的设置等按钮 */
-  @media (min-width: 769px) {
-    body:not(.sidebar-collapsed) #kb-toolbar { left: calc(var(--sidebar-width) + 1px); }
-  }
-  #kb-toolbar button {
-    flex: 0 0 auto;
-    min-width: 38px; height: 36px;
-    border: none; background: none;
-    border-radius: 6px;
-    color: var(--text-secondary);
-    font-size: 15px;
-    font-family: inherit;
-    padding: 0 6px;
-  }
-  #kb-toolbar button:active { background: var(--bg-tertiary); color: var(--text); }
-  #kb-toolbar button.active { background: var(--bg-tertiary); color: var(--accent); }
-  #kb-toolbar .kb-sep { flex: 0 0 1px; height: 20px; background: var(--border); margin: 0 3px; }
-  /* 触屏分工：选中文本弹吸附式浮动条；键盘工具条只留浮动条没有的输入辅助（撤销/挖空/缩进/语音/面板）。
-     吸附式：浮动条不再跟随选区（iOS 系统选择菜单位置不可控，跟随式总会撞上），
-     固定悬于键盘工具条/屏幕底部上方居中——系统菜单贴着选区弹，永不重叠。
-     --kb-gap 由 app.js lift() 实时写入（iOS 键盘高度；安卓布局视口被键盘压缩，恒为 0）。 */
+  /* 触屏浮动条：dock 模式（不用 BubbleMenu 插件，元素常驻 DOM，editor.js 切 .is-docked-open）。
+     选中文本才出现，不跟随选区。默认（安卓等）悬于底部键盘上方居中；
+     定位：body 有 transform → fixed 包含块=body；kb-open 时 body 已被压到键盘上方(--vv-h)，
+     所以贴 body 底就正好落在键盘正上方，不能再加 --kb-gap（会把条顶出屏幕外）。 */
   #bubble-menu {
+    display: none;
     position: fixed !important;
     left: 50% !important;
     right: auto !important;
     top: auto !important;
-    bottom: calc(var(--kb-gap, 0px) + 14px + env(safe-area-inset-bottom, 0px)) !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 2px) !important;
     transform: translateX(-50%) !important;
     flex-wrap: wrap;
     justify-content: center;
     max-width: calc(100vw - 12px);
     z-index: 10004;
   }
-  /* 浮动条出现时顶替键盘工具条的位置（同槽互斥，键盘上方永远只有一条） */
-  body:has(#kb-toolbar.visible) #bubble-menu {
-    bottom: calc(var(--kb-gap, 0px) + 6px) !important;
-  }
-  body.md-bubble-open #kb-toolbar {
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
+  /* 必须同时恢复 visibility/opacity：基础 #bubble-menu 规则为桌面 BubbleMenu 默认设了
+     visibility:hidden;opacity:0，触屏 dock 只翻 display 的话条仍然不可见——这正是
+     "浮动条一直没显示过"的真因。 */
+  #bubble-menu.is-docked-open { display: flex; visibility: visible; opacity: 1; }
+  /* 撤销/重做：键盘工具条已移除，并入浮动条（仅触屏显示，桌面有 Ctrl+Z） */
+  #bubble-menu .bubble-touch-only { display: inline-flex; }
+  #bubble-menu .bubble-sep.bubble-touch-only { display: inline-block; }
   /* 吸附在底部 → 下拉一律向上弹，否则伸进键盘里 */
   #bubble-menu .bubble-heading-dropdown, #bubble-menu .bubble-code-dropdown, #bubble-menu .bubble-list-dropdown,
   #bubble-menu .bubble-highlight-dropdown, #bubble-menu .bubble-align-dropdown {
@@ -4288,6 +4274,24 @@ body.theme-gruvbox .md-ctx-sep {
     margin-top: 0;
     margin-bottom: 4px;
     transform-origin: bottom center;
+  }
+
+  /* iOS 专属：浮动条改吸在标题栏正下方（像二级工具栏），不再贴键盘——
+     iOS 自带选择菜单(剪切/拷贝/格式…)浮在选区附近、位置不可控，底部跟它总会撞；
+     钉在顶部一劳永逸错开。body top 不随键盘变，顶部定位最稳。 */
+  body.is-ios #bubble-menu {
+    top: calc(env(safe-area-inset-top, 0px) + var(--topbar-height) + 4px) !important;
+    bottom: auto !important;
+  }
+  /* 顶部吸附 → 下拉改向下弹 */
+  body.is-ios #bubble-menu .bubble-heading-dropdown, body.is-ios #bubble-menu .bubble-code-dropdown,
+  body.is-ios #bubble-menu .bubble-list-dropdown, body.is-ios #bubble-menu .bubble-highlight-dropdown,
+  body.is-ios #bubble-menu .bubble-align-dropdown {
+    top: 100%;
+    bottom: auto;
+    margin-top: 4px;
+    margin-bottom: 0;
+    transform-origin: top center;
   }
 
   /* 大纲标题行右侧的「回顶 / 关闭」小按钮（仅触屏注入） */

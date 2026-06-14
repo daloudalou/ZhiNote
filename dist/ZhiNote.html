@@ -2153,6 +2153,8 @@ body.hl-applied-preview #editor .ProseMirror mark::selection {
   pointer-events: none !important;
   transition: opacity 0.1s ease, visibility 0.1s;
 }
+/* 仅触屏的按钮（撤销/重做）：桌面隐藏（有 Ctrl+Z），触屏媒体块里恢复显示 */
+#bubble-menu .bubble-touch-only { display: none; }
 body.theme-dark #bubble-menu {
   background: var(--bg-elevated, #2c2c2c);
   border-color: var(--border, #444);
@@ -4027,6 +4029,8 @@ body.theme-gruvbox .md-ctx-sep {
   justify-content: center;
   overflow: hidden;
   z-index: 1;
+  /* 自管理捏合缩放/拖动平移：禁用浏览器默认的双指页面缩放与滚动，否则手势会被系统抢走 */
+  touch-action: none;
 }
 .lightbox-img {
   max-width: 100%;
@@ -4036,12 +4040,16 @@ body.theme-gruvbox .md-ctx-sep {
   box-shadow: 0 8px 40px rgba(0,0,0,0.4);
   user-select: none;
   -webkit-user-drag: none;
-  transition: transform 0.2s ease;
+  touch-action: none;
+  /* 缩放/平移全部走内联 transform（JS 控制 transition 开关），这里不写默认 transition 以免覆盖 */
+  transform-origin: center center;
+  will-change: transform;
 }
 .lightbox-img.zoomed {
-  max-width: none;
-  max-height: none;
-  cursor: zoom-out;
+  cursor: grab;
+}
+.lightbox-img.zoomed:active {
+  cursor: grabbing;
 }
 .lightbox-nav {
   position: absolute;
@@ -4078,6 +4086,14 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .lightbox-prev { left: 16px; }
 .lightbox-next { right: 16px; }
+
+/* 手机端：图片用满宽、上下留白更小，便于看清；箭头更贴边、半透明浮在图上 */
+@media (max-width: 768px) {
+  .lightbox-stage { max-width: 100%; max-height: calc(100% - 56px); }
+  .lightbox-img { max-height: calc(100dvh - 72px); }
+  .lightbox-prev { left: 6px; }
+  .lightbox-next { right: 6px; }
+}
 
 /* ========== 图片缩放手柄定位 ========== */
 .md-img-resize-nw { top: -2px; left: -2px; cursor: nwse-resize; }
@@ -4229,11 +4245,15 @@ body.theme-gruvbox .md-ctx-sep {
   #editor .ProseMirror img { -webkit-touch-callout: none; }
   /* iOS 软键盘在场（app.js 检测加类）：body 压到可视视口高度，正文滚动区不被键盘盖住 */
   body.is-ios.kb-open { height: var(--vv-h, 100vh) !important; }
+  /* 但 body 压缩会把侧栏整列、连带左下角设置等图标一起顶上来。让侧栏脱离压缩、保持整屏高：
+     底部图标留在真实屏底、自然沉到键盘后面，不再上浮。#app 的 contain:paint 会把超出键盘线的部分裁掉。 */
+  body.is-ios.kb-open #sidebar {
+    align-self: flex-start;
+    height: 100vh;
+    height: 100dvh;
+  }
   /* iOS PWA 全屏（viewport-fit=cover）：内容避开状态栏/刘海 */
   body.pwa-standalone #app { padding-top: env(safe-area-inset-top, 0px); }
-  /* 键盘工具条在场时编辑区让出底部一条：最后几行/光标不再藏在工具条后面
-     （#editor 是 #editor-wrap 的 flex 子项，margin 会真实压缩滚动区高度） */
-  body:has(#kb-toolbar.visible) #editor { margin-bottom: calc(46px + env(safe-area-inset-bottom, 0px)); }
   body { overscroll-behavior: none; }
   /* 笔记行加高，手指好点；长按弹菜单时不要选中文字 */
   .tree-row { height: 38px; }
@@ -4242,64 +4262,30 @@ body.theme-gruvbox .md-ctx-sep {
   .tree-actions { display: flex; }
   .tree-act-btn { width: 30px; height: 30px; }
 
-  /* 键盘工具条：编辑器聚焦时浮在键盘上方，一排横滑的 Markdown 高频按钮 */
-  #kb-toolbar {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    z-index: 1500;
-    display: none;
-    align-items: center;
-    gap: 2px;
-    padding: 4px 6px calc(4px + env(safe-area-inset-bottom, 0px));
-    background: var(--bg-secondary);
-    border-top: 1px solid var(--border);
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-  }
-  #kb-toolbar::-webkit-scrollbar { display: none; }
-  #kb-toolbar.visible { display: flex; }
-  /* 平板等宽屏（侧栏常驻）：工具条避开侧栏，不盖住侧栏底部的设置等按钮 */
-  @media (min-width: 769px) {
-    body:not(.sidebar-collapsed) #kb-toolbar { left: calc(var(--sidebar-width) + 1px); }
-  }
-  #kb-toolbar button {
-    flex: 0 0 auto;
-    min-width: 38px; height: 36px;
-    border: none; background: none;
-    border-radius: 6px;
-    color: var(--text-secondary);
-    font-size: 15px;
-    font-family: inherit;
-    padding: 0 6px;
-  }
-  #kb-toolbar button:active { background: var(--bg-tertiary); color: var(--text); }
-  #kb-toolbar button.active { background: var(--bg-tertiary); color: var(--accent); }
-  #kb-toolbar .kb-sep { flex: 0 0 1px; height: 20px; background: var(--border); margin: 0 3px; }
-  /* 触屏分工：选中文本弹吸附式浮动条；键盘工具条只留浮动条没有的输入辅助（撤销/挖空/缩进/语音/面板）。
-     吸附式：浮动条不再跟随选区（iOS 系统选择菜单位置不可控，跟随式总会撞上），
-     固定悬于键盘工具条/屏幕底部上方居中——系统菜单贴着选区弹，永不重叠。
-     --kb-gap 由 app.js lift() 实时写入（iOS 键盘高度；安卓布局视口被键盘压缩，恒为 0）。 */
+  /* 触屏浮动条：dock 模式（不用 BubbleMenu 插件，元素常驻 DOM，editor.js 切 .is-docked-open）。
+     选中文本才出现，不跟随选区。默认（安卓等）悬于底部键盘上方居中；
+     定位：body 有 transform → fixed 包含块=body；kb-open 时 body 已被压到键盘上方(--vv-h)，
+     所以贴 body 底就正好落在键盘正上方，不能再加 --kb-gap（会把条顶出屏幕外）。 */
   #bubble-menu {
+    display: none;
     position: fixed !important;
     left: 50% !important;
     right: auto !important;
     top: auto !important;
-    bottom: calc(var(--kb-gap, 0px) + 14px + env(safe-area-inset-bottom, 0px)) !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 2px) !important;
     transform: translateX(-50%) !important;
     flex-wrap: wrap;
     justify-content: center;
     max-width: calc(100vw - 12px);
     z-index: 10004;
   }
-  /* 浮动条出现时顶替键盘工具条的位置（同槽互斥，键盘上方永远只有一条） */
-  body:has(#kb-toolbar.visible) #bubble-menu {
-    bottom: calc(var(--kb-gap, 0px) + 6px) !important;
-  }
-  body.md-bubble-open #kb-toolbar {
-    opacity: 0 !important;
-    pointer-events: none !important;
-  }
+  /* 必须同时恢复 visibility/opacity：基础 #bubble-menu 规则为桌面 BubbleMenu 默认设了
+     visibility:hidden;opacity:0，触屏 dock 只翻 display 的话条仍然不可见——这正是
+     "浮动条一直没显示过"的真因。 */
+  #bubble-menu.is-docked-open { display: flex; visibility: visible; opacity: 1; }
+  /* 撤销/重做：键盘工具条已移除，并入浮动条（仅触屏显示，桌面有 Ctrl+Z） */
+  #bubble-menu .bubble-touch-only { display: inline-flex; }
+  #bubble-menu .bubble-sep.bubble-touch-only { display: inline-block; }
   /* 吸附在底部 → 下拉一律向上弹，否则伸进键盘里 */
   #bubble-menu .bubble-heading-dropdown, #bubble-menu .bubble-code-dropdown, #bubble-menu .bubble-list-dropdown,
   #bubble-menu .bubble-highlight-dropdown, #bubble-menu .bubble-align-dropdown {
@@ -4308,6 +4294,24 @@ body.theme-gruvbox .md-ctx-sep {
     margin-top: 0;
     margin-bottom: 4px;
     transform-origin: bottom center;
+  }
+
+  /* iOS 专属：浮动条改吸在标题栏正下方（像二级工具栏），不再贴键盘——
+     iOS 自带选择菜单(剪切/拷贝/格式…)浮在选区附近、位置不可控，底部跟它总会撞；
+     钉在顶部一劳永逸错开。body top 不随键盘变，顶部定位最稳。 */
+  body.is-ios #bubble-menu {
+    top: calc(env(safe-area-inset-top, 0px) + var(--topbar-height) + 4px) !important;
+    bottom: auto !important;
+  }
+  /* 顶部吸附 → 下拉改向下弹 */
+  body.is-ios #bubble-menu .bubble-heading-dropdown, body.is-ios #bubble-menu .bubble-code-dropdown,
+  body.is-ios #bubble-menu .bubble-list-dropdown, body.is-ios #bubble-menu .bubble-highlight-dropdown,
+  body.is-ios #bubble-menu .bubble-align-dropdown {
+    top: 100%;
+    bottom: auto;
+    margin-top: 4px;
+    margin-bottom: 0;
+    transform-origin: top center;
   }
 
   /* 大纲标题行右侧的「回顶 / 关闭」小按钮（仅触屏注入） */
@@ -4499,6 +4503,9 @@ body.theme-gruvbox .md-ctx-sep {
         <div id="editor-wrap" class="hidden">
           <!-- Bubble Menu (浮动工具栏) -->
           <div id="bubble-menu" class="bubble-menu">
+            <button data-cmd="undo" class="bubble-touch-only" title="撤销"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.2 2.5L3 13"/></svg></button>
+            <button data-cmd="redo" class="bubble-touch-only" title="重做"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6.2 2.5L21 13"/></svg></button>
+            <span class="bubble-sep bubble-touch-only"></span>
             <button data-cmd="copySelection"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg></button>
             <span class="bubble-sep"></span>
             <button data-cmd="toggleBold"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 11H12.5C13.8807 11 15 9.88071 15 8.5C15 7.11929 13.8807 6 12.5 6H8V11ZM18 15.5C18 17.9853 15.9853 20 13.5 20H6V4H12.5C14.9853 4 17 6.01472 17 8.5C17 9.70431 16.5269 10.7981 15.7564 11.6058C17.0979 12.3847 18 13.837 18 15.5ZM8 13V18H13.5C14.8807 18 16 16.8807 16 15.5C16 14.1193 14.8807 13 13.5 13H8Z"/></svg></button>
@@ -4610,7 +4617,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.0.197';
+    window.__MD_VER__ = 'v1.0.198';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -72969,6 +72976,14 @@ window.storage = storage;
     throw lastErr;
   }
 
+  // manifest.json 是同步的"总账本"：读到 404(null) 多半是真的不存在，但部分 WebDAV 服务器在
+  // 资源被锁/限流期间偶尔会吐假 404。一旦误判"清单丢失"，空库设备就会用空清单去重建、把云端
+  // 清单清零（已发生）。故 404 后延时再确认一次，仍为 null 才认定真的没有。返回 manifest 或 null。
+  async function _recheckManifest() {
+    await sleep(800);
+    return webdavGetJson('manifest.json', { allow404: true });
+  }
+
   /**
    * 写 manifest.json 并立即读回校验（防 0 字节/截断）。
    * manifest 是同步的"总账本"，一旦在云端变成空文件，所有设备读取都会失败、同步卡死
@@ -73638,16 +73653,27 @@ window.storage = storage;
     if (_paused && !force) return;
     if (!force && (Date.now() - _lastGetTime < GET_COOLDOWN_MS)) return;
     if (!navigator.onLine) return;
+    // 存储未就绪硬闸：storage.init() 抛错或尚未水合时 _data 为 null（getAll() 返回 null）。
+    // 此时绝不能进同步——否则会拿"空库"去判断、甚至触发 _firstSync 清零云端清单。
+    // 注意：水合成功但确实没有笔记时 getAll() 是空骨架对象（truthy），不受此闸影响，仍可正常下载采纳。
+    if (!window.storage.getAll()) {
+      console.warn('[webdav] 本地存储未就绪（getAll 为 null），本轮同步跳过');
+      if (force) _emit('cloud-sync', { type: 'webdav-sync-fail', error: '本地数据未加载完成或加载失败，已暂停同步以防误清空云端；请重启应用后再试' });
+      return;
+    }
 
     _syncing = true;
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'get', silent });
     try {
-      const manifest = await webdavGetJson('manifest.json', { allow404: true });
+      let manifest = await webdavGetJson('manifest.json', { allow404: true });
       _lastGetTime = Date.now();
       _transientFailStreak = 0; // 读到了（含 404）：清空熔断计数
 
+      // 404 二次确认：规避服务器加锁/限流期间的假 404 被误判成"清单丢失"（会触发空清单重建）
+      if (!manifest) manifest = await _recheckManifest();
+
       if (!manifest) {
-        const data = window.storage.getAll();
+        const data = window.storage.getAll() || {};
         const hasLocalNotes = data.notes && Object.keys(data.notes).length > 0;
         if (hasLocalNotes || _hasDirtyData()) await _firstSync();
         _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-empty', silent });
@@ -74149,6 +74175,12 @@ window.storage = storage;
     if (!_hasDirtyData() && !force) return;
     if (_paused && !force) return;
     if (!navigator.onLine) return;
+    // 存储未就绪硬闸（同 doGet）：_data 为 null 时绝不上传——否则空库 + false-404 会清零云端清单。
+    if (!window.storage.getAll()) {
+      console.warn('[webdav] 本地存储未就绪（getAll 为 null），本轮上传跳过');
+      if (force) _emit('cloud-sync', { type: 'webdav-sync-fail', error: '本地数据未加载完成或加载失败，已暂停同步以防误清空云端；请重启应用后再试' });
+      return;
+    }
 
     _syncing = true;
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'put' });
@@ -74165,10 +74197,17 @@ window.storage = storage;
       // 先取云端 manifest：既用于「上传前单篇冲突防护」(Fix A)，也作为后续 read-modify-write 的基底。
       let manifest = await webdavGetJson('manifest.json', { allow404: true });
       _transientFailStreak = 0; // 读到了（含 404）：清空熔断计数
+      // 404 二次确认：manifest 是总账本，假 404 误判成"清单丢失"会把云端清空（曾发生）
+      if (!manifest) manifest = await _recheckManifest();
       if (!manifest) {
-        // 云端 manifest 不存在（被删除 / 还未建立）：改走完整首次同步，把本地所有笔记重建进 manifest，
-        // 避免这里只写脏笔记、导致云端其它笔记在 manifest 里"孤悬"（文件还在但列表里查不到）。
-        await _firstSync();
+        // 云端 manifest 确实不存在（被删除 / 还未建立）：仅在本地确有内容时才重建，
+        // 避免"空库 + globalDirty（改设置/切笔记本即置位）"把云端清单清零。
+        // —— 这是"清单莫名变 0"的主路径：doPut 旧实现无条件 _firstSync，空库即清零。
+        // _firstSync 内还有一道空库护栏兜底（双保险）。
+        const d = window.storage.getAll() || {};
+        const hasLocal = (d.notes && Object.keys(d.notes).length > 0) || (d.trash && Object.keys(d.trash).length > 0);
+        if (hasLocal) await _firstSync();
+        else _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-skip-empty-local' });
         return;
       }
 
@@ -74358,6 +74397,20 @@ window.storage = storage;
   // ─── 首次同步 ────────────────────────────────────────────────────────────────
   async function _firstSync() {
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'first' });
+    // 空库护栏（数据安全总闸，无条件）：本地 0 笔记 0 回收站时绝不发布清单——不管云端读到什么。
+    // 根因：清零 = false-404（服务器把"其实存在的清单"瞬时回 404）+ 本地恰为空 → _firstSync 拿空库
+    // 覆盖云端真实清单。空库本就没东西可发布；真·新用户等"有了第一篇笔记"再建清单，零代价。
+    // 不再"先探云端是否非空"——那次探测本身也可能 false-404，护栏会失效；直接无条件跳过最稳。
+    {
+      const d0 = window.storage.getAll() || {};
+      const nCount = d0.notes ? Object.keys(d0.notes).length : 0;
+      const tCount = d0.trash ? Object.keys(d0.trash).length : 0;
+      if (nCount === 0 && tCount === 0) {
+        console.warn('[webdav] 本地空库，跳过首次同步（不发布空清单，防 false-404 清零云端）');
+        _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'first-skip-empty-local' });
+        return;
+      }
+    }
     await webdavMkcol('');
     await webdavMkcol('notes');
     await webdavMkcol('trash');
@@ -75145,7 +75198,14 @@ window.storage = storage;
     if (_syncing) await _waitSyncDone();
     _syncing = true;
     try {
-      await webdavDelete('manifest.json');
+      // 本地无任何笔记时从本地重建只会得到空清单 → 反把云端清空。拒绝并明确提示。
+      const d = window.storage.getAll() || {};
+      const hasLocal = (d.notes && Object.keys(d.notes).length > 0) || (d.trash && Object.keys(d.trash).length > 0);
+      if (!hasLocal) {
+        return { ok: false, error: '本地没有笔记，无法从本地重建清单。请在保有完整笔记的设备上执行修复。' };
+      }
+      // 不再 DELETE manifest.json：部分 WebDAV 服务器对加锁文件回 423 Locked（用户实测过），
+      // 且没必要——_firstSync 用 PUT 直接覆盖重写清单（内容寻址的图片/已存在笔记文件会跳过，开销很小）。
       await _firstSync();
       _transientFailStreak = 0;
       _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'repair-manifest' });
@@ -81218,20 +81278,13 @@ const editor = (() => {
     // 导致 md-bubble-hidden 永久卡在被 detach 的元素上 → 浮动菜单"再也不出现、重开也无效"。
     // 这里统一改为：抑制状态存布尔量（shouldShow 读它），class 始终切在 bubbleMenuEl 引用上。
     let _bubbleSuppressed = false;
+    let _updateDockBar = null; // 触屏 dock 浮动条的显隐刷新（创建编辑器后赋值）
     window.setBubbleSuppressed = (v) => {
       _bubbleSuppressed = !!v;
       if (bubbleMenuEl) bubbleMenuEl.classList.toggle('md-bubble-hidden', !!v);
+      if (_updateDockBar) _updateDockBar();
     };
     window.isBubbleSuppressed = () => _bubbleSuppressed;
-    // 触屏：浮动条与键盘工具条同槽互斥——浮动条（选中文字时）出现就藏键盘工具条，
-    // 键盘上方永远只有一条。BubbleMenu 的显示/隐藏 = 挂载/摘除 DOM，用 MutationObserver 跟踪。
-    if (_coarsePtr) {
-      const updBubbleOpen = () => {
-        const open = !!bubbleMenuEl && bubbleMenuEl.isConnected && !bubbleMenuEl.classList.contains('md-bubble-hidden');
-        document.body.classList.toggle('md-bubble-open', open);
-      };
-      new MutationObserver(updBubbleOpen).observe(document.body, { childList: true, subtree: true });
-    }
     editorEl.addEventListener('mouseup', (e) => {
       if (!_bubbleLocked) _lastMouseUp = { x: e.clientX, y: e.clientY };
     });
@@ -81299,7 +81352,11 @@ const editor = (() => {
         Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
         MathInline,
         MathBlock,
-        BubbleMenu.configure({
+        // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
+        // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
+        // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
+        //   CSS 固定悬于键盘上方（--kb-gap），不再依赖插件的挂载/卸载与焦点判断。
+        ...(_coarsePtr ? [] : [BubbleMenu.configure({
           element: bubbleMenuEl,
           shouldShow: ({ editor: ed, state }) => {
             if (_bubbleSuppressed) return false;
@@ -81321,8 +81378,7 @@ const editor = (() => {
               try {
                 const range = sel.getRangeAt(0);
                 const rects = range.getClientRects();
-                // 桌面锚选区首行（菜单在上方）；触屏锚末行（菜单在下方，避开系统菜单）
-                if (rects && rects.length) rect = _coarsePtr ? rects[rects.length - 1] : rects[0];
+                if (rects && rects.length) rect = rects[0];
                 if (!rect || (!rect.width && !rect.height)) rect = range.getBoundingClientRect();
               } catch (_) {}
             }
@@ -81342,9 +81398,9 @@ const editor = (() => {
           },
           updateDelay: 80,
           options: {
-            placement: _coarsePtr ? 'bottom' : 'top',
-            offset: { mainAxis: _coarsePtr ? 14 : 8 },
-            flip: { fallbackPlacements: [_coarsePtr ? 'top' : 'bottom'] },
+            placement: 'top',
+            offset: { mainAxis: 8 },
+            flip: { fallbackPlacements: ['bottom'] },
             shift: { padding: 8 },
           },
           tippyOptions: {
@@ -81352,7 +81408,7 @@ const editor = (() => {
             animation: 'shift-away-subtle',
             moveTransition: 'transform 0.15s cubic-bezier(.2,0,.4,1)',
           },
-        }),
+        })]),
       ],
       editorProps: {
         attributes: { class: 'tiptap-editor' },
@@ -81447,6 +81503,18 @@ const editor = (() => {
           return text;
         },
         handlePaste: (view, event) => {
+          // 图片在 PM 层接管（先于 ProseMirror 解析剪贴板 HTML）：iOS/Safari 粘贴图片时
+          // 剪贴板常同时带一份 webkit-fake-url:// 的 HTML 表示，DOM 层监听跑在 PM 之后拦不住，
+          // 一旦进文档同步出去就是所有设备都打不开的碎图。
+          const clipItems = event.clipboardData?.items;
+          if (clipItems) {
+            for (const item of clipItems) {
+              if (item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) { insertImageFile(file); return true; }
+              }
+            }
+          }
           const { $from } = view.state.selection;
           if ($from.parent.type.name === 'codeBlock') {
             // 代码块内：强制只插入纯文本，避免剪贴板里的 text/html 被解析成段落/表格而"跑出"代码块
@@ -81471,6 +81539,52 @@ const editor = (() => {
           }
           return false;
         },
+        // 文件/图片拖入在 PM 层接管（运行先于 ProseMirror 默认的"解析 dataTransfer HTML 插入"）。
+        // iOS 从照片/截图缩略图拖入时，dataTransfer 里是 items 文件承诺 + 一份 blob:/webkit-fake-url
+        // 的 HTML 表示；旧实现挂在 DOM 事件上时序太晚，PM 先把 HTML 表示插进文档 → 同步后碎图。
+        handleDrop: (view, event, slice, moved) => {
+          if (moved || _internalImgDrag) { _internalImgDrag = false; return false; } // 编辑器内部拖动（图片换位）走 PM 默认
+          const dt = event.dataTransfer;
+          if (!dt) return false;
+          let files = Array.from(dt.files || []);
+          const hadImgItems = !files.length && dt.items
+            && Array.from(dt.items).some((it) => it.kind === 'file' && it.type.startsWith('image/'));
+          if (!files.length && dt.items) {
+            files = Array.from(dt.items)
+              .filter((it) => it.kind === 'file')
+              .map((it) => it.getAsFile())
+              .filter(Boolean);
+          }
+          if (!files.length) {
+            if (hadImgItems) {
+              // 文件承诺读不出来：宁可不插也不让 PM 插入碎图地址
+              window.toast?.('未能读取拖入的图片，请改用复制 → 粘贴插入', 'warning');
+              return true;
+            }
+            return false; // 纯文本/HTML 拖放交给 PM（transformPastedHTML 已剥不可移植图片）
+          }
+          const hit = view.posAtCoords({ left: event.clientX, top: event.clientY });
+          if (hit) { try { _editor.commands.setTextSelection(hit.pos); } catch (_) {} }
+          const imgs = files.filter((f) => f.type.startsWith('image/'));
+          for (const f of imgs) insertImageFile(f);
+          if (!imgs.length) {
+            // 非图片文件：插入文件名链接（浏览器拿不到完整路径）
+            for (const f of files) {
+              const label = f.name || 'file';
+              _editor.chain().focus().insertContent({
+                type: 'text',
+                text: label,
+                marks: [{ type: 'link', attrs: { href: _encodeFileHref(label), target: null } }],
+              }).run();
+            }
+            window.toast?.('提示：复制文件后粘贴可插入完整路径链接', 'info');
+          }
+          return true; // 已接管：PM 不再解析 dataTransfer 里的 HTML 表示
+        },
+        // 粘贴/拖放的 HTML 进 schema 前剥掉 webkit-fake-url 图片：该地址只在产生它的
+        // WebKit 会话内有效且 fetch 不到（兜底清洗也救不回），进文档必成碎图。
+        // blob: 不在这里剥——本会话内还活着，留给 _scrubForeignImageSrcs 抢救入库。
+        transformPastedHTML: (html) => html.replace(/<img\b[^>]*src=["']?webkit-fake-url:[^>]*>/gi, ''),
       },
       onUpdate: ({ editor: ed }) => {
         if (_suppressInput) return;
@@ -81480,6 +81594,53 @@ const editor = (() => {
     });
 
     _ensureMarkedPatched();
+
+    // ── 触屏 dock 浮动条控制器（替代 BubbleMenu 插件）──
+    // 显隐只由「选区是否非空」驱动（外加抑制态/右键菜单），不看焦点——
+    // iOS 上系统选区手柄、键盘收起等会乱发 focus/blur，靠焦点判断正是以前"浮动条不出现"的根源。
+    // 定位完全交给 CSS（iOS 固定吸在标题栏下方、其它触屏悬于底部），JS 不碰几何。
+    if (_coarsePtr && bubbleMenuEl) {
+      // 必须挂到 body 下：#app/#main 的 contain:layout paint 会让 fixed 以它们为包含块并裁剪，
+      // 浮动条会错位/被裁掉（以前是 BubbleMenu 插件显示时替我们挪的）
+      if (bubbleMenuEl.parentElement !== document.body) document.body.appendChild(bubbleMenuEl);
+
+      // 键盘完全交给浏览器原生处理：点正文即弹键盘、点别处即收，和系统所有 App 一致。
+      // 不再屏蔽 inputmode、不再造唤起浮标（iOS 无法程序化唤起软键盘，硬造只会时灵时不灵）。
+      // 残留清理：旧版本可能在 body 上留过 #kb-fab / #kb-primer，干掉以防显示。
+      const _oldFab = document.getElementById('kb-fab');
+      if (_oldFab) _oldFab.remove();
+      const _oldPrimer = document.getElementById('kb-primer');
+      if (_oldPrimer) _oldPrimer.remove();
+
+      const updateDock = () => {
+        let open = false;
+        // 手指还按着（_mdTouchActive）时不弹条：否则长按选字、拖选区手柄过程中浮动条会突然
+        // 出现在手指下方/底部，挡住或抢走 iOS 选区手柄的触摸，正是"键盘开着时很难选中"的帮凶。
+        if (_editor && !_bubbleSuppressed && !window._mdTouchActive && !document.querySelector('.md-editor-ctx')) {
+          const sel = _editor.state.selection;
+          let nonEmpty = sel.from !== sel.to && !sel.node && !_editor.isActive('image');
+          // iOS 系统原生选字（长按/双击/拖手柄）只改 DOM 选区，未必同步进 PM 的 state.selection，
+          // 只看 PM 选区会导致浮动条"从来不出现"（用户反馈 #3）。补判 DOM 选区作为兜底。
+          if (!nonEmpty) {
+            const s = window.getSelection && window.getSelection();
+            if (s && s.rangeCount && !s.isCollapsed) {
+              const a = s.anchorNode, node = a && (a.nodeType === 3 ? a.parentElement : a);
+              if (node && node.closest && node.closest('#editor .ProseMirror') && !node.closest('img')) nonEmpty = true;
+            }
+          }
+          open = nonEmpty;
+        }
+        bubbleMenuEl.classList.toggle('is-docked-open', open);
+      };
+      _updateDockBar = updateDock;
+      _editor.on('selectionUpdate', updateDock);
+      _editor.on('destroy', () => { if (_updateDockBar === updateDock) _updateDockBar = null; });
+      // DOM 选区变化也驱动（iOS 原生选字的唯一可靠信号）；rAF 合并抖动
+      document.addEventListener('selectionchange', () => requestAnimationFrame(updateDock));
+      // 手指松开后下一帧补求值一次：选字拖动期间被压住没弹的条，松手后再显示（此时 _mdTouchActive 已复位）
+      document.addEventListener('touchend', () => requestAnimationFrame(updateDock), { passive: true });
+      updateDock();
+    }
 
     if (bubbleMenuEl) {
       const headingTrigger = document.getElementById('bubble-heading-trigger');
@@ -81584,6 +81745,7 @@ const editor = (() => {
         const btn = e.target.closest('button[data-cmd]');
         if (!btn) return;
         const cmd = btn.dataset.cmd;
+        // 触屏点格式按钮是排版而非打字：execCommand 内 .chain().focus() 会聚焦编辑器（键盘交给浏览器）。
         if (cmd === 'copySelection') {
           document.execCommand('copy');
         } else if (cmd === 'setHighlight') {
@@ -81719,7 +81881,7 @@ const editor = (() => {
         }
       }
     }, true);
-    editorEl.addEventListener('paste', handleImagePaste);
+    // 图片粘贴 / 文件拖入已上移到 editorProps.handlePaste / handleDrop（PM 层，时序先于 PM 默认解析）
     editorEl.addEventListener('paste', handleFilePaste);
 
     // Inline code hover copy button (floating overlay, not injected into code element)
@@ -81789,8 +81951,6 @@ const editor = (() => {
       if (related && codeEl.contains(related)) return;
       _scheduleHideInlineCopy();
     });
-    editorEl.addEventListener('drop', handleImageDrop);
-
     async function _openLocalFile(href) {
       const path = decodeURIComponent(href.replace(/^file:\/\/\//, ''));
       if (window.host?.caps.file) {
@@ -81878,95 +82038,57 @@ const editor = (() => {
       openImageGallery(img);
     });
 
-    // 触屏：自实现图片双击检测——iOS 对触摸双击经常不派发 dblclick，上面的处理在 iPhone 上时灵时不灵。
-    // 两次单指轻点（<350ms、位移<30px）落在同一图片 → 弹图片菜单，并阻止合成 click/dblclick。
+    // 触屏图片交互（修复 iOS"点过一次键盘后点图就弹键盘 / 双击不出菜单"的总根）：
+    // 把接管提前到 touchstart——单指落在图片上立刻 preventDefault，掐掉 iOS 原生的
+    // "聚焦 contenteditable + 放光标 + 弹软键盘"。无论编辑器当前是否已聚焦都拦得住。
+    // 根因：原先的"防误唤"只在 focusin（失焦→聚焦那一下）生效；键盘已弹出=已聚焦时再点图
+    // 不再触发 focusin，防误唤彻底失效，于是点图被原生当成"移动光标"，键盘赖着不走、双击被原生抢。
+    // touchstart 拦下后，合成的 click/dblclick 也不再派发，双击检测改由这里的 touchend 自管理。
     let _imgTap = { t: 0, x: 0, y: 0 };
+    let _imgTouchOn = false;
+    const _blurEditor = () => {
+      const ae = document.activeElement;
+      if (ae && ae.closest && ae.closest('#editor .ProseMirror')) { try { ae.blur(); } catch (_) {} }
+    };
+    editorEl.addEventListener('touchstart', (e) => {
+      // 仅单指落在图片上才接管；多指（双指唤菜单/缩放）放行给手势中枢
+      if (e.touches.length !== 1) { _imgTouchOn = false; return; }
+      const img = e.target.closest && e.target.closest('img');
+      _imgTouchOn = !!img;
+      if (img && e.cancelable) e.preventDefault();
+    }, { passive: false });
     editorEl.addEventListener('touchend', (e) => {
-      if (e.touches.length || e.changedTouches.length !== 1) { _imgTap.t = 0; return; }
+      if (!_imgTouchOn) return;
+      _imgTouchOn = false;
+      if (e.changedTouches.length !== 1) { _imgTap.t = 0; return; }
       const t = e.changedTouches[0];
       const img = e.target.closest && e.target.closest('img');
       if (!img) { _imgTap.t = 0; return; }
+      if (e.cancelable) e.preventDefault();
+      _blurEditor(); // 点图绝不是要打字 → 主动收键盘
       const now = Date.now();
       if (now - _imgTap.t < 350 && Math.hypot(t.clientX - _imgTap.x, t.clientY - _imgTap.y) < 30) {
+        // 双击 → 图片菜单（「查看大图」是第一项）
         _imgTap.t = 0;
-        if (e.cancelable) e.preventDefault();
-        clearTimeout(_imgClickTimer);
-        _imgClickTimer = null;
+        clearTimeout(_imgClickTimer); _imgClickTimer = null;
         img.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: t.clientX, clientY: t.clientY }));
       } else {
+        // 单击 → 选中图片（出缩放手柄）；延时等待可能的第二击
         _imgTap = { t: now, x: t.clientX, y: t.clientY };
+        clearTimeout(_imgClickTimer);
+        _imgClickTimer = setTimeout(() => {
+          _imgClickTimer = null;
+          selectImageNode(img);
+          _blurEditor(); // setNodeSelection 可能重新聚焦 → 再收一次
+        }, 320);
       }
     }, { passive: false });
 
-    // iOS：聚焦编辑区里长按的原生行为是"放大镜移光标"而非选词（安卓是选词），键盘弹出后几乎没法选字。
-    // 自实现长按选词：单指按住 420ms 位移 <10px → 程序化选中按点处的词（Intl.Segmenter 分词，
-    // 中文也能选出词组），DOM 选区一出系统自动配手柄，可继续拖动扩选。仅 iOS 启用，不动安卓原生选词。
-    const _isIOSSel = /iPad|iPhone|iPod/.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    if (_isIOSSel && _coarsePtr) {
-      let _lpTimer = null, _lpStart = null, _lpSel = null;
-      const _lpCancel = () => { if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; } };
-      const _wordRangeAt = (x, y) => {
-        const view = _editor && _editor.view;
-        if (!view) return null;
-        const hit = view.posAtCoords({ left: x, top: y });
-        if (!hit) return null;
-        const $pos = view.state.doc.resolve(hit.pos);
-        if (!$pos.parent.isTextblock) return null;
-        // 非文本叶子（公式/图片等）占 1 位，用占位符对齐"字符偏移 ↔ 文档位置"
-        const text = $pos.parent.textBetween(0, $pos.parent.content.size, '\u0000', '\u0000');
-        let off = Math.min($pos.parentOffset, Math.max(0, text.length - 1));
-        if (!text.length) return null;
-        let from = -1, to = -1;
-        if (typeof Intl !== 'undefined' && Intl.Segmenter) {
-          try {
-            for (const s of new Intl.Segmenter('zh-Hans', { granularity: 'word' }).segment(text)) {
-              if (off >= s.index && off < s.index + s.segment.length) {
-                if (s.segment.trim() && s.segment !== '\u0000') { from = s.index; to = s.index + s.segment.length; }
-                break;
-              }
-            }
-          } catch (_) {}
-        }
-        if (from < 0) { // 兜底：按"字母数字/汉字"连续段向两侧扩
-          const isW = (ch) => /[A-Za-z0-9_\u4e00-\u9fff]/.test(ch);
-          if (!isW(text[off])) return null;
-          from = off; to = off + 1;
-          while (from > 0 && isW(text[from - 1])) from--;
-          while (to < text.length && isW(text[to])) to++;
-        }
-        const base = $pos.start();
-        return { from: base + from, to: base + to };
-      };
-      editorEl.addEventListener('touchstart', (e) => {
-        _lpCancel(); _lpSel = null;
-        if (e.touches.length !== 1 || e.target.closest('img')) return;
-        const t = e.touches[0];
-        _lpStart = { x: t.clientX, y: t.clientY };
-        _lpTimer = setTimeout(() => {
-          _lpTimer = null;
-          const r = _wordRangeAt(_lpStart.x, _lpStart.y);
-          if (!r || r.to <= r.from) return;
-          _lpSel = r;
-          try { _editor.chain().focus().setTextSelection(r).run(); } catch (_) {}
-        }, 420);
-      }, { passive: true });
-      editorEl.addEventListener('touchmove', (e) => {
-        if (!_lpTimer || !_lpStart) return;
-        const t = e.touches[0];
-        if (Math.hypot(t.clientX - _lpStart.x, t.clientY - _lpStart.y) > 10) _lpCancel();
-      }, { passive: true });
-      editorEl.addEventListener('touchend', (e) => {
-        _lpCancel();
-        if (_lpSel) {
-          // 松手时压掉 iOS 默认的"把光标挪到按点"——否则刚做出的选区立刻被清掉
-          if (e.cancelable) e.preventDefault();
-          const r = _lpSel; _lpSel = null;
-          setTimeout(() => { try { _editor.chain().setTextSelection(r).run(); } catch (_) {} }, 0);
-        }
-      }, { passive: false });
-      editorEl.addEventListener('touchcancel', () => { _lpCancel(); _lpSel = null; }, { passive: true });
-    }
+    // 选字不再自实现（曾有"长按 420ms 程序化选词"，与 iOS 系统放大镜/光标手势同时跑、
+    // 松手还 preventDefault 抢选区，多方互踩 = 用户反馈的"选字紊乱"主因，已整体删除）。
+    // 现在完全交给系统原生：iOS 双击选词 + 拖手柄扩选，安卓长按选词——所有人的肌肉记忆。
+
+    // 键盘完全交给浏览器原生处理，这里不做任何 inputmode/聚焦干预（反应式改 inputmode 会与 iOS 选词手势互踩）。
 
     _editor.on('selectionUpdate', () => {
       requestAnimationFrame(syncImageResizeOverlay);
@@ -82039,6 +82161,12 @@ const editor = (() => {
       counter.textContent = `${idx + 1} / ${list.length}`;
       btnPrev.style.visibility = list.length > 1 ? 'visible' : 'hidden';
       btnNext.style.visibility = list.length > 1 ? 'visible' : 'hidden';
+      // 切换图片时复位缩放/平移/旋转与遮罩底色
+      _rotation = 0; _scale = 1; _tx = 0; _ty = 0;
+      imgEl.style.transition = 'none';
+      imgEl.style.transform = '';
+      imgEl.classList.remove('zoomed');
+      overlay.style.background = '';
     }
 
     const close = () => {
@@ -82053,39 +82181,142 @@ const editor = (() => {
       else if (e.key === 'ArrowRight') { e.preventDefault(); showAt(idx + 1); }
     }
 
-    let _scale = 1;
+    // ── 视图变换（参照 PhotoSwipe 交互模型）：缩放 scale + 平移 tx,ty + 旋转 rotation ──
+    // 缩放以手指中点/光标为锚（看哪放哪）；放大后可拖动平移看局部（带边界）；
+    // 双击定点放大/还原；未放大时单指下拉=渐隐关闭；桌面滚轮以光标为锚、放大后可按住拖动。
+    let _scale = 1, _tx = 0, _ty = 0, _rotation = 0;
     let _lastNavTime = 0;
+    const MIN_S = 1, MAX_S = 6;
+    const stageEl = overlay.querySelector('.lightbox-stage');
+
+    const applyTransform = (anim) => {
+      imgEl.style.transition = anim ? 'transform .22s cubic-bezier(.2,0,.2,1)' : 'none';
+      imgEl.style.transform = `translate(${_tx}px,${_ty}px) scale(${_scale}) rotate(${_rotation}deg)`;
+      imgEl.classList.toggle('zoomed', _scale > 1.01);
+    };
+    const resetView = (anim) => { _scale = MIN_S; _tx = 0; _ty = 0; applyTransform(anim); };
+    // 平移边界：放大后只允许拖到图像各边贴住可视区，未放大回弹到 0（不让图拖飞）
+    const clampPan = () => {
+      const st = stageEl.getBoundingClientRect();
+      const sw = imgEl.offsetWidth * _scale, sh = imgEl.offsetHeight * _scale;
+      const mx = Math.max(0, (sw - st.width) / 2), my = Math.max(0, (sh - st.height) / 2);
+      _tx = Math.max(-mx, Math.min(mx, _tx));
+      _ty = Math.max(-my, Math.min(my, _ty));
+    };
+    // 以屏幕点 (cx,cy) 为锚缩放到 target：保持该点在图像上的位置不动
+    const zoomAt = (cx, cy, target, anim) => {
+      const ns = Math.max(MIN_S, Math.min(MAX_S, target));
+      const st = stageEl.getBoundingClientRect();
+      const mcx = st.left + st.width / 2, mcy = st.top + st.height / 2;
+      const ox = cx - mcx - _tx, oy = cy - mcy - _ty;
+      const k = ns / _scale;
+      _tx -= ox * (k - 1); _ty -= oy * (k - 1);
+      _scale = ns; clampPan(); applyTransform(anim);
+    };
 
     btnClose.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); close(); });
-    btnPrev.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); _lastNavTime = Date.now(); _scale = 1; _rotation = 0; applyTransform(); showAt(idx - 1); });
-    btnNext.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); _lastNavTime = Date.now(); _scale = 1; _rotation = 0; applyTransform(); showAt(idx + 1); });
+    const goNav = (d) => { _lastNavTime = Date.now(); showAt(idx + d); };
+    btnPrev.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); goNav(-1); });
+    btnNext.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); goNav(1); });
     for (const btn of [btnPrev, btnNext, btnClose]) {
       btn.addEventListener('mousedown', (e) => e.stopPropagation());
       btn.addEventListener('mouseup', (e) => e.stopPropagation());
       btn.addEventListener('pointerdown', (e) => e.stopPropagation());
     }
-    imgEl.addEventListener('click', (e) => {
+
+    // 桌面：双击定点放大/还原；滚轮以光标为锚缩放；放大后按住拖动平移
+    imgEl.addEventListener('dblclick', (e) => {
       e.stopPropagation(); e.preventDefault();
       _lastNavTime = Date.now();
-      _scale = _scale > 1 ? 1 : 2;
-      applyTransform();
+      if (_scale > 1.01) resetView(true); else zoomAt(e.clientX, e.clientY, 2.5, true);
     });
-    imgEl.addEventListener('mousedown', (e) => e.stopPropagation());
     overlay.addEventListener('wheel', (e) => {
       e.preventDefault();
-      _scale = Math.min(5, Math.max(0.2, _scale + (e.deltaY < 0 ? 0.15 : -0.15)));
-      applyTransform();
+      zoomAt(e.clientX, e.clientY, _scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15), false);
     }, { passive: false });
-    let _rotation = 0;
-    const applyTransform = () => {
-      const t = [];
-      if (_scale !== 1) t.push(`scale(${_scale})`);
-      if (_rotation) t.push(`rotate(${_rotation}deg)`);
-      imgEl.style.transform = t.length ? t.join(' ') : '';
-      imgEl.classList.toggle('zoomed', _scale > 1);
-    };
+    let _mPan = null;
+    imgEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse') { e.stopPropagation(); return; }
+      e.stopPropagation();
+      if (_scale <= 1.01) return;
+      _mPan = { x: e.clientX, y: e.clientY, tx: _tx, ty: _ty };
+      try { imgEl.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    imgEl.addEventListener('pointermove', (e) => {
+      if (!_mPan) return;
+      _tx = _mPan.tx + (e.clientX - _mPan.x); _ty = _mPan.ty + (e.clientY - _mPan.y);
+      clampPan(); applyTransform(false);
+    });
+    const _endMPan = () => { _mPan = null; };
+    imgEl.addEventListener('pointerup', _endMPan);
+    imgEl.addEventListener('pointercancel', _endMPan);
+
+    // 触屏：双指捏合(中点为锚)缩放；单指放大后平移；未放大单指下拉渐隐关闭；轻点双击定点放大
+    let _tMode = null, _tDist = 1, _tScale0 = 1, _tPCx = 0, _tPCy = 0;
+    let _tx0 = 0, _ty0 = 0, _px0 = 0, _py0 = 0, _swipe = false, _tapT = 0, _tapX = 0, _tapY = 0;
+    stageEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        const [a, b] = e.touches;
+        _tMode = 'pinch';
+        _tDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+        _tScale0 = _scale;
+        _tPCx = (a.clientX + b.clientX) / 2; _tPCy = (a.clientY + b.clientY) / 2;
+        e.preventDefault();
+      } else if (e.touches.length === 1) {
+        const t = e.touches[0];
+        _tMode = _scale > 1.01 ? 'pan' : 'swipe';
+        _px0 = t.clientX; _py0 = t.clientY; _tx0 = _tx; _ty0 = _ty; _swipe = false;
+      }
+    }, { passive: false });
+    stageEl.addEventListener('touchmove', (e) => {
+      if (_tMode === 'pinch' && e.touches.length === 2) {
+        const [a, b] = e.touches;
+        const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1;
+        zoomAt(_tPCx, _tPCy, _tScale0 * (d / _tDist), false);
+        e.preventDefault();
+      } else if (_tMode === 'pan' && e.touches.length === 1) {
+        const t = e.touches[0];
+        _tx = _tx0 + (t.clientX - _px0); _ty = _ty0 + (t.clientY - _py0);
+        clampPan(); applyTransform(false); e.preventDefault();
+      } else if (_tMode === 'swipe' && e.touches.length === 1) {
+        const t = e.touches[0];
+        const dx = t.clientX - _px0, dy = t.clientY - _py0;
+        if (_swipe || (dy > 8 && dy > Math.abs(dx))) {
+          _swipe = true;
+          imgEl.style.transition = 'none';
+          imgEl.style.transform = `translate(${dx * 0.5}px,${dy}px) scale(${Math.max(0.5, 1 - dy / 900)})`;
+          overlay.style.background = `rgba(0,0,0,${Math.max(0.15, 0.92 - dy / 600)})`;
+          e.preventDefault();
+        }
+      }
+    }, { passive: false });
+    stageEl.addEventListener('touchend', (e) => {
+      if (_tMode === 'pinch') {
+        if (_scale < 1.05) resetView(true); else { clampPan(); applyTransform(true); }
+        _tMode = null; return;
+      }
+      if (_tMode === 'swipe') {
+        if (_swipe) {
+          const dy = (e.changedTouches[0]?.clientY || 0) - _py0;
+          overlay.style.background = '';
+          if (dy > 110) { close(); return; }
+          resetView(true);
+        } else {
+          const t = e.changedTouches[0] || {};
+          const now = Date.now();
+          if (now - _tapT < 300 && Math.hypot((t.clientX || 0) - _tapX, (t.clientY || 0) - _tapY) < 30) {
+            _tapT = 0;
+            if (_scale > 1.01) resetView(true); else zoomAt(t.clientX, t.clientY, 2.5, true);
+          } else { _tapT = now; _tapX = t.clientX || 0; _tapY = t.clientY || 0; }
+        }
+        _tMode = null; return;
+      }
+      _tMode = null;
+    }, { passive: false });
+
     overlay.addEventListener('click', (e) => {
       if (Date.now() - _lastNavTime < 300) return;
+      if (_scale > 1.01) return; // 放大态点击不关闭，避免误触
       const t = e.target;
       if (t.closest('.lightbox-nav, .lightbox-close, .lightbox-img, .lightbox-ctx, .lightbox-toolbar, .lightbox-stage')) return;
       if (t === overlay || (t.classList && t.classList.contains('lightbox-shell'))) {
@@ -82107,9 +82338,9 @@ const editor = (() => {
             setTimeout(() => srcImg.classList.remove('img-locate-flash'), 1800);
           }
         }},
-        { label: '顺时针旋转', icon: '↻', action: () => { _rotation = (_rotation + 90) % 360; applyTransform(); } },
-        { label: '逆时针旋转', icon: '↺', action: () => { _rotation = (_rotation - 90 + 360) % 360; applyTransform(); } },
-        { label: '重置', icon: '⟲', action: () => { _scale = 1; _rotation = 0; applyTransform(); } },
+        { label: '顺时针旋转', icon: '↻', action: () => { _rotation = (_rotation + 90) % 360; clampPan(); applyTransform(true); } },
+        { label: '逆时针旋转', icon: '↺', action: () => { _rotation = (_rotation - 90 + 360) % 360; clampPan(); applyTransform(true); } },
+        { label: '重置', icon: '⟲', action: () => { _rotation = 0; resetView(true); } },
         { label: '复制图片', icon: '⎘', action: () => {
           const c = document.createElement('canvas');
           const ctx2 = c.getContext('2d');
@@ -82233,19 +82464,6 @@ const editor = (() => {
     _imgResizeLayer = layer;
   }
 
-  function handleImagePaste(e) {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault();
-        const file = item.getAsFile();
-        if (file) insertImageFile(file);
-        return;
-      }
-    }
-  }
-
   async function handleFilePaste(e) {
     if (!window.host?.caps.file) return;
     const items = e.clipboardData?.items;
@@ -82284,48 +82502,6 @@ const editor = (() => {
   function _encodeFileHref(rawPath) {
     const normalized = rawPath.replace(/\\/g, '/');
     return 'file:///' + encodeURI(normalized).replace(/\(/g, '%28').replace(/\)/g, '%29');
-  }
-
-  function handleImageDrop(e) {
-    if (_internalImgDrag) { _internalImgDrag = false; return; }
-    const files = e.dataTransfer?.files;
-    // iOS Safari 从截图缩略图/照片拖入时 files 常为空，文件在 items 里（文件承诺）。
-    // 必须在这里拦下：放过去的话 WebKit 默认行为会插入 blob:/临时 URL 的 <img>，
-    // 本机当场能看、序列化进 Markdown 同步出去后所有设备都是碎图（已发生过）。
-    if (!files?.length) {
-      const items = e.dataTransfer?.items;
-      if (!items?.length) return;
-      const imgItems = Array.from(items).filter(it => it.kind === 'file' && it.type.startsWith('image/'));
-      if (!imgItems.length) return;
-      e.preventDefault();
-      let got = false;
-      for (const it of imgItems) {
-        const file = it.getAsFile();
-        if (file) { got = true; insertImageFile(file); }
-      }
-      if (!got) window.toast?.('未能读取拖入的图片，请改用复制 → 粘贴插入', 'warning');
-      return;
-    }
-    for (const file of files) {
-      if (file.type.startsWith('image/')) {
-        e.preventDefault();
-        insertImageFile(file);
-        return;
-      }
-    }
-    // 非图片文件：插入文件名链接（无完整路径）
-    e.preventDefault();
-    for (const file of files) {
-      if (file.type.startsWith('image/')) continue;
-      const label = file.name || 'file';
-      const href = _encodeFileHref(label);
-      _editor.chain().focus().insertContent({
-        type: 'text',
-        text: label,
-        marks: [{ type: 'link', attrs: { href, target: null } }],
-      }).run();
-    }
-    window.toast?.('提示：复制文件后粘贴可插入完整路径链接', 'info');
   }
 
   function insertImageFile(file) {
@@ -82492,6 +82668,8 @@ const editor = (() => {
   function execCommand(cmd, opts) {
     if (!_editor) return;
     switch (cmd) {
+      case 'undo': _editor.chain().focus().undo().run(); break;
+      case 'redo': _editor.chain().focus().redo().run(); break;
       case 'toggleBold': _editor.chain().focus().toggleBold().run(); break;
       case 'toggleItalic': _editor.chain().focus().toggleItalic().run(); break;
       case 'toggleStrike': _editor.chain().focus().toggleStrike().run(); break;
@@ -85685,7 +85863,7 @@ function setupTouchGestures(mq) {
   // 都会把焦点送进 contenteditable，移动端浏览器随即弹键盘，严重干扰非打字操作。
   // 规则：焦点进入编辑器时，回看最近一次 touchstart——
   //   · 落在编辑区文字上（非图片/缩放手柄）→ 用户要打字，放行；
-  //   · 落在键盘工具条及其上弹下拉上 → 键盘已在用，放行；
+  //   · 落在浮动条（含其下拉）上 → 正在格式化，放行；
   //   · 其余（图片、手柄、菜单项、树行、或无触摸=纯程序化聚焦）→ 立即 blur 收回键盘。
   let _lastTouchEl = null, _lastTouchAt = 0;
   document.addEventListener('touchstart', (e) => {
@@ -85697,7 +85875,7 @@ function setupTouchGestures(mq) {
     const el = (Date.now() - _lastTouchAt < 900) ? _lastTouchEl : null;
     const tapText = el && el.closest && el.closest('#editor')
       && !el.closest('img, .md-img-resize-layer, .md-img-resize-handle');
-    const tapKbBar = el && el.closest && el.closest('#kb-toolbar, .bubble-heading-dropdown, .bubble-code-dropdown, .bubble-list-dropdown, .bubble-highlight-dropdown, .bubble-align-dropdown');
+    const tapKbBar = el && el.closest && el.closest('#bubble-menu');
     // 菜单开着时的聚焦都是附带产物。注意 #context-menu 常驻 DOM 靠 .hidden 隐藏，
     // 必须排除——否则 menuOpen 恒为真，所有聚焦被收回，光标永远出不来（t74 的回归）。
     const menuSel = '.md-editor-ctx, .context-menu:not(.hidden)';
@@ -85715,88 +85893,44 @@ function setupTouchGestures(mq) {
     }
   });
 
-  setupMobileKbToolbar();
+  setupKeyboardViewportTracking();
 }
 
-/** 触屏键盘工具条：编辑器聚焦时浮在键盘上方。
- *  只保留浮动条没有的输入辅助（撤销/重做、挖空、缩进、语音、命令面板）——
- *  格式化（加粗/高亮/标题…）由选中文本时的浮动条负责，两处不重复。
- *  mousedown 阻止默认避免抢编辑器焦点导致键盘收起。 */
-function setupMobileKbToolbar() {
-  if (document.getElementById('kb-toolbar')) return;
-  const bar = document.createElement('div');
-  bar.id = 'kb-toolbar';
-  const B = (act, label, title, extra = '') => `<button type="button" data-act="${act}" title="${title}" ${extra}>${label}</button>`;
-  bar.innerHTML = [
-    B('undo', '↶', '撤销'),
-    B('redo', '↷', '重做'),
-    '<span class="kb-sep"></span>',
-    B('clozeMark', '<span style="background:currentColor;border-radius:3px;padding:0 3px;"><span style="color:var(--bg-secondary);">挖</span></span>', '标记挖空（选中文字后点）'),
-    B('outdent', '⇤', '减少缩进'),
-    B('indent', '⇥', '增加缩进'),
-    '<span class="kb-sep"></span>',
-    B('voice', '🎤', '语音输入'),
-    B('palette', '⌘', '命令面板'),
-  ].join('');
-  document.body.appendChild(bar);
-
-  bar.addEventListener('mousedown', (e) => e.preventDefault());
-
-  // ── 按钮（data-act）──
-  bar.addEventListener('click', (e) => {
-    const btn = e.target.closest('button[data-act]');
-    if (!btn) return;
-    const act = btn.dataset.act;
-    if (act === 'palette') { palette.open(); return; }
-    if (act === 'voice') { toggleVoiceInput(btn); return; }
-    if (act === 'clozeMark') { toggleMarkOnSelection(); return; }
-    const ed = editor.instance && editor.instance();
-    if (!ed) return;
-    try {
-      switch (act) {
-        case 'undo': ed.chain().focus().undo().run(); break;
-        case 'redo': ed.chain().focus().redo().run(); break;
-        case 'indent':
-          if (!ed.chain().focus().sinkListItem('taskItem').run()) ed.chain().focus().sinkListItem('listItem').run();
-          break;
-        case 'outdent':
-          if (!ed.chain().focus().liftListItem('taskItem').run()) ed.chain().focus().liftListItem('listItem').run();
-          break;
-      }
-    } catch (_) {}
-  });
-
-  // iOS/iPadOS：软键盘不压缩布局视口（viewport 的 resizes-content 仅 Android Chrome 支持），
-  // 固定 bottom:0 的工具条会被键盘整个盖住。用 visualViewport 实时算键盘高度，把工具条顶到键盘上方。
-  // 注意基准必须用 documentElement.clientHeight（布局视口）：iOS 的 window.innerHeight 跟随
-  // 视觉视口（键盘弹出即变小），用它算 gap 恒为 0，工具条永远不抬升——这正是 iPad 被盖住的原因。
-  // Android 上布局视口已被键盘压缩，gap 恒为 0，此逻辑自然不生效。
+/** 触屏键盘视口追踪（键盘工具条已整体移除，撤销/重做并入选中文字时的浮动条）。
+ *  职责单一：把软键盘高度实时写进 CSS 变量 --kb-gap，供 dock 浮动条悬于键盘上方。
+ *  iOS/iPadOS：软键盘不压缩布局视口（viewport 的 resizes-content 仅 Android Chrome 支持），
+ *  必须用 visualViewport 算键盘高度；基准用 documentElement.clientHeight（布局视口）——
+ *  iOS 的 window.innerHeight 跟随视觉视口（键盘弹出即变小），用它算 gap 恒为 0。
+ *  Android 上布局视口已被键盘压缩，gap 恒为 0，CSS 兜底为贴屏幕底部，天然正确。 */
+function setupKeyboardViewportTracking() {
   const isIOS = document.body.classList.contains('is-ios');
   let lift = () => {};
+  // 编辑器内是否有"非折叠"文本选区：有则 scrollTo 纠正必须让路，否则会取消 iOS 系统选字
+  const _selActiveInEditor = () => {
+    const s = window.getSelection && window.getSelection();
+    if (!s || s.rangeCount === 0 || s.isCollapsed) return false;
+    const a = s.anchorNode;
+    const node = a && (a.nodeType === 3 ? a.parentElement : a);
+    return !!(node && node.closest && node.closest('#editor .ProseMirror'));
+  };
   if (window.visualViewport) {
     const vv = window.visualViewport;
     lift = () => {
       const layoutH = document.documentElement.clientHeight;
       const gap = Math.max(0, layoutH - vv.height - vv.offsetTop);
-      bar.style.transform = gap > 1 ? `translateY(${-gap}px)` : '';
-      // 暴露键盘高度给 CSS（触屏吸附式浮动条用它悬在键盘上方）
       document.documentElement.style.setProperty('--kb-gap', (gap > 1 ? Math.round(gap) : 0) + 'px');
-      // iOS：工具条的显隐直接跟着软键盘走——键盘在场(gap>60)且焦点在编辑器才显示。
-      // 解决两个顽疾：① 键盘已收起但焦点未走，工具条残留在屏幕底部；
-      // ② 聚焦瞬间键盘还没弹出，工具条先闪现在底部再跳到键盘上方。
-      // 代价：外接实体键盘时（无软键盘）不显示工具条，可接受。
-      if (isIOS) {
-        const focused = document.activeElement && document.activeElement.closest && document.activeElement.closest('#editor');
-        bar.classList.toggle('visible', gap > 60 && !!focused);
+      // 手指还按着时冻结所有 iOS 布局变动：长按选字需手指静止约 0.5s，期间任何 --vv-h 改动 / kb-open
+      // 切换 / scrollTo 触发的重排都会打断系统长按手势 → "键盘开着时选不中、没高光"的主因。
+      // 松手后由 touchend 的 _mdKbLift 补这一次。（--kb-gap 上面照常更新，只影响浮动条定位、且选字时浮动条本就不显示。）
+      if (isIOS && !window._mdTouchActive) {
         // 键盘在场时把 body 压到可视视口高度：iOS 键盘不压缩布局视口，
         // 不处理的话正文滚动区下半截藏在键盘后面，光标一到下方就被盖住。
         document.documentElement.style.setProperty('--vv-h', Math.round(vv.height) + 'px');
         document.body.classList.toggle('kb-open', gap > 60);
         // 防 Safari 把布局视口顶上去造成整体错位：我们是全屏应用，布局视口滚动永远应该是 0，
-        // 任何残留滚动（键盘、地址栏伸缩等任意来源）都立即归零，否则顶栏/侧栏图标整体偏移跑出屏幕。
-        // 但手指还按着时不纠正——iOS 长按选字过程中系统会微调滚动（放大镜跟随），
-        // 这时强行拽回会打断选字手势（曾被反馈"键盘弹出后长按无法选字"）；松手后由 touchend 补一次
-        if (window.scrollY && !window._mdTouchActive) window.scrollTo(0, 0);
+        // 残留滚动立即归零，否则顶栏/侧栏图标整体偏移跑出屏幕。但编辑器内有非折叠选区时不纠正
+        // （touchend 后系统仍在维持选区，拽回视口会被判为滚动→取消选区）。
+        if (window.scrollY && !_selActiveInEditor()) window.scrollTo(0, 0);
       }
     };
     vv.addEventListener('resize', lift);
@@ -85804,58 +85938,6 @@ function setupMobileKbToolbar() {
     lift();
   }
   window._mdKbLift = lift; // 手势层在 touchend 时补调（按压期间暂缓的滚动纠正）
-
-  // 编辑器聚焦显示、失焦隐藏（小延迟：点工具条按钮瞬间 activeElement 会暂时跳走）
-  // iOS 的"显示"交给上面的 lift 按键盘高度驱动，这里只负责非 iOS 的即时显示
-  document.addEventListener('focusin', (e) => {
-    if (e.target.closest && e.target.closest('#editor')) { if (!isIOS) bar.classList.add('visible'); lift(); }
-  });
-  document.addEventListener('focusout', () => {
-    setTimeout(() => {
-      const ae = document.activeElement;
-      if (!ae || !ae.closest || !ae.closest('#editor')) bar.classList.remove('visible');
-    }, 120);
-  });
-}
-
-/** 语音输入（Web Speech API，Chrome/Edge 安卓与桌面可用）：点一次开始连续听写，再点停止 */
-let _voiceRec = null;
-function toggleVoiceInput(btn) {
-  if (_voiceRec) {
-    try { _voiceRec.stop(); } catch (_) {}
-    return;
-  }
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast('当前浏览器不支持语音识别', 'error'); return; }
-  const rec = new SR();
-  rec.lang = 'zh-CN';
-  rec.continuous = true;
-  rec.interimResults = false;
-  rec.onresult = (e) => {
-    for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) {
-        const t = (e.results[i][0]?.transcript || '').trim();
-        if (t) editor.insertAtCursor(t);
-      }
-    }
-  };
-  rec.onend = () => {
-    _voiceRec = null;
-    btn?.classList.remove('active');
-    toast('语音输入结束', 'info', { id: 'voice-input', duration: 900 });
-  };
-  rec.onerror = (e) => {
-    _voiceRec = null;
-    btn?.classList.remove('active');
-    if (e.error === 'not-allowed') toast('麦克风权限被拒绝', 'error');
-    else if (e.error !== 'aborted' && e.error !== 'no-speech') toast('语音识别出错：' + e.error, 'error');
-  };
-  try {
-    rec.start();
-    _voiceRec = rec;
-    btn?.classList.add('active');
-    toast('正在听写…再点 🎤 停止', 'info', { id: 'voice-input', duration: 1800 });
-  } catch (_) { toast('语音识别启动失败', 'error'); }
 }
 
 /** 大纲分隔条拖拽调宽。大纲在左时拖右缘（宽 = 起始 + dx），在右时拖左缘（宽 = 起始 - dx）。 */
@@ -89064,7 +89146,6 @@ function openSettingsModal(initialTab) {
             ['回到顶部', '双击顶栏'],
             ['立即同步', '编辑区顶部下拉'],
             ['阅读模式', '三指轻点'],
-            ['命令面板', '键盘工具条 ⌘'],
           ]},
           { title: '笔记树', items: [
             ['多选笔记', '双指轻点行'],
@@ -89072,15 +89153,14 @@ function openSettingsModal(initialTab) {
             ['拖拽排序 / 改层级', '长按拾起后拖动'],
           ]},
           { title: '编辑', items: [
-            ['选中文字', '长按拖选（系统原生）'],
+            ['选中文字', '安卓长按 / 苹果双击，拖手柄扩选（系统原生）'],
             ['右键菜单', '双指轻点正文'],
             ['图片菜单', '双击图片 / 双指轻点'],
             ['表格菜单', '双指轻点表格'],
             ['调整字号', '编辑区双指捏合'],
-            ['撤销', '摇一摇（安卓）'],
-            ['格式工具条', '聚焦输入时自动浮于键盘上方'],
-            ['语音输入', '键盘工具条 🎤'],
-            ['标记挖空', '选中文字 → 工具条「挖」'],
+            ['格式浮动条', '选中文字时悬于键盘上方（含撤销/重做）'],
+            ['撤销', '浮动条 ↶ / 摇一摇（安卓）'],
+            ['标记挖空', '选中文字 → 浮动条高亮'],
           ]},
         ];
         const gesturesHtml = renderGroups(gestureGroups);
