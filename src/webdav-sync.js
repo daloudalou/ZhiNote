@@ -19,6 +19,14 @@
   let _clientId = null;
   let _aesKey = null;
   let _lastKnownManifestUpdatedAt = 0;
+  // CAS（manifest 原子写）：记下最近一次读到的 manifest 的 ETag，写回时作 If-Match。
+  // 服务器不返回 ETag（自建/不支持）→ 留空 → 自动退回普通写，行为与从前一致。
+  let _lastManifestEtag = '';
+  let _casFailStreak = 0;            // 连续被 412（抢先）次数
+  let _casForceUnconditional = false; // 连续 412 达阈值 → 下一轮退化为普通写，避免弱校验服务器空转
+  // 条件 GET 哨兵：webdavGet 带 If-None-Match 命中 304（内容未变）时返回它，调用方据此早退，
+  // 省下整份 manifest 的下载与解析。与"文件不存在"的 null 严格区分。
+  const NOT_MODIFIED = Symbol('webdav-not-modified');
   let _lastGetTime = 0;
   let _lastPutTime = 0;
   let _lastBlurPutTime = 0;
@@ -169,11 +177,12 @@
     return 'Basic ' + btoa(unescape(encodeURIComponent(_config.user + ':' + _config.pass)));
   }
 
-  async function webdavPut(path, body, contentType = 'application/json; charset=utf-8') {
+  async function webdavPut(path, body, contentType = 'application/json; charset=utf-8', extraHeaders = null) {
     return enqueue(async () => {
+      const _headers = () => Object.assign({ 'Authorization': _authHeader(), 'Content-Type': contentType }, extraHeaders || {});
       let resp = await _fetchWithTimeout(_buildUrl(path), {
         method: 'PUT',
-        headers: { 'Authorization': _authHeader(), 'Content-Type': contentType },
+        headers: _headers(),
         body,
       });
       if (resp.status === 404 || resp.status === 409) {
@@ -181,10 +190,12 @@
         await _ensureDirectories(dir);
         resp = await _fetchWithTimeout(_buildUrl(path), {
           method: 'PUT',
-          headers: { 'Authorization': _authHeader(), 'Content-Type': contentType },
+          headers: _headers(),
           body,
         });
       }
+      // If-Match 未命中：仅 manifest 写会带 If-Match，故 412 必为"被抢先"。让上层重新合并重试。
+      if (resp.status === 412) throw new PreconditionFailedError();
       if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
       if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
         throw new WebDAVError('PUT', path, resp.status, await resp.text().catch(() => ''));
@@ -214,10 +225,15 @@
 
   async function webdavGet(path, options = {}) {
     return enqueue(async () => {
+      const headers = { 'Authorization': _authHeader() };
+      if (options.ifNoneMatch) headers['If-None-Match'] = options.ifNoneMatch;
       const resp = await _fetchWithTimeout(_buildUrl(path), {
         method: 'GET',
-        headers: { 'Authorization': _authHeader() },
+        headers,
       });
+      // 条件请求命中：内容未变，服务器回 304 空体 → 返回哨兵，省下整份下载/解析。
+      // 服务器若忽略 If-None-Match 会照常回 200，走下方常规流程，行为同从前。
+      if (resp.status === 304) { _authFailCount = 0; return NOT_MODIFIED; }
       if (resp.status === 404) {
         if (options.allow404) return null;
         throw new WebDAVError('GET', path, 404, 'Not Found');
@@ -238,7 +254,13 @@
     let lastErr = null;
     for (let attempt = 0; attempt < 3; attempt++) {
       const resp = await webdavGet(path, options);
+      if (resp === NOT_MODIFIED) return NOT_MODIFIED; // 条件 GET 未变：上抛哨兵给调用方早退
       if (!resp) return null; // 404 / allow404：文件确实不存在
+      if (path === 'manifest.json') {
+        // 弱 ETag（W/ 前缀）多数服务器对 If-Match 走强比较会一律 412，留空以退回普通写，避免空转。
+        const et = resp.headers.get('ETag') || resp.headers.get('etag') || '';
+        _lastManifestEtag = (et && !et.startsWith('W/')) ? et : '';
+      }
       const text = await resp.text();
       if (text == null || text.trim() === '') {
         lastErr = new Error(`JSON 解析失败 (${path}): 服务器返回空内容`);
@@ -280,15 +302,27 @@
    * 校验只要求"非空且是合法 JSON"——读回内容可能已被别的设备更新，不做逐字节比对。
    * 重传一次仍失败则抛错（不标 transient），让上层如实显示"同步出错"。
    */
-  async function _putManifestVerified(manifest) {
+  async function _putManifestVerified(manifest, ifMatch) {
     const body = JSON.stringify(manifest, null, 2);
+    // CAS：带 If-Match 原子写。被抢先（412）时 webdavPut 抛 PreconditionFailedError，
+    // 直接穿出本函数（不在下方 try 内、不重试）——由 doPut 重新读取合并后再试，绝不盲覆盖。
+    const extraHeaders = ifMatch ? { 'If-Match': ifMatch } : null;
     let lastDetail = '';
     for (let attempt = 0; attempt < 2; attempt++) {
-      await webdavPut('manifest.json', body);
+      await webdavPut('manifest.json', body, 'application/json; charset=utf-8', extraHeaders);
       try {
         const resp = await webdavGet('manifest.json');
         const text = resp ? await resp.text() : '';
-        if (text && text.trim()) { JSON.parse(text); return; }
+        if (text && text.trim()) {
+          const rb = JSON.parse(text); // 仍校验为合法 JSON（防 0 字节/截断）
+          // 读回正是本机刚写入的版本（间隙无人抢写）→ 记下其 ETag，供下次轮询发 If-None-Match 命中 304；
+          // 若读回已是别的设备的更新 → 不记，保持旧 etag，下一轮会照常拉到对方变更，绝不漏。
+          if (rb && rb.updatedAt === manifest.updatedAt && rb.deviceId === manifest.deviceId) {
+            const et = resp.headers.get('ETag') || resp.headers.get('etag') || '';
+            _lastManifestEtag = (et && !et.startsWith('W/')) ? et : '';
+          }
+          return;
+        }
         lastDetail = '读回为空文件';
       } catch (e) {
         lastDetail = e.message || String(e);
@@ -443,6 +477,11 @@
   }
   class RateLimitError extends Error {
     constructor() { super('WebDAV 服务器返回 503（请求过于频繁）'); this.name = 'RateLimitError'; }
+  }
+  // If-Match 条件写失败：manifest 在"读→改"期间被别的设备改过（服务器返回 412）。
+  // 不是错误，是"被抢先"信号——上层据此放弃本次写、保留 dirty、重新读取合并后重试。
+  class PreconditionFailedError extends Error {
+    constructor() { super('manifest 已被其它设备更新（412），本次写入放弃，将重新合并后重试'); this.name = 'PreconditionFailedError'; }
   }
 
   // ─── 连接测试 ────────────────────────────────────────────────────────────────
@@ -954,9 +993,17 @@
     _syncing = true;
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'get', silent });
     try {
-      let manifest = await webdavGetJson('manifest.json', { allow404: true });
+      // 条件 GET：仅轮询/常规下行带 If-None-Match（force/adopt 要全量，不带）。无变化时服务器回 304，
+      // 省下整份 manifest 的下载与解析（手机端/大库尤其值）。无 etag 或服务器不支持则照常全量。
+      const condEtag = (!force && !adopt && _lastManifestEtag) ? _lastManifestEtag : '';
+      let manifest = await webdavGetJson('manifest.json', { allow404: true, ifNoneMatch: condEtag });
       _lastGetTime = Date.now();
-      _transientFailStreak = 0; // 读到了（含 404）：清空熔断计数
+      _transientFailStreak = 0; // 读到了（含 404/304）：清空熔断计数
+
+      if (manifest === NOT_MODIFIED) {
+        _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-unchanged', silent });
+        return;
+      }
 
       // 404 二次确认：规避服务器加锁/限流期间的假 404 被误判成"清单丢失"（会触发空清单重建）
       if (!manifest) manifest = await _recheckManifest();
@@ -1500,6 +1547,10 @@
         return;
       }
 
+      // CAS：当场快照这次读到的 manifest 的 ETag（存进局部变量，避免后续 await 期间被其它读覆盖）。
+      // _casForceUnconditional：连续被 412 后退化为普通写（容忍弱校验服务器），由成功写入复位。
+      const manifestEtag = _casForceUnconditional ? '' : _lastManifestEtag;
+
       // 数据格式版本闸：云端格式比本客户端新 → 绝不上传（否则旧格式会覆盖新格式数据）。
       if (_remoteFormatTooNew(manifest)) {
         console.warn('[webdav] 云端数据格式版本高于本客户端，停止上传，请更新枝记');
@@ -1642,7 +1693,8 @@
       manifest.deviceId = _ensureClientId();
       if (!manifest.version) manifest.version = 2;
 
-      await _putManifestVerified(manifest);
+      await _putManifestVerified(manifest, manifestEtag);
+      _casFailStreak = 0; _casForceUnconditional = false; // 原子写成功：复位被抢先计数
       _lastKnownManifestUpdatedAt = manifest.updatedAt;
       _lastPutTime = Date.now();
 
@@ -1668,6 +1720,15 @@
     } catch (e) {
       if (e instanceof RateLimitError) {
         _handleRateLimit();
+      } else if (e instanceof PreconditionFailedError) {
+        // 被抢先：manifest 在"读→改"间被别的设备更新。不清 dirty（清 dirty 的代码在 PUT 成功之后，
+        // 本次未执行到）、不立基准、不报错；下一轮重新读取合并后重试。连续被抢则退化为普通写避免空转。
+        _casFailStreak++;
+        if (_casFailStreak >= 2) _casForceUnconditional = true;
+        _pendingPut = true;
+        _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-retry-cas' });
+        console.warn('[webdav] manifest 被其它设备抢先更新（412），重新合并后重试（streak=' + _casFailStreak + '）');
+        schedulePut(); // 受 _putMinIntervalMs(默认 5s) 节流，不会请求风暴
       } else if (e && (e.transient || _isNetFlavorError(e))) {
         // 瞬时错误（并发写期间读到空/截断的 manifest）：保留 dirty、少量自动重试；连续失败则熔断报错
         _pendingPut = true;
@@ -1676,7 +1737,8 @@
         _emit('cloud-sync', { type: 'webdav-sync-fail', error: e.message });
         console.error('[webdav] PUT 错误:', e);
       }
-      if (strict) throw e; // 手动同步：如实上抛，让调用方显示真实结果
+      // 手动同步：如实上抛真实结果；但 412 是"已自动重排重试"的良性信号，不当失败上报。
+      if (strict && !(e instanceof PreconditionFailedError)) throw e;
     } finally {
       _syncing = false;
       _drainPending();

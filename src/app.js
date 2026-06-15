@@ -171,7 +171,7 @@ async function bootstrap() {
     if (emptyState) emptyState.style.display = 'none';
     expandAncestors(lastId);
     const tryOpen = () => {
-      if (window.editor) { window.editor.open(lastId); }
+      if (window.editor) { window.editor.open(lastId, { initial: true }); }
       else { setTimeout(tryOpen, 50); }
     };
     tryOpen();

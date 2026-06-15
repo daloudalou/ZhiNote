@@ -128,6 +128,14 @@ const storage = (() => {
       tx.onerror = () => reject(tx.error);
     });
   }
+  async function idbImgGet(hash) {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const req = db.transaction(IDB_IMG_STORE, 'readonly').objectStore(IDB_IMG_STORE).get(hash);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
   async function idbImgDel(hash) {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
@@ -486,6 +494,23 @@ const storage = (() => {
   let _imgDir = '';           // file 后端的图片目录
   let _imgReadyResolve;
   const _imgReadyPromise = new Promise((r) => { _imgReadyResolve = r; });
+  // primary-ready：仅「上次打开的那篇笔记」的图就绪（启动会自动打开它），比全库 ready 早得多。
+  // 启动自动打开等它（而非等全库）→ 图文一起出现、不冒泡，又不被全库预读拖慢。
+  let _imgPrimaryReadyResolve;
+  const _imgPrimaryReadyPromise = new Promise((r) => { _imgPrimaryReadyResolve = r; });
+  const _imgResolvePrimary = () => { if (_imgPrimaryReadyResolve) { _imgPrimaryReadyResolve(); _imgPrimaryReadyResolve = null; } };
+
+  /** 取一篇笔记里引用到的所有外置图 hash（doc 走 JSON 串、旧 md 走文本）。 */
+  function _noteImageHashes(note) {
+    const set = new Set();
+    if (!note) return set;
+    try {
+      const txt = note.doc ? JSON.stringify(note.doc) : (note.content || '');
+      const re = /zhinote:\/\/img\/([a-z0-9]+)/gi; let m;
+      while ((m = re.exec(txt)) !== null) set.add(m[1]);
+    } catch (_) {}
+    return set;
+  }
 
   /** 简单的 djb2 hash，对长 base64 字符串足够稳定且快 */
   function quickHash(s) {
@@ -521,22 +546,60 @@ const storage = (() => {
     if (!/^[a-z]:\\/i.test(docs) || /[\r\n]/.test(docs)) return false; // 不是合法路径 = 分支未配置
     _imgDir = (_data.settings.imagesDir || '').trim() || (docs.replace(/[\\/]+$/, '') + '\\ZhiNote\\images');
     await _imgFileOp('ensureDir', { path: _imgDir });
+    // 后端类型 + 目录尽早就绪：这样下面"逐张全量载入"还在跑时，loadImage 已能直接读单张文件，
+    // 笔记打开不必等全量读完（解决"每次打开先占位、之后才显示"）。
+    _imgBackend = 'file';
     let lines = [];
     try {
       const r = await _imgFileOp('list', { dir: _imgDir, pattern: '*.*' });
       lines = ((r && r.result) || '').toString().split(/\r?\n/).filter(Boolean);
     } catch (_) {}
+    const entries = [];
     for (const p of lines) {
       const fname = (p.split(/[\\/]/).pop() || '');
       const m = fname.match(/^([a-z0-9]+l[a-z0-9]+)\.([a-z0-9]+)$/i);
-      if (!m) continue;
-      try {
-        const r = await _imgFileOp('readFile', { path: p, isBinary: 'true' });
-        const b64 = ((r && r.result) || '').toString();
-        if (b64) _imgCache[m[1]] = 'data:' + _imgMimeOf(m[2]) + ';base64,' + b64;
-      } catch (e) { console.warn('[storage] 图片文件读取失败', p, e); }
+      if (m) entries.push({ hash: m[1], ext: m[2], path: p });
+    }
+    // 优先：上次打开的那篇笔记的图先读（启动会自动打开它）。其余全库随后分批预读。
+    let priSet = new Set();
+    try {
+      const lastId = (_data.settings && _data.settings.lastOpenedId) || '';
+      priSet = _noteImageHashes(lastId && _data.notes ? _data.notes[lastId] : null);
+    } catch (_) {}
+    const priChunk = entries.filter(e => priSet.has(e.hash));
+    const rest = entries.filter(e => !priSet.has(e.hash));
+    // 优先批：桥接队列的第一批、单独成批且较小 → 启动那篇笔记尽快备齐，随后放行 primary-ready。
+    if (priChunk.length) await _imgPreloadChunk(priChunk);
+    _imgResolvePrimary();
+    // 其余全库预读：每 40 个一批走 readMany（一趟多张），N 次 readFile 压成几次 readMany。
+    // 同步比对/上传依赖「全量内存缓存」，故仍把所有图灌满缓存。
+    const PRELOAD_BATCH = 40;
+    for (let i = 0; i < rest.length; i += PRELOAD_BATCH) {
+      await _imgPreloadChunk(rest.slice(i, i + PRELOAD_BATCH));
     }
     return true;
+  }
+
+  /** 预读一批图：先 readMany 一趟批量取，readMany 分支缺失/个别没返回的按已知路径逐张 readFile 兜底。 */
+  async function _imgPreloadChunk(chunk) {
+    let got = null;
+    try {
+      const r = await _imgFileOp('readMany', { dir: _imgDir, hashes: chunk.map(e => e.hash).join(',') });
+      try { got = JSON.parse(((r && r.result) || '[]').toString() || '[]'); } catch (_) { got = null; }
+    } catch (_) { got = null; }
+    if (Array.isArray(got)) {
+      for (const it of got) {
+        if (it && it.hash && it.content) _imgCache[it.hash] = 'data:' + _imgMimeOf(it.ext || 'png') + ';base64,' + it.content;
+      }
+    }
+    for (const e of chunk) {
+      if (_imgCache[e.hash]) continue;
+      try {
+        const rr = await _imgFileOp('readFile', { path: e.path, isBinary: 'true' });
+        const b64 = ((rr && rr.result) || '').toString();
+        if (b64) _imgCache[e.hash] = 'data:' + _imgMimeOf(e.ext) + ';base64,' + b64;
+      } catch (err) { console.warn('[storage] 图片文件读取失败', e.path, err); }
+    }
   }
 
   /** 把一张图写进持久后端（file/idb）。legacy 后端写主 JSON（与外置前行为一致）。 */
@@ -609,8 +672,8 @@ const storage = (() => {
         _imgBackend = (await _imgInitQuicker()) ? 'file' : 'legacy';
         if (_imgBackend === 'legacy') console.warn('[storage] FileOp 缺少 readFile 分支，图片沿用主库内嵌（请更新 Quicker 动作以启用图片外置）');
       } else {
+        _imgBackend = 'idb'; // 先置位，使 loadImage 在 idbImgAll 全量载入期间也能走单张读取
         _imgCache = await idbImgAll();
-        _imgBackend = 'idb';
       }
     } catch (e) {
       _imgBackend = 'legacy';
@@ -622,6 +685,7 @@ const storage = (() => {
     } else {
       try { await _imgMigrate(); } catch (e) { console.error('[storage] 图片迁移异常', e); }
     }
+    _imgResolvePrimary(); // file 后端已在 _imgInitQuicker 内提前放行；这里兜底 legacy/idb/异常路径
     _imgReadyResolve();
     emit('images-ready', { backend: _imgBackend, count: Object.keys(_imgCache).length });
   }
@@ -786,9 +850,83 @@ const storage = (() => {
     return _data.notes[id] || null;
   }
 
-  /** 获取单张本地图片的 dataURL（供 editor 在 DOM 层面 rehydrate img.src 用） */
+  /** 获取单张本地图片的 dataURL（同步，仅命中内存缓存；供 editor 在 DOM 层面 rehydrate img.src 用） */
   function getLocalImage(hash) {
     return _imgCache[hash] || null;
+  }
+
+  /** 单张图片懒加载（异步）：缓存没有就直接从后端读这一张并回填缓存。
+   *  不等全量载入完成——打开笔记时只读它用到的几张，立刻显示。命中返回 dataURL，否则 null。 */
+  async function loadImage(hash) {
+    if (!hash) return null;
+    if (_imgCache[hash]) return _imgCache[hash];
+    try {
+      if (_imgBackend === 'file' && _imgDir) {
+        let p = '';
+        try {
+          const r = await _imgFileOp('list', { dir: _imgDir, pattern: hash + '.*' });
+          p = (((r && r.result) || '').toString().split(/\r?\n/).filter(Boolean)[0] || '').trim();
+        } catch (_) {}
+        if (!p) return _imgCache[hash] || null;
+        const ext = (p.match(/\.([a-z0-9]+)$/i) || [])[1] || 'png';
+        const rr = await _imgFileOp('readFile', { path: p, isBinary: 'true' });
+        const b64 = ((rr && rr.result) || '').toString();
+        if (b64) { _imgCache[hash] = 'data:' + _imgMimeOf(ext) + ';base64,' + b64; return _imgCache[hash]; }
+        return null;
+      }
+      if (_imgBackend === 'idb') {
+        const v = await idbImgGet(hash);
+        if (v) { _imgCache[hash] = v; return v; }
+        return null;
+      }
+    } catch (e) { console.warn('[storage] 单张图片懒加载失败', hash, e); }
+    return _imgCache[hash] || null; // legacy：缓存即主库
+  }
+
+  /** 批量图片加载（异步）：一次桥接把一篇笔记用到的多张图全读回缓存。
+   *  - file 后端：调 FileOp 'readMany' 一趟取回所有 base64（Quicker 侧需加该分支）；
+   *    分支不存在/缺图时自动逐张 loadImage 兜底——所以即便 Quicker 还没加分支也照常工作。
+   *  - idb 后端：并行 idbImgGet。
+   *  返回 { hash: dataUrl } 命中表（只含本次新读或已缓存的）。不抛错。 */
+  async function loadImages(hashes) {
+    const out = {};
+    if (!Array.isArray(hashes)) return out;
+    const need = [];
+    for (const h of hashes) {
+      if (!h) continue;
+      if (_imgCache[h]) { out[h] = _imgCache[h]; continue; }
+      if (need.indexOf(h) === -1) need.push(h);
+    }
+    if (!need.length) return out;
+    try {
+      if (_imgBackend === 'file' && _imgDir) {
+        try {
+          const r = await _imgFileOp('readMany', { dir: _imgDir, hashes: need.join(',') });
+          let arr = [];
+          try { arr = JSON.parse(((r && r.result) || '[]').toString() || '[]'); } catch (_) { arr = []; }
+          if (Array.isArray(arr)) {
+            for (const it of arr) {
+              if (!it || !it.hash || !it.content) continue;
+              const dataUrl = 'data:' + _imgMimeOf(it.ext || 'png') + ';base64,' + it.content;
+              _imgCache[it.hash] = dataUrl; out[it.hash] = dataUrl;
+            }
+          }
+        } catch (_) {}
+        const still = need.filter(h => !_imgCache[h]); // readMany 未生效/个别缺失 → 逐张兜底
+        if (still.length) {
+          await Promise.all(still.map(async (h) => { const v = await loadImage(h); if (v) out[h] = v; }));
+        }
+        return out;
+      }
+      if (_imgBackend === 'idb') {
+        await Promise.all(need.map(async (h) => { const v = await idbImgGet(h); if (v) { _imgCache[h] = v; out[h] = v; } }));
+        return out;
+      }
+    } catch (e) {
+      console.warn('[storage] 批量图片加载失败，逐张兜底', e);
+      await Promise.all(need.map(async (h) => { const v = await loadImage(h); if (v) out[h] = v; }));
+    }
+    return out;
   }
 
   /** 把 markdown 中的 zhinote://img/<hash> 全部替换回真 base64（用于导出、复制等场景） */
@@ -1455,6 +1593,14 @@ const storage = (() => {
         _globalDirty = true;
       }
       if (t === 'reload') { _dirtyNoteIds.clear(); _globalDirty = false; }
+      // 收口：本地任何会产生脏数据的变更（新建/删除/改名/移动/颜色图标/回收站/笔记本/设置…）
+      // 统一在此安排一次「去抖的」上传，让它们也像编辑文字一样触发同步、点亮徽标，
+      // 不再只靠失焦/隐藏才推（关闭前来不及推 → 重开拉云端对不齐 → 冲突）。
+      // reload / global-sync 是云端下行正在应用，绝不反向回推（避免回声/覆盖）。
+      // schedulePut 自身有 _hasDirtyData 早退 + debounce，不会因频繁结构操作猛发请求。
+      if (t !== 'reload' && t !== 'global-sync') {
+        try { markDirty(); } catch (_) {}
+      }
     }
     _listeners.forEach(l => { if (l.event === event) l.cb(payload); });
   }
@@ -1698,6 +1844,8 @@ const storage = (() => {
     if (_imgCache[hash]) return;
     _imgCache[hash] = dataUrl;
     _imgPersistSafe(hash, dataUrl); // legacy 后端内部自带 save({immediate:true})，与旧行为一致
+    // 通知编辑器：新图已落地 → 把当前笔记里还是占位的这张补显（覆盖"笔记已打开、图片随后才同步到"的情形）
+    emit('image-stored', { hash });
   }
 
   function _emitCloudSync(payload) {
@@ -1775,9 +1923,10 @@ const storage = (() => {
   }
 
   return {
-    init, getAll, get, getLocalImage, expandLocalImages, ingestImageDataUrl, getChildren, getAncestors,
+    init, getAll, get, getLocalImage, loadImage, loadImages, expandLocalImages, ingestImageDataUrl, getChildren, getAncestors,
     // 图片外置后端（阶段A）
     imagesReady: () => _imgReadyPromise,
+    imagesPrimaryReady: () => _imgPrimaryReadyPromise,
     getImageMap: () => _imgCache,
     getImagesBackendInfo: () => ({ backend: _imgBackend, dir: _imgDir }),
     setImagesDir,

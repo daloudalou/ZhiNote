@@ -857,14 +857,18 @@ function _showCodeLangPicker(anchor, wrapper, ed, getPos) {
   setTimeout(() => document.addEventListener('mousedown', dismiss, true), 0);
 }
 
-function missingImagePlaceholderDataUrl(width, height) {
+function missingImagePlaceholderDataUrl(width, height, labelOverride) {
   const w = Math.min(Math.max(parseInt(width, 10) || 320, 80), 1600);
   const h = Math.min(Math.max(parseInt(height, 10) || 200, 60), 1200);
   const iconSize = Math.min(32, Math.floor(w / 8));
   const fs = Math.min(12, Math.floor(w / 22));
   const cx = w / 2, cy = h / 2 - 8;
+  // 默认文案：只要本地有外置后端(file/idb)或开了 webdav，图片都可被取到 → 显示「加载中」（在读盘/下载）；
+  // 否则才是真·取不到（存在别的设备上）。definitive 失败时由调用方传 labelOverride 覆盖。
   const syncMethod = window.storage?.getSetting?.('syncMethod') || 'none';
-  const label = (syncMethod === 'webdav' && window.webdavSync) ? '图片同步中…' : '图片存于其他设备';
+  const backend = window.storage?.getImagesBackendInfo?.().backend;
+  const canFetch = (syncMethod === 'webdav' && window.webdavSync) || backend === 'file' || backend === 'idb';
+  const label = labelOverride || (canFetch ? '图片加载中…' : '图片存于其他设备');
   const cs = getComputedStyle(document.body);
   const bgColor = cs.getPropertyValue('--bg-tertiary').trim() || '#f8f8f7';
   const borderColor = cs.getPropertyValue('--border-strong').trim() || 'rgba(15,15,15,0.12)';
@@ -951,8 +955,10 @@ const MdImage = Image.extend({
 
       function resolveAndSetSrc(attrs) {
         const src = attrs.src || '';
+        // 任何一次新解析都让之前挂起的异步回填作废（防止旧 hash 的迟到结果覆盖当前图）
+        delete img.dataset.pendingHash;
         if (src.startsWith('zhinote://local-image-omitted')) {
-          img.src = missingImagePlaceholderDataUrl(attrs.width, attrs.height);
+          img.src = missingImagePlaceholderDataUrl(attrs.width, attrs.height, '图片存于其他设备');
           return;
         }
         if (src.startsWith('zhinote://img/')) {
@@ -961,11 +967,32 @@ const MdImage = Image.extend({
           if (cached) { img.src = cached; return; }
           const local = window.storage?.getLocalImage?.(hash);
           if (local) { _imgDataCache.set(hash, local); img.src = local; return; }
+          // 缓存未命中：先占位「加载中」，标记本次想要的 hash 作 stale 守卫
           img.src = missingImagePlaceholderDataUrl(attrs.width, attrs.height);
-          if (window.webdavSync?.downloadImage) {
-            window.webdavSync.downloadImage(hash).then(result => {
-              if (result) { _imgDataCache.set(hash, result); img.src = result; }
-            }).catch(() => {});
+          img.dataset.pendingHash = hash;
+          const w = attrs.width, h = attrs.height;
+          const apply = (result) => {
+            if (!result) return false;
+            _imgDataCache.set(hash, result);
+            if (img.dataset.pendingHash === hash) { img.src = result; delete img.dataset.pendingHash; }
+            return true;
+          };
+          const viaWebdav = () => {
+            if (window.webdavSync?.downloadImage) {
+              window.webdavSync.downloadImage(hash).then((r) => {
+                if (!apply(r) && img.dataset.pendingHash === hash) {
+                  img.src = missingImagePlaceholderDataUrl(w, h, '图片存于其他设备');
+                }
+              }).catch(() => {});
+            } else if (img.dataset.pendingHash === hash) {
+              img.src = missingImagePlaceholderDataUrl(w, h, '图片存于其他设备');
+            }
+          };
+          // 先本地单张懒加载（外置后端直接读那一张，不等全量载入）；本地没有再走云端
+          if (window.storage?.loadImage) {
+            window.storage.loadImage(hash).then((d) => { if (!apply(d)) viaWebdav(); }).catch(viaWebdav);
+          } else {
+            viaWebdav();
           }
           return;
         }
@@ -1401,6 +1428,19 @@ const editor = (() => {
     });
 
     _ensureMarkedPatched();
+
+    // 图片后端全量载入完成（外置图片冷启动）后，把当前笔记里仍是占位的图补显一遍。
+    // 这是 lazy 单张加载之外的兜底：覆盖未开 webdav 的纯本地情形（NodeView 那条 webdav 补救路径走不到）。
+    try { window.storage?.imagesReady?.().then(() => { try { _refreshPlaceholderImages(); } catch (_) {} }); } catch (_) {}
+    // 新图落地（webdav 后台下载到本地、或单张存入）→ 去抖刷新当前笔记占位图：
+    // 解决"笔记已打开着、网页端上传的图随后才同步过来"时，本地占位不会自动变成真图的问题。
+    try {
+      let _imgRefreshTimer = null;
+      window.storage?.on?.('image-stored', () => {
+        if (_imgRefreshTimer) return;
+        _imgRefreshTimer = setTimeout(() => { _imgRefreshTimer = null; try { _refreshPlaceholderImages(); } catch (_) {} }, 120);
+      });
+    } catch (_) {}
 
     // ── 触屏 dock 浮动条控制器（替代 BubbleMenu 插件）──
     // 显隐只由「选区是否非空」驱动（外加抑制态/右键菜单），不看焦点——
@@ -2778,12 +2818,18 @@ const editor = (() => {
 
   // 预热本地图片缓存：doc 笔记遍历图片节点取 hash；旧 md 笔记扫文本。
   // （MutationObserver 在 DOM 层把 <img src="zhinote://…"> 实时换成真 base64，缓存命中更快。）
+  //  返回「内存里还没有、需异步读盘」的 hash 列表，供调用方批量懒加载（loadImages）。
   function _prewarmNoteImages(note) {
-    if (!note) return;
+    const missing = [];
+    if (!note) return missing;
+    const seen = new Set();
     const warm = (hash) => {
-      if (!hash || _imgDataCache.has(hash)) return;
+      if (!hash || seen.has(hash)) return;
+      seen.add(hash);
+      if (_imgDataCache.has(hash)) return;
       const d = window.storage?.getLocalImage?.(hash);
-      if (d) _imgDataCache.set(hash, d);
+      if (d) { _imgDataCache.set(hash, d); return; }
+      missing.push(hash);
     };
     try {
       if (note.doc) {
@@ -2796,6 +2842,7 @@ const editor = (() => {
         while ((m = re.exec(note.content || '')) !== null) warm(m[1]);
       }
     } catch (_) {}
+    return missing;
   }
 
   // 把笔记灌进编辑器：有 doc(JSON) 走零往返 JSON 路径（全保真、无抖动）；
@@ -2916,7 +2963,25 @@ const editor = (() => {
     if (!_editor) initEditor();
     if (!_editor) { console.warn('[editor] Cannot open note: editor not available'); return; }
 
-    _prewarmNoteImages(note);
+    // 打开前把本篇图片备齐再渲染：setContent 时 NodeView 同步命中缓存，图文一起出现、无「占位→换图」闪动。
+    //  - 启动自动打开（initial）：等「上次笔记」的图就绪（primary-ready，封顶 3s）——这篇图正是后台预读的优先批，
+    //    此路径不另发 readMany、与预读不重复；超时才照常渲染、剩余走懒加载。
+    //  - 手动切换：批量读这几张（封顶 240ms），预读已完成时基本秒回。
+    const _miss = _prewarmNoteImages(note);
+    if (_miss && _miss.length) {
+      if (opts && opts.initial && window.storage?.imagesPrimaryReady) {
+        await Promise.race([
+          window.storage.imagesPrimaryReady().catch(() => {}),
+          new Promise((res) => setTimeout(res, 3000)),
+        ]);
+      } else if (window.storage?.loadImages) {
+        await Promise.race([
+          window.storage.loadImages(_miss).catch(() => {}),
+          new Promise((res) => setTimeout(res, 240)),
+        ]);
+      }
+      if (_currentId !== id) return; // 等待期间用户已切到别的笔记 → 放弃本次，交给后来的 open()
+    }
 
     // setContent 前先失焦：编辑器聚焦状态下 setContent 会把选区重置到文首并保持聚焦，
     // 表现为"切换笔记后光标出现在文首"。先失焦让 ProseMirror 在非聚焦态完成内容替换。
@@ -3038,6 +3103,25 @@ const editor = (() => {
     _editor.setEditable(!on);
   }
 
+  // 把当前文档里仍是占位的外置图片重新解析、命中缓存就替换上去（images-ready 兜底用）。
+  function _refreshPlaceholderImages() {
+    if (!_editor) return;
+    _editor.state.doc.descendants((node, pos) => {
+      if (node.type.name !== 'image') return;
+      const src = node.attrs.src || '';
+      if (!src.startsWith('zhinote://img/')) return;
+      const hash = src.replace('zhinote://img/', '').replace(/#.*$/, '');
+      let data = _imgDataCache.get(hash);
+      if (!data) {
+        const local = window.storage?.getLocalImage?.(hash);
+        if (local) { _imgDataCache.set(hash, local); data = local; }
+      }
+      if (!data) return;
+      const dom = _editor.view.nodeDOM(pos);
+      if (dom && dom.tagName === 'IMG' && dom.src !== data) dom.src = data;
+    });
+  }
+
   function setTheme(theme) {
     if (!_editor) return;
     _editor.state.doc.descendants((node, pos) => {
@@ -3110,7 +3194,11 @@ const editor = (() => {
     clearTimeout(_saveTimer);
     const note = window.storage?.get(_currentId);
     if (!note) { close(); return; }
-    _prewarmNoteImages(note);
+    // 下行同步触发的重载：不阻塞渲染（保持同步时序），后台批量预热完成后再刷新占位图。
+    const _miss = _prewarmNoteImages(note);
+    if (_miss && _miss.length && window.storage?.loadImages) {
+      window.storage.loadImages(_miss).then(() => { try { _refreshPlaceholderImages(); } catch (_) {} }).catch(() => {});
+    }
     _suppressInput = true;
     _loadNoteIntoEditor(note);
     _normalizeEmptyListItems();
