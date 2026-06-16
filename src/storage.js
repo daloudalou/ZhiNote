@@ -8,7 +8,7 @@
  *   rootOrder: [id, id, ...],        // 根节点顺序（顶级笔记 id 列表）
  *   trash: { [id]: TrashNode },      // 回收站（保存完整笔记快照）
  *   trashOrder: [id, ...],
- *   settings: { theme, fontSize, sidebarWidth, lastOpenedId, editorMode, ... },
+ *   settings: { theme, fontSize, sidebarWidth, lastOpenedId, ... },
  *   templates: [{ id, name, content }]
  * }
  *
@@ -42,7 +42,6 @@ const DEFAULT_DATA = () => ({
     noteTransition: 'none',
     sidebarWidth: 260,
     lastOpenedId: null,
-    editorMode: 'wysiwyg',
     outlineOpen: false,
     sidebarCollapsed: false,
     showTrashBadge: true,
@@ -439,6 +438,9 @@ const storage = (() => {
       if (data.settings.noteTransition === 'up') data.settings.noteTransition = 'none';
       data.settings._noteTransResetV2 = true;
     }
+    // 历史残留清理：旧版「编辑模式（所见即所得/即时渲染/分屏预览）」三模式早已废弃，
+    // editorMode 设置不再有任何读取方；删除该死键，避免它长期残留并误入共享同步。
+    delete data.settings.editorMode;
     const needV3Migration = (data.version || 0) < 3;
     for (const id in data.notes) {
       const n = data.notes[id];
@@ -1889,7 +1891,7 @@ const storage = (() => {
   // 每台设备各自的偏好 / UI 状态：绝不随云端覆盖（否则会出现"另一台设备改了本机就被拉回"的问题）。
   const LOCAL_ONLY_SETTINGS = [
     'theme', 'fontSize', 'fontFamily', 'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
-    'noteTransition', 'editorPadding', 'sidebarWidth', 'editorMode', 'outlineOpen',
+    'noteTransition', 'editorPadding', 'sidebarWidth', 'outlineOpen',
     'activeWorkspace', 'lastOpenedId', 'recent',
     'webdavProxy', // 跨域代理前缀：每台设备各自配置（桌面直连不需要），绝不上云
     'imagesDir',   // 图片文件夹：本机路径，跨设备无意义，绝不上云

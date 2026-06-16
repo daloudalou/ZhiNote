@@ -192,14 +192,23 @@ async function bootstrap() {
     setTimeout(() => { try { refreshDetectedSystemFonts(); } catch (_) {} }, 1500);
   }
 
+  // 当前打开的笔记若已不存在（被同步/导入/采纳等移除）→ 关闭编辑器，不残留陈旧标题/正文。
+  // 数据无碍，但显示怪异。force=true 时绕过 bulk 导入守卫（用于整库 reload 这类已完成的变更）。
+  function _ensureEditorNoteAlive(force) {
+    if (!force && window._bulkImporting) return;
+    const cid = editor.currentId?.();
+    if (cid && !storage.get(cid)) editor.close();
+  }
+
   storage.on('change', (payload) => {
     if (!payload.silent && !window._bulkImporting) tree.render();
     updateTrashBadge();
+    // 任何数据变更后兜底：打开的笔记被移除则关掉编辑器（bulk 导入暂态不一致时跳过）
+    _ensureEditorNoteAlive(payload?.type === 'reload');
     // 云端下载会发 type='reload'：同时把当前编辑器里的笔记内容刷新成最新
     if (payload?.type === 'reload') {
       const curId = editor.currentId?.();
       if (curId && storage.get(curId)) editor.reloadCurrent();
-      else if (curId) editor.close();
     }
     // 同步/导入等批量变更：顶栏笔记本名、欢迎页"最近编辑"也要跟着刷新，避免显示陈旧
     if (payload?.type === 'reload' || payload?.type === 'global-sync') {
@@ -268,12 +277,15 @@ async function bootstrap() {
         tree.render();
         try { refreshWorkspaceSwitcher(); } catch (_) {}
         try { renderWelcomeRecent(); } catch (_) {}
+        _ensureEditorNoteAlive();
       } else if (payload.detail === 'get-downloaded') {
         const curId = editor.currentId?.();
         const downloaded = payload.downloadedNoteIds;
         tree.render();
         try { refreshWorkspaceSwitcher(); } catch (_) {}
         try { renderWelcomeRecent(); } catch (_) {}
+        // 同步移除当前笔记走 save()（不发 storage change），这里兜底关闭编辑器
+        _ensureEditorNoteAlive();
         if (curId && downloaded && downloaded.has && downloaded.has(curId)) {
           editor.reloadCurrent();
         }
@@ -764,6 +776,7 @@ function wireEvents() {
   document.getElementById('btn-cmd-palette').addEventListener('click', () => palette.open());
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-readonly').addEventListener('click', toggleReadonlyMode);
+  document.getElementById('btn-view-md')?.addEventListener('click', () => { if (editor.currentId?.()) editor.toggleMarkdownSource?.(); });
   document.getElementById('btn-pin').addEventListener('click', toggleCurrentPin);
 
   document.getElementById('btn-search').addEventListener('click', () => {
@@ -1094,6 +1107,8 @@ function _isNonEditorTextTarget() {
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && (e.key === 'a' || e.key === 'A') && !e.shiftKey) {
+    // 源码只读视图打开时：让原生全选作用于源码文本，不抢给编辑器
+    if (editor.isMarkdownSourceOpen?.()) return;
     // 焦点在标题栏/输入框/命令面板等处 → 让原生全选作用于当前控件，不抢给编辑区
     if (_isNonEditorTextTarget()) return;
     if (editor.currentId?.()) {
@@ -1156,6 +1171,10 @@ function onGlobalKey(e) {
   } else if (ctrl && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
     e.preventDefault();
     toggleClozeMode();
+  } else if (ctrl && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+    // 查看 Markdown 源码（只读）开关
+    e.preventDefault();
+    if (editor.currentId?.()) editor.toggleMarkdownSource?.();
   } else if (e.key === 'Delete' && !isEditing(e.target)) {
     const id = editor.currentId();
     if (id) {
@@ -1165,6 +1184,7 @@ function onGlobalKey(e) {
       tree.requestDelete(id, anchor);
     }
   } else if (e.key === 'Escape') {
+    if (editor.isMarkdownSourceOpen?.()) { editor.toggleMarkdownSource(false); return; }
     if (closeAnyOverlay()) return;
     if (window.tree?.hasSelection?.()) { window.tree.clearSelection(); return; }
     if (search.isActive()) { search.deactivate(); return; }
@@ -2159,6 +2179,7 @@ function setupMobileLayout() {
  * - 双指上滑 / 下滑  = 下一篇 / 上一篇（按侧栏可见顺序）
  * - 双指捏合         = 调编辑区字号（11–28px，实时预览）
  * - 三指轻点         = 阅读模式开关
+ * - 三指右滑 / 左滑  = 撤销 / 重做（免授权，iOS/安卓通用）
  * - 双击顶栏         = 编辑区回到顶部
  * - 编辑区顶部下拉    = 立即同步
  * - 摇一摇           = 撤销（仅免授权平台，iOS 需手动授权故不启用）
@@ -2254,9 +2275,12 @@ function setupTouchGestures(mq) {
 
   document.addEventListener('touchmove', (e) => {
     if (g3 && e.touches.length === 3) {
+      g3.last = [...e.touches].map(t => [t.clientX, t.clientY]);
       for (let i = 0; i < 3; i++) {
-        if (dist([e.touches[i].clientX, e.touches[i].clientY], g3.pts[i] || [0, 0]) > 28) { g3.moved = true; break; }
+        if (dist(g3.last[i], g3.pts[i] || [0, 0]) > 28) { g3.moved = true; break; }
       }
+      // 掐掉 iOS 原生三指撤销/复制手势与页面滚动，撤销/重做统一由我们的三指横滑处理，避免双重撤销
+      if (e.cancelable) e.preventDefault();
       return;
     }
     if (!g2 || e.touches.length !== 2) return;
@@ -2298,11 +2322,30 @@ function setupTouchGestures(mq) {
       // 手指全部离开后补一次键盘错位纠正（按压期间被暂缓的那次）
       if (window._mdKbLift) setTimeout(() => window._mdKbLift(), 50);
     }
-    // 三指轻点 → 阅读模式
+    // 三指横滑 = 撤销(右) / 重做(左)；三指轻点(未移动) = 阅读模式
     if (g3 && e.touches.length === 0) {
-      const ok = !g3.moved && Date.now() - g3.t0 < 350;
-      g3 = null;
-      if (ok) window.toggleReadonlyMode && window.toggleReadonlyMode();
+      const st3 = g3; g3 = null;
+      if (st3.moved && st3.last && st3.last.length) {
+        let dx = 0, dy = 0; const n = Math.min(st3.pts.length, st3.last.length);
+        for (let i = 0; i < n; i++) { dx += st3.last[i][0] - st3.pts[i][0]; dy += st3.last[i][1] - st3.pts[i][1]; }
+        dx /= n; dy /= n;
+        if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          const ed = editor.instance && editor.instance();
+          if (ed) {
+            if (dx > 0 && ed.can().undo()) {
+              ed.chain().focus().undo().run();
+              navigator.vibrate && navigator.vibrate(15);
+              toast('已撤销', 'info', { id: 'g3-undo', duration: 900 });
+            } else if (dx < 0 && ed.can().redo()) {
+              ed.chain().focus().redo().run();
+              navigator.vibrate && navigator.vibrate(15);
+              toast('已重做', 'info', { id: 'g3-redo', duration: 900 });
+            }
+          }
+        }
+        return;
+      }
+      if (Date.now() - st3.t0 < 350) window.toggleReadonlyMode && window.toggleReadonlyMode();
       return;
     }
     if (!g2 || e.touches.length >= 2) return;
@@ -2446,6 +2489,16 @@ function setupTouchGestures(mq) {
 
   setupKeyboardViewportTracking();
 }
+
+/** 浮层定位用的"可见区高度"。
+ *  iOS Safari 软键盘弹出时 window.innerHeight 不变（仍是布局视口高），真正反映可见区的是
+ *  visualViewport.height。浮层若按 innerHeight 判"下方放不下"会误判成还有空间，直接钻进键盘
+ *  覆盖区被盖住（右键菜单/表情面板等）。统一用本函数取高度，键盘在场时菜单会自动翻到键盘上方。 */
+function visibleViewportH() {
+  const vv = window.visualViewport;
+  return (vv && vv.height) ? vv.height : window.innerHeight;
+}
+window.visibleViewportH = visibleViewportH;
 
 /** 触屏键盘视口追踪（键盘工具条已整体移除，撤销/重做并入选中文字时的浮动条）。
  *  职责单一：把软键盘高度实时写进 CSS 变量 --kb-gap，供 dock 浮动条悬于键盘上方。
@@ -2694,7 +2747,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
   const pad = 8;
   const pw = pop.offsetWidth;
   // 笔记本很多时限制高度并内部滚动，保证不超出窗口
-  const maxH = window.innerHeight - pad * 2;
+  const maxH = visibleViewportH() - pad * 2;
   if (pop.offsetHeight > maxH) { pop.style.maxHeight = `${maxH}px`; pop.style.overflowY = 'auto'; }
   const ph = pop.offsetHeight;
   // 水平边界保护（两侧）
@@ -2704,9 +2757,9 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
   pop.style.left = `${Math.round(left)}px`;
   // 垂直边界保护：下方放不下则向上翻；仍放不下则贴顶
   let top = r.bottom + 4;
-  if (top + ph > window.innerHeight - pad) {
+  if (top + ph > visibleViewportH() - pad) {
     const upTop = r.top - ph - 4;
-    top = upTop >= pad ? upTop : Math.max(pad, window.innerHeight - ph - pad);
+    top = upTop >= pad ? upTop : Math.max(pad, visibleViewportH() - ph - pad);
   }
   pop.style.top = `${Math.round(top)}px`;
 
@@ -2795,7 +2848,7 @@ function openIconPicker(anchorEl, { currentIcon, defaultIcon, onPick, title } = 
   const pw = pop.offsetWidth;
   const ph = pop.offsetHeight;
   const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vh = visibleViewportH();
   let left = r.left + r.width / 2 - pw / 2;
   let top = r.bottom + 6;
   if (left + pw > vw - 8) left = vw - pw - 8;
@@ -3443,13 +3496,13 @@ function toggleEmojiPicker(anchorEl) {
     let top = r.bottom + 6;
     if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
     if (left < 8) left = 8;
-    if (top + ph > window.innerHeight - 8) {
+    if (top + ph > visibleViewportH() - 8) {
       const aboveTop = r.top - ph - 6;
       if (aboveTop >= 8) {
         top = aboveTop; // 下方放不下 → 翻到光标上方
       } else {
         // 上下都放不下：贴边放置，并横向挪开，避免盖住光标所在行、看不见输入了什么
-        top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
+        top = Math.max(8, Math.min(top, visibleViewportH() - ph - 8));
         left = (r.left + 24 + pw <= window.innerWidth - 8) ? r.left + 24 : Math.max(8, r.left - pw - 24);
       }
     }
@@ -3606,7 +3659,7 @@ function showTooltipFor(el, text) {
     let top  = r.bottom + 6;
     if (left + tw > window.innerWidth - 6) left = window.innerWidth - tw - 6;
     if (left < 6) left = 6;
-    if (top + th > window.innerHeight - 6) top = r.top - th - 6;
+    if (top + th > visibleViewportH() - 6) top = r.top - th - 6;
     _tooltipEl.style.left = `${Math.round(left)}px`;
     _tooltipEl.style.top  = `${Math.round(top)}px`;
   });
@@ -4636,7 +4689,7 @@ function showActionMenu(anchor, items) {
     const r = anchor.getBoundingClientRect();
     let left = r.left;
     let top = r.bottom + 6;
-    if (top + popup.offsetHeight > window.innerHeight) top = r.top - popup.offsetHeight - 6;
+    if (top + popup.offsetHeight > visibleViewportH()) top = r.top - popup.offsetHeight - 6;
     if (left + popup.offsetWidth > window.innerWidth) left = window.innerWidth - popup.offsetWidth - 8;
     if (left < 4) left = 4;
     popup.style.left = left + 'px';
@@ -5501,6 +5554,16 @@ function openSettingsModal(initialTab) {
         </select>
       </div>
     </div>
+    <div class="set-grid-2">
+      <div class="set-col">
+        <label>代码块默认</label>
+        <select id="set-codeblock-fold" style="width:100%;margin-top:0;">
+          <option value="fold" ${storage.getSetting('codeBlockExpanded')===true?'':'selected'}>折叠（默认）</option>
+          <option value="expand" ${storage.getSetting('codeBlockExpanded')===true?'selected':''}>展开</option>
+        </select>
+      </div>
+      <div class="set-col"></div>
+    </div>
     </div>
 
     <div id="settings-tab-sync" class="${lastTab!=='sync'?'settings-tab-hidden':''}">
@@ -5631,15 +5694,18 @@ function openSettingsModal(initialTab) {
           { title: '全局 / 笔记', items: [
             ['新建笔记', 'Ctrl+Alt+N'], ['切换 / 新建笔记本', 'Ctrl+Shift+N'], ['命令面板 / 切换笔记', 'Ctrl+P'], ['切换到上一篇笔记', 'Ctrl+Tab'],
             ['全文搜索', 'Ctrl+F'], ['手动保存', 'Ctrl+S'], ['大纲面板', 'Ctrl+Shift+O'],
-            ['侧边栏', 'Ctrl+\\'], ['阅读模式', 'Ctrl+Shift+E'], ['表情符号', 'Ctrl+;'],
-            ['专注模式', 'F10'], ['挖空复习模式', 'F11'], ['标记挖空选区', 'Alt+M'],
+            ['侧边栏', 'Ctrl+\\'], ['阅读模式', 'Ctrl+Shift+E'], ['查看 Markdown 源码', 'Ctrl+Shift+M'], ['表情符号', 'Ctrl+;'],
+            ['专注模式', 'F10'], ['挖空复习模式', 'F11 / Ctrl+Shift+C'], ['标记挖空选区', 'Alt+M'],
             ['放大 / 缩小 / 复位字号', 'Ctrl+= / Ctrl+- / Ctrl+0'], ['关闭弹层', 'Esc'],
           ]},
           { title: '编辑（编辑器内）', items: [
             ['加粗', 'Ctrl+B'], ['斜体', 'Ctrl+I'], ['下划线', 'Ctrl+U'], ['删除线', 'Ctrl+Shift+S'],
             ['行内代码', 'Ctrl+E'], ['引用', 'Ctrl+Shift+B / Alt+Shift+B'], ['分割线', 'Ctrl+Shift+H'], ['无序列表', 'Ctrl+Shift+8'],
-            ['有序列表', 'Ctrl+Shift+7'], ['一级~六级标题', 'Ctrl+Alt+1 … 6'], ['软换行', 'Shift+Enter'],
+            ['有序列表', 'Ctrl+Shift+7'], ['一级~六级标题', 'Ctrl+Alt+1 … 6'], ['段落对齐 左/中/右/两端', 'Ctrl+Alt+L/E/R/J'], ['软换行', 'Shift+Enter'],
             ['撤销 / 重做', 'Ctrl+Z / Ctrl+Y'],
+          ]},
+          { title: '连按 / 双击（键盘）', items: [
+            ['命令面板', '连按 ` `'], ['表情选择器', '连打 ; ;'], ['跳出续写格式', '双击 空格'],
           ]},
         ];
         const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -5655,6 +5721,8 @@ function openSettingsModal(initialTab) {
           '大纲面板': '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
           '侧边栏': '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/>',
           '阅读模式': '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
+          '查看 Markdown 源码': '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+          '段落对齐 左/中/右/两端': '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/>',
           '表情符号': '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',
           '专注模式': '<path d="M8 3H5a2 2 0 00-2 2v3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M16 21h3a2 2 0 002-2v-3"/>',
           '挖空复习模式': '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
@@ -5697,6 +5765,7 @@ function openSettingsModal(initialTab) {
             ['回到顶部', '双击顶栏'],
             ['立即同步', '编辑区顶部下拉'],
             ['阅读模式', '三指轻点'],
+            ['撤销 / 重做', '三指右滑 / 三指左滑'],
           ]},
           { title: '笔记树', items: [
             ['多选笔记', '双指轻点行'],
@@ -5710,7 +5779,7 @@ function openSettingsModal(initialTab) {
             ['表格菜单', '双指轻点表格'],
             ['调整字号', '编辑区双指捏合'],
             ['格式浮动条', '选中文字时悬于键盘上方（含撤销/重做）'],
-            ['撤销', '浮动条 ↶ / 摇一摇（安卓）'],
+            ['撤销 / 重做', '三指右滑 / 左滑（任意处）'],
             ['标记挖空', '选中文字 → 浮动条高亮'],
           ]},
         ];
@@ -5820,6 +5889,10 @@ function openSettingsModal(initialTab) {
         const outlinePos = body.querySelector('#set-outline-pos')?.value || 'left';
         storage.setSetting('outlinePosition', outlinePos);
         applyOutlinePosition(outlinePos);
+        const codeBlockExpanded = body.querySelector('#set-codeblock-fold')?.value === 'expand';
+        const codeBlockChanged = codeBlockExpanded !== (storage.getSetting('codeBlockExpanded') === true);
+        storage.setSetting('codeBlockExpanded', codeBlockExpanded);
+        if (codeBlockChanged) { try { editor.applyCodeBlockFoldDefault?.(); } catch (_) {} }
         try { localStorage.setItem('zhinote-font', fontFamily); } catch (_) {}
         try { localStorage.setItem('zhinote-theme', themeId); } catch (_) {}
         applyFontFamily(fontFamily);
@@ -6607,7 +6680,7 @@ function upgradeSelect(select) {
     panel.style.maxWidth = `${Math.max(r.width, 280)}px`;
     panel.style.top = `${r.bottom + 4}px`;
     const ph = panel.offsetHeight;
-    if (r.bottom + 4 + ph > window.innerHeight - 12) {
+    if (r.bottom + 4 + ph > visibleViewportH() - 12) {
       panel.style.top = `${r.top - ph - 4}px`;
     }
     // 边界
@@ -6716,6 +6789,21 @@ function closeModal() {
 
 window.openModal = openModal;
 window.closeModal = closeModal;
+
+// 触屏：弹窗内输入聚焦时，等键盘动画稳定后把该字段滚到可见区中部（配合 kb-open 收窄弹窗），
+// 防止底部输入框被键盘遮挡够不到。一次性委托，覆盖所有弹窗的所有字段。
+(function wireModalFocusScroll() {
+  const dialog = document.getElementById('modal-dialog');
+  if (!dialog) return;
+  let _t = null;
+  dialog.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (!t || !t.matches || !t.matches('input, textarea, select')) return;
+    if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) return;
+    clearTimeout(_t);
+    _t = setTimeout(() => { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 300);
+  });
+})();
 
 /** 云端有冲突更新 → 弹统一 modal（仅在本地有未上传改动时调用） */
 /** 显示 toast。
@@ -7145,7 +7233,7 @@ function showTableContextMenu(e) {
   requestAnimationFrame(() => {
     const mr = menu.getBoundingClientRect();
     if (mr.right > window.innerWidth - 8) menu.style.left = Math.max(8, e.clientX - mr.width) + 'px';
-    if (mr.bottom > window.innerHeight - 8) menu.style.top = Math.max(8, e.clientY - mr.height) + 'px';
+    if (mr.bottom > visibleViewportH() - 8) menu.style.top = Math.max(8, e.clientY - mr.height) + 'px';
   });
   let dismiss;
   let dismissKey;
@@ -7163,7 +7251,9 @@ function showTableContextMenu(e) {
 function initEditorContextMenu() {
   const handleCtx = async (e) => {
     const editable = document.querySelector('#editor .ProseMirror');
-    if (!editable || !editable.contains(e.target)) return;
+    const srcView = document.getElementById('md-source-view');
+    const inSource = !!(srcView && !srcView.classList.contains('hidden') && srcView.contains(e.target));
+    if (!inSource && (!editable || !editable.contains(e.target))) return;
 
     // 触屏端：真实长按（isTrusted，安卓长按文字会原生触发 contextmenu）让位给系统选字——
     // 长按=选词+拖手柄是所有移动端的肌肉记忆，被自定义菜单劫持后文字几乎没法选（曾被反馈）。
@@ -7247,7 +7337,11 @@ function initEditorContextMenu() {
 
     const _inCodeBlock = editor.instance?.()?.isActive('codeBlock') || e.target.closest('.code-block-wrapper');
     const _codeWrapper = (() => { let w = e.target.closest('.code-block-wrapper'); if (w) return w; const inst = editor.instance(); if (!inst) return null; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const dom = inst.view.nodeDOM($from.before(d)); return dom?.closest?.('.code-block-wrapper') || dom; } } return null; })();
-    const items = [
+    const _srcMenuItems = [
+      { label: '返回渲染', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>', action: () => editor.toggleMarkdownSource?.(false) },
+      { label: '复制全部 Markdown', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: () => { try { const md = editor.getValue?.() || ''; navigator.clipboard?.writeText(md); } catch (_) {} } },
+    ];
+    const items = inSource ? _srcMenuItems : [
       ...(_inCodeBlock && _codeWrapper?._toggleFold ? [{ label: _codeWrapper.classList.contains('code-block-folded') ? '展开代码块' : '折叠代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => { _codeWrapper._toggleFold(); } }] : []),
       ...(_inCodeBlock && _codeWrapper ? [{ label: '复制全部代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>', action: () => { const code = _codeWrapper.querySelector('code'); if (code) navigator.clipboard?.writeText(code.textContent || ''); } }, { label: '删除代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: () => { const inst = editor.instance(); if (!inst) return; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const pos = $from.before(d); const node = $from.node(d); inst.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run(); break; } } } }, { sep: true }] : []),
       { label: '复制', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: _copyAction },
@@ -7306,7 +7400,12 @@ function initEditorContextMenu() {
         }
       }},
       { sep: true },
-      { label: '专注模式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M21 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14V4zM3 2.99C3 2.44 3.45 2 4 2h16c.55 0 1 .45 1 1v18c0 .55-.45 1-1 1H4c-.55 0-1-.45-1-1V2.99zM9 6h8v2H9V6zm0 4h8v2H9v-2zm0 4h5v2H9v-2z"/></svg>', action: () => toggleFocusMode() },
+      { label: '更多', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>', submenu: [
+        { label: '专注模式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M21 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14V4zM3 2.99C3 2.44 3.45 2 4 2h16c.55 0 1 .45 1 1v18c0 .55-.45 1-1 1H4c-.55 0-1-.45-1-1V2.99zM9 6h8v2H9V6zm0 4h8v2H9v-2zm0 4h5v2H9v-2z"/></svg>', action: () => toggleFocusMode() },
+        { label: '阅读模式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>', action: () => toggleReadonlyMode() },
+        { label: '挖空复习', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a17 17 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>', action: () => toggleClozeMode() },
+        { label: '查看 Markdown', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', title: 'Ctrl+Shift+M', action: () => editor.toggleMarkdownSource?.() },
+      ]},
     ];
 
     for (const item of items) {
@@ -7336,6 +7435,7 @@ function initEditorContextMenu() {
           srow.className = 'md-ctx-item';
           const siIcon = si.icon ? `<span class="md-ctx-icon">${si.icon}</span>` : '';
           srow.innerHTML = siIcon + `<span class="md-ctx-label">${si.label}</span>`;
+          if (si.title) srow.title = si.title;
           srow.addEventListener('click', () => { menu.remove(); window.setBubbleSuppressed?.(false); si.action(); });
           sub.appendChild(srow);
         }
@@ -7416,7 +7516,7 @@ function initEditorContextMenu() {
             sub.style.right = (rr.width + 4) + 'px';
             sub.classList.add('md-ctx-submenu-left');
           }
-          if (sr.bottom > window.innerHeight - 8) {
+          if (sr.bottom > visibleViewportH() - 8) {
             sub.style.top = 'auto';
             sub.style.bottom = '0px';
           }
@@ -7456,7 +7556,7 @@ function initEditorContextMenu() {
       const mw = menu.offsetWidth, mh = menu.offsetHeight;
       let left = e.clientX, top = e.clientY;
       if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - mw);
-      if (top + mh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8 - mh);
+      if (top + mh > visibleViewportH() - 8) top = Math.max(8, visibleViewportH() - 8 - mh);
       menu.style.left = left + 'px';
       menu.style.top = top + 'px';
     });

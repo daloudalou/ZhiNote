@@ -1439,6 +1439,77 @@ body.theme-dark .cloud-badge.error   { background: #c25f5f; }
   position: relative;
 }
 
+/* ===== Markdown 源码只读视图：原地覆盖编辑区 ===== */
+#md-source-view {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+#md-source-view.hidden { display: none; }
+.mdsv-bar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary, var(--bg));
+}
+.mdsv-label {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.mdsv-copy {
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.mdsv-copy:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.mdsv-body {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 14px clamp(14px, 4vw, 32px) 40vh;
+  background: var(--bg);
+}
+.mdsv-body code {
+  display: block;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  -webkit-user-select: text;
+  user-select: text;
+  background: none;
+  padding: 0;
+}
+/* 进入源码视图时工具栏图标高亮（与阅读/挖空等模式一致） */
+#btn-view-md.active { color: var(--accent); }
+
 #editor .ProseMirror {
   outline: none;
   min-height: 100%;
@@ -3168,6 +3239,13 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 #modal-dialog.is-closing {
   animation: dialogSlideOut 0.18s ease forwards;
 }
+/* 触屏键盘弹出时（body.kb-open 由 visualViewport 跟踪器统一维护）：把弹窗收进可视视口并顶部对齐，
+   避免居中弹窗下半截被键盘盖住、底部输入框够不到。通用于所有弹窗，靠 --vv-h 驱动，无需逐设备调。 */
+@media (pointer: coarse) {
+  body.kb-open #modal-overlay { height: var(--vv-h, 100dvh); min-height: 0; align-items: flex-start; }
+  body.kb-open #modal-dialog,
+  body.kb-open #modal-dialog.settings-modal { max-height: var(--vv-h, 100dvh); }
+}
 .modal-title { padding: 16px 20px 4px; font-size: 15px; font-weight: 600; }
 .modal-body { padding: 16px 20px; flex: 1; overflow-y: auto; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
 .modal-body .settings-section { font-size: 12px; color: var(--text-tertiary); font-weight: 500; letter-spacing: 0.5px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); text-transform: uppercase; }
@@ -3833,7 +3911,7 @@ body.theme-is-dark .md-float-turn-sep {
 .md-ctx-item:active { background: var(--bg-active); }
 .md-ctx-icon { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--text-secondary); }
 .md-ctx-icon svg { width: 16px; height: 16px; }
-.md-ctx-label { flex: 1; }
+.md-ctx-label { flex: 1; white-space: nowrap; }
 .md-ctx-item.has-submenu {
   display: flex;
   align-items: center;
@@ -4220,7 +4298,7 @@ body.theme-gruvbox .md-ctx-sep {
   /* 顶栏压缩：隐藏面包屑、字数统计和低频按钮（置顶/挖空/大纲），标题让位、核心按钮完整可见 */
   #topbar { gap: 4px; padding: 0 8px; }
   #breadcrumb, #word-count { display: none !important; }
-  #btn-pin, #btn-cloze, #btn-outline-toggle { display: none !important; }
+  #btn-pin, #btn-cloze, #btn-outline-toggle, #btn-view-md { display: none !important; }
   #title-input { flex: 1 1 auto; min-width: 0; width: auto; }
   #topbar .topbar-right { flex-shrink: 0; gap: 2px; }
 }
@@ -4454,6 +4532,9 @@ body.theme-gruvbox .md-ctx-sep {
           <button id="btn-readonly" class="icon-btn" title="阅读模式">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
           </button>
+          <button id="btn-view-md" class="icon-btn" title="查看 Markdown 源码 (Ctrl+Shift+M)">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </button>
           <button id="btn-outline-toggle" class="icon-btn" title="大纲">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M8 12h12"/><path d="M8 18h12"/><circle cx="4" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="4" cy="18" r="1" fill="currentColor" stroke="none"/></svg>
           </button>
@@ -4573,6 +4654,14 @@ body.theme-gruvbox .md-ctx-sep {
           </div>
           <!-- Editor area -->
           <div id="editor"></div>
+          <!-- Markdown 源码只读视图（覆盖编辑区；通过工具栏 / 右键菜单 / Ctrl+Shift+M 切换） -->
+          <div id="md-source-view" class="hidden">
+            <div class="mdsv-bar">
+              <span class="mdsv-label">Markdown 源码 · 只读</span>
+              <button id="mdsv-copy" type="button" class="mdsv-copy" title="复制整篇 Markdown">复制全部</button>
+            </div>
+            <pre class="mdsv-body"><code id="mdsv-code"></code></pre>
+          </div>
         </div>
       </div>
     </main>
@@ -4617,7 +4706,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.0.199';
+    window.__MD_VER__ = 'v1.0.200';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -70911,7 +71000,7 @@ window.textSearchHighlight = highlightMatches;
  *   rootOrder: [id, id, ...],        // 根节点顺序（顶级笔记 id 列表）
  *   trash: { [id]: TrashNode },      // 回收站（保存完整笔记快照）
  *   trashOrder: [id, ...],
- *   settings: { theme, fontSize, sidebarWidth, lastOpenedId, editorMode, ... },
+ *   settings: { theme, fontSize, sidebarWidth, lastOpenedId, ... },
  *   templates: [{ id, name, content }]
  * }
  *
@@ -70945,7 +71034,6 @@ const DEFAULT_DATA = () => ({
     noteTransition: 'none',
     sidebarWidth: 260,
     lastOpenedId: null,
-    editorMode: 'wysiwyg',
     outlineOpen: false,
     sidebarCollapsed: false,
     showTrashBadge: true,
@@ -71342,6 +71430,9 @@ const storage = (() => {
       if (data.settings.noteTransition === 'up') data.settings.noteTransition = 'none';
       data.settings._noteTransResetV2 = true;
     }
+    // 历史残留清理：旧版「编辑模式（所见即所得/即时渲染/分屏预览）」三模式早已废弃，
+    // editorMode 设置不再有任何读取方；删除该死键，避免它长期残留并误入共享同步。
+    delete data.settings.editorMode;
     const needV3Migration = (data.version || 0) < 3;
     for (const id in data.notes) {
       const n = data.notes[id];
@@ -72792,7 +72883,7 @@ const storage = (() => {
   // 每台设备各自的偏好 / UI 状态：绝不随云端覆盖（否则会出现"另一台设备改了本机就被拉回"的问题）。
   const LOCAL_ONLY_SETTINGS = [
     'theme', 'fontSize', 'fontFamily', 'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
-    'noteTransition', 'editorPadding', 'sidebarWidth', 'editorMode', 'outlineOpen',
+    'noteTransition', 'editorPadding', 'sidebarWidth', 'outlineOpen',
     'activeWorkspace', 'lastOpenedId', 'recent',
     'webdavProxy', // 跨域代理前缀：每台设备各自配置（桌面直连不需要），绝不上云
     'imagesDir',   // 图片文件夹：本机路径，跨设备无意义，绝不上云
@@ -72867,7 +72958,10 @@ window.storage = storage;
   const BLUR_PUT_COOLDOWN_MS = 5_000;
   const GET_COOLDOWN_MS = 5_000;
   const SILENCE_TIMEOUT_MS = 2 * 60_000;
-  const DELETED_RETENTION_MS = 30 * 24 * 60 * 60_000;
+  // 墓碑保留期：原 30 天太短——陈旧/离线设备久违回来时墓碑已被清，"本地有/云端无"会被误判为
+  // "本地新建"而复活上传（曾发生）。墓碑仅 {id:ts} 极小，延长到 1 年几乎不占空间，大幅压缩复活窗口。
+  // 与 _detectLocallyNewerNotes 的基准判断配合（墓碑过期后由基准兜底，绝不复活）。
+  const DELETED_RETENTION_MS = 365 * 24 * 60 * 60_000;
   const BASE_DIR = 'ZhiNote';
 
   // AES-GCM
@@ -74333,15 +74427,23 @@ window.storage = storage;
   function _detectLocallyNewerNotes(manifest) {
     if (!window.storage || !window.storage.markNotesDirtyByIds) return;
     const data = window.storage.getAll();
+    const base = _loadSyncBase();
+    const dirtySet = new Set(window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : []);
     const needUpload = [];
     for (const id in data.notes) {
       if (manifest.deleted && manifest.deleted[id]) continue; // 已被远端删除（墓碑）→ 不要重新上传复活
-      const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
       const remoteEntry = manifest.notes && manifest.notes[id];
       if (!remoteEntry) {
-        // 本地有但远端 manifest 没有 → 需要上传
+        // 云端清单既无条目、也无墓碑——三方对账区分两种情况（不靠墙钟）：
+        //  · 基准里有这条 + 本地没动过(非 dirty) → 曾成功同步过、如今云端没了 = 远端已删
+        //    （墓碑可能已被保留期/GC 清掉）→ 绝不当"本地新建"复活上传，跳过。
+        //    这里只"不上传"、不基于"缺失"删本地：WebDAV 最终一致性下偶发漏读会误判，
+        //    删本地风险高；本地对齐删除交给"远端墓碑"这条正向证据路径（墓碑保留期已延长到 1 年）。
+        //  · 基准没有(本地真新建、从没传过) 或 本地已编辑/找回(dirty) → 才是该上传的新内容。
+        if (base[id] && !dirtySet.has(id)) continue;
         needUpload.push(id);
       } else {
+        const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
         const remoteTs = remoteEntry.updatedAt || 0;
         if (localTs > remoteTs + 1000) {
           needUpload.push(id);
@@ -75046,7 +75148,7 @@ window.storage = storage;
     // 与 storage.js 的 LOCAL_ONLY_SETTINGS 保持一致：每台设备各自的偏好 / UI 状态不上云。
     const LOCAL_ONLY = ['theme', 'fontSize', 'fontFamily', 'noteTransition',
       'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
-      'editorPadding', 'sidebarWidth', 'editorMode', 'outlineOpen',
+      'editorPadding', 'sidebarWidth', 'outlineOpen',
       'activeWorkspace', 'lastOpenedId', 'recent', 'imagesDir',
       'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes', 'webdavProxy', 'webdavCryptoPass'];
     const LOCAL_PREFIX = ['webdav_', '_'];
@@ -80457,10 +80559,12 @@ const TextAlign = Extension.create({
   },
   addKeyboardShortcuts() {
     return {
-      'Mod-Shift-l': () => this.editor.commands.setTextAlign('left'),
-      'Mod-Shift-e': () => this.editor.commands.setTextAlign('center'),
-      'Mod-Shift-r': () => this.editor.commands.setTextAlign('right'),
-      'Mod-Shift-j': () => this.editor.commands.setTextAlign('justify'),
+      // 对齐快捷键用 Ctrl+Alt+L/E/R/J（与标题 Ctrl+Alt+1…6 同套）：
+      // 避开旧的 Ctrl+Shift+E（阅读模式）撞键，也躲开浏览器保留的 Ctrl+Shift+R/J。
+      'Mod-Alt-l': () => this.editor.commands.setTextAlign('left'),
+      'Mod-Alt-e': () => this.editor.commands.setTextAlign('center'),
+      'Mod-Alt-r': () => this.editor.commands.setTextAlign('right'),
+      'Mod-Alt-j': () => this.editor.commands.setTextAlign('justify'),
     };
   },
 });
@@ -81090,7 +81194,9 @@ const CustomCodeBlock = CodeBlock.extend({
       if (shouldFold) {
         const noteId = window._currentNoteId || '';
         const key = `${noteId}:${getPos()}`;
-        folded = _codeBlockFoldState.has(key) ? _codeBlockFoldState.get(key) : true;
+        // 默认折叠；用户可在 外观设置→代码块默认 改为展开。手动 toggle 过的块以本会话记忆为准。
+        const defFolded = !(window.storage && window.storage.getSetting && window.storage.getSetting('codeBlockExpanded') === true);
+        folded = _codeBlockFoldState.has(key) ? _codeBlockFoldState.get(key) : defFolded;
       }
 
       const syncFoldUI = (animate) => {
@@ -81245,7 +81351,7 @@ function _showCodeLangPicker(anchor, wrapper, ed, getPos) {
   document.body.appendChild(picker);
   // 钳进视口：默认贴 anchor 下方；下方放不下就翻到上方，避免长语言列表底部被裁。
   {
-    const margin = 8, vw = window.innerWidth, vh = window.innerHeight;
+    const margin = 8, vw = window.innerWidth, vh = (window.visibleViewportH ? window.visibleViewportH() : window.innerHeight);
     const maxH = vh - margin * 2;
     if (picker.offsetHeight > maxH) { picker.style.maxHeight = maxH + 'px'; picker.style.overflowY = 'auto'; }
     const pw = picker.offsetWidth, ph = Math.min(picker.offsetHeight, maxH);
@@ -82837,7 +82943,7 @@ const editor = (() => {
   // 超过视口高度则限高+滚动。返回钳制后的左上角坐标。
   function _clampFloatingMenu(menu, x, y) {
     const margin = 8;
-    const vw = window.innerWidth, vh = window.innerHeight;
+    const vw = window.innerWidth, vh = (window.visibleViewportH ? window.visibleViewportH() : window.innerHeight);
     const maxH = vh - margin * 2;
     if (menu.offsetHeight > maxH) { menu.style.maxHeight = maxH + 'px'; menu.style.overflowY = 'auto'; }
     const mw = menu.offsetWidth;
@@ -83403,6 +83509,7 @@ const editor = (() => {
     _resetHistory();
     // 记录「打开时的 doc 基线」：之后 flushSave 据此判断是否有真实编辑。
     try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    _refreshMdSourceIfOpen();
     requestAnimationFrame(() => { _suppressInput = false; });
 
     // 定位：默认不把光标放进正文（避免一打开就进入编辑态），只恢复上次的滚动位置。
@@ -83477,6 +83584,7 @@ const editor = (() => {
   }
 
   function close() {
+    if (_mdSourceOpen) toggleMarkdownSource(false);
     if (_editor && _currentId) { try { _scrollPos[_currentId] = document.getElementById('editor')?.scrollTop || 0; } catch (_) {} }
     flushSave();
     _currentId = null;
@@ -83505,6 +83613,63 @@ const editor = (() => {
   function setReadonly(on) {
     if (!_editor) return;
     _editor.setEditable(!on);
+  }
+
+  // ===== 查看 Markdown 源码（只读）=====
+  // 原地把编辑区盖成一块等宽只读源码面板；不改存储、不可编辑，零序列化风险。
+  let _mdSourceOpen = false;
+  let _mdsvWired = false;
+
+  function isMarkdownSourceOpen() { return _mdSourceOpen; }
+
+  // 源码视图打开时，把面板内容刷新成当前笔记的 Markdown（切笔记 / 下行同步重载后调用）。
+  function _refreshMdSourceIfOpen() {
+    if (!_mdSourceOpen) return;
+    const code = document.getElementById('mdsv-code');
+    if (code) code.textContent = getValue();
+    const body = document.querySelector('#md-source-view .mdsv-body');
+    if (body) body.scrollTop = 0;
+  }
+
+  function _wireMdSourceOnce() {
+    if (_mdsvWired) return;
+    const copyBtn = document.getElementById('mdsv-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        const md = getValue();
+        const done = () => { copyBtn.textContent = '已复制'; setTimeout(() => { copyBtn.textContent = '复制全部'; }, 1200); };
+        try {
+          if (navigator.clipboard?.writeText) navigator.clipboard.writeText(md).then(done).catch(() => {});
+          else { const ta = document.createElement('textarea'); ta.value = md; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
+        } catch (_) {}
+      });
+    }
+    _mdsvWired = true;
+  }
+
+  function toggleMarkdownSource(force) {
+    const view = document.getElementById('md-source-view');
+    if (!view) return;
+    const next = (typeof force === 'boolean') ? force : !_mdSourceOpen;
+    if (next && !_currentId) return; // 没有打开的笔记，不进源码
+    if (next === _mdSourceOpen) return;
+    _mdSourceOpen = next;
+    if (next) {
+      _wireMdSourceOnce();
+      const code = document.getElementById('mdsv-code');
+      if (code) code.textContent = getValue();
+      try { if (_editor?.isFocused) _editor.commands.blur(); } catch (_) {}
+      view.classList.remove('hidden');
+      document.body.classList.add('md-source-open');
+      // 滚回顶部，从头看源码
+      const body = view.querySelector('.mdsv-body');
+      if (body) body.scrollTop = 0;
+    } else {
+      view.classList.add('hidden');
+      document.body.classList.remove('md-source-open');
+    }
+    const btn = document.getElementById('btn-view-md');
+    if (btn) btn.classList.toggle('active', _mdSourceOpen);
   }
 
   // 把当前文档里仍是占位的外置图片重新解析、命中缓存就替换上去（images-ready 兜底用）。
@@ -83609,6 +83774,7 @@ const editor = (() => {
     _resetHistory();
     // 同 open()：重载后刷新 doc 基线，避免下行同步刚覆盖内容又被 flushSave 误判为本地编辑。
     try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    _refreshMdSourceIfOpen();
     requestAnimationFrame(() => { _suppressInput = false; });
     refreshOutline();
   }
@@ -83722,12 +83888,20 @@ const editor = (() => {
     return !hasContent;
   }
 
+  // 外观设置「代码块默认 折叠/展开」变更后调用：清掉本会话逐块折叠记忆，按新默认重渲染当前笔记。
+  function applyCodeBlockFoldDefault() {
+    _codeBlockFoldState.clear();
+    reloadCurrent();
+  }
+
   return {
     initEditor, open, close, reloadCurrent,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
     currentId, getValue, focus, insertAtCursor, instance, execCommand,
     insertImageFromDataUrl,
     showImageContextMenu,
+    applyCodeBlockFoldDefault,
+    toggleMarkdownSource, isMarkdownSourceOpen,
     // 阶段1 基础设施
     serializeDocToMd, parseMdToDoc, docToPlainText, walkDocImages, docIsEmpty,
   };
@@ -83940,14 +84114,23 @@ async function bootstrap() {
     setTimeout(() => { try { refreshDetectedSystemFonts(); } catch (_) {} }, 1500);
   }
 
+  // 当前打开的笔记若已不存在（被同步/导入/采纳等移除）→ 关闭编辑器，不残留陈旧标题/正文。
+  // 数据无碍，但显示怪异。force=true 时绕过 bulk 导入守卫（用于整库 reload 这类已完成的变更）。
+  function _ensureEditorNoteAlive(force) {
+    if (!force && window._bulkImporting) return;
+    const cid = editor.currentId?.();
+    if (cid && !storage.get(cid)) editor.close();
+  }
+
   storage.on('change', (payload) => {
     if (!payload.silent && !window._bulkImporting) tree.render();
     updateTrashBadge();
+    // 任何数据变更后兜底：打开的笔记被移除则关掉编辑器（bulk 导入暂态不一致时跳过）
+    _ensureEditorNoteAlive(payload?.type === 'reload');
     // 云端下载会发 type='reload'：同时把当前编辑器里的笔记内容刷新成最新
     if (payload?.type === 'reload') {
       const curId = editor.currentId?.();
       if (curId && storage.get(curId)) editor.reloadCurrent();
-      else if (curId) editor.close();
     }
     // 同步/导入等批量变更：顶栏笔记本名、欢迎页"最近编辑"也要跟着刷新，避免显示陈旧
     if (payload?.type === 'reload' || payload?.type === 'global-sync') {
@@ -84016,12 +84199,15 @@ async function bootstrap() {
         tree.render();
         try { refreshWorkspaceSwitcher(); } catch (_) {}
         try { renderWelcomeRecent(); } catch (_) {}
+        _ensureEditorNoteAlive();
       } else if (payload.detail === 'get-downloaded') {
         const curId = editor.currentId?.();
         const downloaded = payload.downloadedNoteIds;
         tree.render();
         try { refreshWorkspaceSwitcher(); } catch (_) {}
         try { renderWelcomeRecent(); } catch (_) {}
+        // 同步移除当前笔记走 save()（不发 storage change），这里兜底关闭编辑器
+        _ensureEditorNoteAlive();
         if (curId && downloaded && downloaded.has && downloaded.has(curId)) {
           editor.reloadCurrent();
         }
@@ -84512,6 +84698,7 @@ function wireEvents() {
   document.getElementById('btn-cmd-palette').addEventListener('click', () => palette.open());
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
   document.getElementById('btn-readonly').addEventListener('click', toggleReadonlyMode);
+  document.getElementById('btn-view-md')?.addEventListener('click', () => { if (editor.currentId?.()) editor.toggleMarkdownSource?.(); });
   document.getElementById('btn-pin').addEventListener('click', toggleCurrentPin);
 
   document.getElementById('btn-search').addEventListener('click', () => {
@@ -84842,6 +85029,8 @@ function _isNonEditorTextTarget() {
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && (e.key === 'a' || e.key === 'A') && !e.shiftKey) {
+    // 源码只读视图打开时：让原生全选作用于源码文本，不抢给编辑器
+    if (editor.isMarkdownSourceOpen?.()) return;
     // 焦点在标题栏/输入框/命令面板等处 → 让原生全选作用于当前控件，不抢给编辑区
     if (_isNonEditorTextTarget()) return;
     if (editor.currentId?.()) {
@@ -84904,6 +85093,10 @@ function onGlobalKey(e) {
   } else if (ctrl && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
     e.preventDefault();
     toggleClozeMode();
+  } else if (ctrl && e.shiftKey && (e.key === 'M' || e.key === 'm')) {
+    // 查看 Markdown 源码（只读）开关
+    e.preventDefault();
+    if (editor.currentId?.()) editor.toggleMarkdownSource?.();
   } else if (e.key === 'Delete' && !isEditing(e.target)) {
     const id = editor.currentId();
     if (id) {
@@ -84913,6 +85106,7 @@ function onGlobalKey(e) {
       tree.requestDelete(id, anchor);
     }
   } else if (e.key === 'Escape') {
+    if (editor.isMarkdownSourceOpen?.()) { editor.toggleMarkdownSource(false); return; }
     if (closeAnyOverlay()) return;
     if (window.tree?.hasSelection?.()) { window.tree.clearSelection(); return; }
     if (search.isActive()) { search.deactivate(); return; }
@@ -85907,6 +86101,7 @@ function setupMobileLayout() {
  * - 双指上滑 / 下滑  = 下一篇 / 上一篇（按侧栏可见顺序）
  * - 双指捏合         = 调编辑区字号（11–28px，实时预览）
  * - 三指轻点         = 阅读模式开关
+ * - 三指右滑 / 左滑  = 撤销 / 重做（免授权，iOS/安卓通用）
  * - 双击顶栏         = 编辑区回到顶部
  * - 编辑区顶部下拉    = 立即同步
  * - 摇一摇           = 撤销（仅免授权平台，iOS 需手动授权故不启用）
@@ -86002,9 +86197,12 @@ function setupTouchGestures(mq) {
 
   document.addEventListener('touchmove', (e) => {
     if (g3 && e.touches.length === 3) {
+      g3.last = [...e.touches].map(t => [t.clientX, t.clientY]);
       for (let i = 0; i < 3; i++) {
-        if (dist([e.touches[i].clientX, e.touches[i].clientY], g3.pts[i] || [0, 0]) > 28) { g3.moved = true; break; }
+        if (dist(g3.last[i], g3.pts[i] || [0, 0]) > 28) { g3.moved = true; break; }
       }
+      // 掐掉 iOS 原生三指撤销/复制手势与页面滚动，撤销/重做统一由我们的三指横滑处理，避免双重撤销
+      if (e.cancelable) e.preventDefault();
       return;
     }
     if (!g2 || e.touches.length !== 2) return;
@@ -86046,11 +86244,30 @@ function setupTouchGestures(mq) {
       // 手指全部离开后补一次键盘错位纠正（按压期间被暂缓的那次）
       if (window._mdKbLift) setTimeout(() => window._mdKbLift(), 50);
     }
-    // 三指轻点 → 阅读模式
+    // 三指横滑 = 撤销(右) / 重做(左)；三指轻点(未移动) = 阅读模式
     if (g3 && e.touches.length === 0) {
-      const ok = !g3.moved && Date.now() - g3.t0 < 350;
-      g3 = null;
-      if (ok) window.toggleReadonlyMode && window.toggleReadonlyMode();
+      const st3 = g3; g3 = null;
+      if (st3.moved && st3.last && st3.last.length) {
+        let dx = 0, dy = 0; const n = Math.min(st3.pts.length, st3.last.length);
+        for (let i = 0; i < n; i++) { dx += st3.last[i][0] - st3.pts[i][0]; dy += st3.last[i][1] - st3.pts[i][1]; }
+        dx /= n; dy /= n;
+        if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+          const ed = editor.instance && editor.instance();
+          if (ed) {
+            if (dx > 0 && ed.can().undo()) {
+              ed.chain().focus().undo().run();
+              navigator.vibrate && navigator.vibrate(15);
+              toast('已撤销', 'info', { id: 'g3-undo', duration: 900 });
+            } else if (dx < 0 && ed.can().redo()) {
+              ed.chain().focus().redo().run();
+              navigator.vibrate && navigator.vibrate(15);
+              toast('已重做', 'info', { id: 'g3-redo', duration: 900 });
+            }
+          }
+        }
+        return;
+      }
+      if (Date.now() - st3.t0 < 350) window.toggleReadonlyMode && window.toggleReadonlyMode();
       return;
     }
     if (!g2 || e.touches.length >= 2) return;
@@ -86194,6 +86411,16 @@ function setupTouchGestures(mq) {
 
   setupKeyboardViewportTracking();
 }
+
+/** 浮层定位用的"可见区高度"。
+ *  iOS Safari 软键盘弹出时 window.innerHeight 不变（仍是布局视口高），真正反映可见区的是
+ *  visualViewport.height。浮层若按 innerHeight 判"下方放不下"会误判成还有空间，直接钻进键盘
+ *  覆盖区被盖住（右键菜单/表情面板等）。统一用本函数取高度，键盘在场时菜单会自动翻到键盘上方。 */
+function visibleViewportH() {
+  const vv = window.visualViewport;
+  return (vv && vv.height) ? vv.height : window.innerHeight;
+}
+window.visibleViewportH = visibleViewportH;
 
 /** 触屏键盘视口追踪（键盘工具条已整体移除，撤销/重做并入选中文字时的浮动条）。
  *  职责单一：把软键盘高度实时写进 CSS 变量 --kb-gap，供 dock 浮动条悬于键盘上方。
@@ -86442,7 +86669,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
   const pad = 8;
   const pw = pop.offsetWidth;
   // 笔记本很多时限制高度并内部滚动，保证不超出窗口
-  const maxH = window.innerHeight - pad * 2;
+  const maxH = visibleViewportH() - pad * 2;
   if (pop.offsetHeight > maxH) { pop.style.maxHeight = `${maxH}px`; pop.style.overflowY = 'auto'; }
   const ph = pop.offsetHeight;
   // 水平边界保护（两侧）
@@ -86452,9 +86679,9 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
   pop.style.left = `${Math.round(left)}px`;
   // 垂直边界保护：下方放不下则向上翻；仍放不下则贴顶
   let top = r.bottom + 4;
-  if (top + ph > window.innerHeight - pad) {
+  if (top + ph > visibleViewportH() - pad) {
     const upTop = r.top - ph - 4;
-    top = upTop >= pad ? upTop : Math.max(pad, window.innerHeight - ph - pad);
+    top = upTop >= pad ? upTop : Math.max(pad, visibleViewportH() - ph - pad);
   }
   pop.style.top = `${Math.round(top)}px`;
 
@@ -86543,7 +86770,7 @@ function openIconPicker(anchorEl, { currentIcon, defaultIcon, onPick, title } = 
   const pw = pop.offsetWidth;
   const ph = pop.offsetHeight;
   const vw = window.innerWidth;
-  const vh = window.innerHeight;
+  const vh = visibleViewportH();
   let left = r.left + r.width / 2 - pw / 2;
   let top = r.bottom + 6;
   if (left + pw > vw - 8) left = vw - pw - 8;
@@ -87191,13 +87418,13 @@ function toggleEmojiPicker(anchorEl) {
     let top = r.bottom + 6;
     if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
     if (left < 8) left = 8;
-    if (top + ph > window.innerHeight - 8) {
+    if (top + ph > visibleViewportH() - 8) {
       const aboveTop = r.top - ph - 6;
       if (aboveTop >= 8) {
         top = aboveTop; // 下方放不下 → 翻到光标上方
       } else {
         // 上下都放不下：贴边放置，并横向挪开，避免盖住光标所在行、看不见输入了什么
-        top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
+        top = Math.max(8, Math.min(top, visibleViewportH() - ph - 8));
         left = (r.left + 24 + pw <= window.innerWidth - 8) ? r.left + 24 : Math.max(8, r.left - pw - 24);
       }
     }
@@ -87354,7 +87581,7 @@ function showTooltipFor(el, text) {
     let top  = r.bottom + 6;
     if (left + tw > window.innerWidth - 6) left = window.innerWidth - tw - 6;
     if (left < 6) left = 6;
-    if (top + th > window.innerHeight - 6) top = r.top - th - 6;
+    if (top + th > visibleViewportH() - 6) top = r.top - th - 6;
     _tooltipEl.style.left = `${Math.round(left)}px`;
     _tooltipEl.style.top  = `${Math.round(top)}px`;
   });
@@ -88384,7 +88611,7 @@ function showActionMenu(anchor, items) {
     const r = anchor.getBoundingClientRect();
     let left = r.left;
     let top = r.bottom + 6;
-    if (top + popup.offsetHeight > window.innerHeight) top = r.top - popup.offsetHeight - 6;
+    if (top + popup.offsetHeight > visibleViewportH()) top = r.top - popup.offsetHeight - 6;
     if (left + popup.offsetWidth > window.innerWidth) left = window.innerWidth - popup.offsetWidth - 8;
     if (left < 4) left = 4;
     popup.style.left = left + 'px';
@@ -89249,6 +89476,16 @@ function openSettingsModal(initialTab) {
         </select>
       </div>
     </div>
+    <div class="set-grid-2">
+      <div class="set-col">
+        <label>代码块默认</label>
+        <select id="set-codeblock-fold" style="width:100%;margin-top:0;">
+          <option value="fold" ${storage.getSetting('codeBlockExpanded')===true?'':'selected'}>折叠（默认）</option>
+          <option value="expand" ${storage.getSetting('codeBlockExpanded')===true?'selected':''}>展开</option>
+        </select>
+      </div>
+      <div class="set-col"></div>
+    </div>
     </div>
 
     <div id="settings-tab-sync" class="${lastTab!=='sync'?'settings-tab-hidden':''}">
@@ -89379,15 +89616,18 @@ function openSettingsModal(initialTab) {
           { title: '全局 / 笔记', items: [
             ['新建笔记', 'Ctrl+Alt+N'], ['切换 / 新建笔记本', 'Ctrl+Shift+N'], ['命令面板 / 切换笔记', 'Ctrl+P'], ['切换到上一篇笔记', 'Ctrl+Tab'],
             ['全文搜索', 'Ctrl+F'], ['手动保存', 'Ctrl+S'], ['大纲面板', 'Ctrl+Shift+O'],
-            ['侧边栏', 'Ctrl+\\'], ['阅读模式', 'Ctrl+Shift+E'], ['表情符号', 'Ctrl+;'],
-            ['专注模式', 'F10'], ['挖空复习模式', 'F11'], ['标记挖空选区', 'Alt+M'],
+            ['侧边栏', 'Ctrl+\\'], ['阅读模式', 'Ctrl+Shift+E'], ['查看 Markdown 源码', 'Ctrl+Shift+M'], ['表情符号', 'Ctrl+;'],
+            ['专注模式', 'F10'], ['挖空复习模式', 'F11 / Ctrl+Shift+C'], ['标记挖空选区', 'Alt+M'],
             ['放大 / 缩小 / 复位字号', 'Ctrl+= / Ctrl+- / Ctrl+0'], ['关闭弹层', 'Esc'],
           ]},
           { title: '编辑（编辑器内）', items: [
             ['加粗', 'Ctrl+B'], ['斜体', 'Ctrl+I'], ['下划线', 'Ctrl+U'], ['删除线', 'Ctrl+Shift+S'],
             ['行内代码', 'Ctrl+E'], ['引用', 'Ctrl+Shift+B / Alt+Shift+B'], ['分割线', 'Ctrl+Shift+H'], ['无序列表', 'Ctrl+Shift+8'],
-            ['有序列表', 'Ctrl+Shift+7'], ['一级~六级标题', 'Ctrl+Alt+1 … 6'], ['软换行', 'Shift+Enter'],
+            ['有序列表', 'Ctrl+Shift+7'], ['一级~六级标题', 'Ctrl+Alt+1 … 6'], ['段落对齐 左/中/右/两端', 'Ctrl+Alt+L/E/R/J'], ['软换行', 'Shift+Enter'],
             ['撤销 / 重做', 'Ctrl+Z / Ctrl+Y'],
+          ]},
+          { title: '连按 / 双击（键盘）', items: [
+            ['命令面板', '连按 ` `'], ['表情选择器', '连打 ; ;'], ['跳出续写格式', '双击 空格'],
           ]},
         ];
         const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
@@ -89403,6 +89643,8 @@ function openSettingsModal(initialTab) {
           '大纲面板': '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
           '侧边栏': '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/>',
           '阅读模式': '<path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>',
+          '查看 Markdown 源码': '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+          '段落对齐 左/中/右/两端': '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="15" y2="12"/><line x1="3" y1="18" x2="18" y2="18"/>',
           '表情符号': '<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>',
           '专注模式': '<path d="M8 3H5a2 2 0 00-2 2v3M21 8V5a2 2 0 00-2-2h-3M3 16v3a2 2 0 002 2h3M16 21h3a2 2 0 002-2v-3"/>',
           '挖空复习模式': '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>',
@@ -89445,6 +89687,7 @@ function openSettingsModal(initialTab) {
             ['回到顶部', '双击顶栏'],
             ['立即同步', '编辑区顶部下拉'],
             ['阅读模式', '三指轻点'],
+            ['撤销 / 重做', '三指右滑 / 三指左滑'],
           ]},
           { title: '笔记树', items: [
             ['多选笔记', '双指轻点行'],
@@ -89458,7 +89701,7 @@ function openSettingsModal(initialTab) {
             ['表格菜单', '双指轻点表格'],
             ['调整字号', '编辑区双指捏合'],
             ['格式浮动条', '选中文字时悬于键盘上方（含撤销/重做）'],
-            ['撤销', '浮动条 ↶ / 摇一摇（安卓）'],
+            ['撤销 / 重做', '三指右滑 / 左滑（任意处）'],
             ['标记挖空', '选中文字 → 浮动条高亮'],
           ]},
         ];
@@ -89568,6 +89811,10 @@ function openSettingsModal(initialTab) {
         const outlinePos = body.querySelector('#set-outline-pos')?.value || 'left';
         storage.setSetting('outlinePosition', outlinePos);
         applyOutlinePosition(outlinePos);
+        const codeBlockExpanded = body.querySelector('#set-codeblock-fold')?.value === 'expand';
+        const codeBlockChanged = codeBlockExpanded !== (storage.getSetting('codeBlockExpanded') === true);
+        storage.setSetting('codeBlockExpanded', codeBlockExpanded);
+        if (codeBlockChanged) { try { editor.applyCodeBlockFoldDefault?.(); } catch (_) {} }
         try { localStorage.setItem('zhinote-font', fontFamily); } catch (_) {}
         try { localStorage.setItem('zhinote-theme', themeId); } catch (_) {}
         applyFontFamily(fontFamily);
@@ -90355,7 +90602,7 @@ function upgradeSelect(select) {
     panel.style.maxWidth = `${Math.max(r.width, 280)}px`;
     panel.style.top = `${r.bottom + 4}px`;
     const ph = panel.offsetHeight;
-    if (r.bottom + 4 + ph > window.innerHeight - 12) {
+    if (r.bottom + 4 + ph > visibleViewportH() - 12) {
       panel.style.top = `${r.top - ph - 4}px`;
     }
     // 边界
@@ -90464,6 +90711,21 @@ function closeModal() {
 
 window.openModal = openModal;
 window.closeModal = closeModal;
+
+// 触屏：弹窗内输入聚焦时，等键盘动画稳定后把该字段滚到可见区中部（配合 kb-open 收窄弹窗），
+// 防止底部输入框被键盘遮挡够不到。一次性委托，覆盖所有弹窗的所有字段。
+(function wireModalFocusScroll() {
+  const dialog = document.getElementById('modal-dialog');
+  if (!dialog) return;
+  let _t = null;
+  dialog.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (!t || !t.matches || !t.matches('input, textarea, select')) return;
+    if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) return;
+    clearTimeout(_t);
+    _t = setTimeout(() => { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 300);
+  });
+})();
 
 /** 云端有冲突更新 → 弹统一 modal（仅在本地有未上传改动时调用） */
 /** 显示 toast。
@@ -90893,7 +91155,7 @@ function showTableContextMenu(e) {
   requestAnimationFrame(() => {
     const mr = menu.getBoundingClientRect();
     if (mr.right > window.innerWidth - 8) menu.style.left = Math.max(8, e.clientX - mr.width) + 'px';
-    if (mr.bottom > window.innerHeight - 8) menu.style.top = Math.max(8, e.clientY - mr.height) + 'px';
+    if (mr.bottom > visibleViewportH() - 8) menu.style.top = Math.max(8, e.clientY - mr.height) + 'px';
   });
   let dismiss;
   let dismissKey;
@@ -90911,7 +91173,9 @@ function showTableContextMenu(e) {
 function initEditorContextMenu() {
   const handleCtx = async (e) => {
     const editable = document.querySelector('#editor .ProseMirror');
-    if (!editable || !editable.contains(e.target)) return;
+    const srcView = document.getElementById('md-source-view');
+    const inSource = !!(srcView && !srcView.classList.contains('hidden') && srcView.contains(e.target));
+    if (!inSource && (!editable || !editable.contains(e.target))) return;
 
     // 触屏端：真实长按（isTrusted，安卓长按文字会原生触发 contextmenu）让位给系统选字——
     // 长按=选词+拖手柄是所有移动端的肌肉记忆，被自定义菜单劫持后文字几乎没法选（曾被反馈）。
@@ -90995,7 +91259,11 @@ function initEditorContextMenu() {
 
     const _inCodeBlock = editor.instance?.()?.isActive('codeBlock') || e.target.closest('.code-block-wrapper');
     const _codeWrapper = (() => { let w = e.target.closest('.code-block-wrapper'); if (w) return w; const inst = editor.instance(); if (!inst) return null; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const dom = inst.view.nodeDOM($from.before(d)); return dom?.closest?.('.code-block-wrapper') || dom; } } return null; })();
-    const items = [
+    const _srcMenuItems = [
+      { label: '返回渲染', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>', action: () => editor.toggleMarkdownSource?.(false) },
+      { label: '复制全部 Markdown', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: () => { try { const md = editor.getValue?.() || ''; navigator.clipboard?.writeText(md); } catch (_) {} } },
+    ];
+    const items = inSource ? _srcMenuItems : [
       ...(_inCodeBlock && _codeWrapper?._toggleFold ? [{ label: _codeWrapper.classList.contains('code-block-folded') ? '展开代码块' : '折叠代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => { _codeWrapper._toggleFold(); } }] : []),
       ...(_inCodeBlock && _codeWrapper ? [{ label: '复制全部代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>', action: () => { const code = _codeWrapper.querySelector('code'); if (code) navigator.clipboard?.writeText(code.textContent || ''); } }, { label: '删除代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: () => { const inst = editor.instance(); if (!inst) return; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const pos = $from.before(d); const node = $from.node(d); inst.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run(); break; } } } }, { sep: true }] : []),
       { label: '复制', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: _copyAction },
@@ -91054,7 +91322,12 @@ function initEditorContextMenu() {
         }
       }},
       { sep: true },
-      { label: '专注模式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M21 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14V4zM3 2.99C3 2.44 3.45 2 4 2h16c.55 0 1 .45 1 1v18c0 .55-.45 1-1 1H4c-.55 0-1-.45-1-1V2.99zM9 6h8v2H9V6zm0 4h8v2H9v-2zm0 4h5v2H9v-2z"/></svg>', action: () => toggleFocusMode() },
+      { label: '更多', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>', submenu: [
+        { label: '专注模式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M21 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14V4zM3 2.99C3 2.44 3.45 2 4 2h16c.55 0 1 .45 1 1v18c0 .55-.45 1-1 1H4c-.55 0-1-.45-1-1V2.99zM9 6h8v2H9V6zm0 4h8v2H9v-2zm0 4h5v2H9v-2z"/></svg>', action: () => toggleFocusMode() },
+        { label: '阅读模式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>', action: () => toggleReadonlyMode() },
+        { label: '挖空复习', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 10 8 10 8a17 17 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M6.61 6.61A13.5 13.5 0 0 0 2 12s3 8 10 8a9.7 9.7 0 0 0 5.39-1.61"/><line x1="2" y1="2" x2="22" y2="22"/></svg>', action: () => toggleClozeMode() },
+        { label: '查看 Markdown', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>', title: 'Ctrl+Shift+M', action: () => editor.toggleMarkdownSource?.() },
+      ]},
     ];
 
     for (const item of items) {
@@ -91084,6 +91357,7 @@ function initEditorContextMenu() {
           srow.className = 'md-ctx-item';
           const siIcon = si.icon ? `<span class="md-ctx-icon">${si.icon}</span>` : '';
           srow.innerHTML = siIcon + `<span class="md-ctx-label">${si.label}</span>`;
+          if (si.title) srow.title = si.title;
           srow.addEventListener('click', () => { menu.remove(); window.setBubbleSuppressed?.(false); si.action(); });
           sub.appendChild(srow);
         }
@@ -91164,7 +91438,7 @@ function initEditorContextMenu() {
             sub.style.right = (rr.width + 4) + 'px';
             sub.classList.add('md-ctx-submenu-left');
           }
-          if (sr.bottom > window.innerHeight - 8) {
+          if (sr.bottom > visibleViewportH() - 8) {
             sub.style.top = 'auto';
             sub.style.bottom = '0px';
           }
@@ -91204,7 +91478,7 @@ function initEditorContextMenu() {
       const mw = menu.offsetWidth, mh = menu.offsetHeight;
       let left = e.clientX, top = e.clientY;
       if (left + mw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - mw);
-      if (top + mh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 8 - mh);
+      if (top + mh > visibleViewportH() - 8) top = Math.max(8, visibleViewportH() - 8 - mh);
       menu.style.left = left + 'px';
       menu.style.top = top + 'px';
     });

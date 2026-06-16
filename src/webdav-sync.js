@@ -7,7 +7,10 @@
   const BLUR_PUT_COOLDOWN_MS = 5_000;
   const GET_COOLDOWN_MS = 5_000;
   const SILENCE_TIMEOUT_MS = 2 * 60_000;
-  const DELETED_RETENTION_MS = 30 * 24 * 60 * 60_000;
+  // 墓碑保留期：原 30 天太短——陈旧/离线设备久违回来时墓碑已被清，"本地有/云端无"会被误判为
+  // "本地新建"而复活上传（曾发生）。墓碑仅 {id:ts} 极小，延长到 1 年几乎不占空间，大幅压缩复活窗口。
+  // 与 _detectLocallyNewerNotes 的基准判断配合（墓碑过期后由基准兜底，绝不复活）。
+  const DELETED_RETENTION_MS = 365 * 24 * 60 * 60_000;
   const BASE_DIR = 'ZhiNote';
 
   // AES-GCM
@@ -1473,15 +1476,23 @@
   function _detectLocallyNewerNotes(manifest) {
     if (!window.storage || !window.storage.markNotesDirtyByIds) return;
     const data = window.storage.getAll();
+    const base = _loadSyncBase();
+    const dirtySet = new Set(window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : []);
     const needUpload = [];
     for (const id in data.notes) {
       if (manifest.deleted && manifest.deleted[id]) continue; // 已被远端删除（墓碑）→ 不要重新上传复活
-      const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
       const remoteEntry = manifest.notes && manifest.notes[id];
       if (!remoteEntry) {
-        // 本地有但远端 manifest 没有 → 需要上传
+        // 云端清单既无条目、也无墓碑——三方对账区分两种情况（不靠墙钟）：
+        //  · 基准里有这条 + 本地没动过(非 dirty) → 曾成功同步过、如今云端没了 = 远端已删
+        //    （墓碑可能已被保留期/GC 清掉）→ 绝不当"本地新建"复活上传，跳过。
+        //    这里只"不上传"、不基于"缺失"删本地：WebDAV 最终一致性下偶发漏读会误判，
+        //    删本地风险高；本地对齐删除交给"远端墓碑"这条正向证据路径（墓碑保留期已延长到 1 年）。
+        //  · 基准没有(本地真新建、从没传过) 或 本地已编辑/找回(dirty) → 才是该上传的新内容。
+        if (base[id] && !dirtySet.has(id)) continue;
         needUpload.push(id);
       } else {
+        const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
         const remoteTs = remoteEntry.updatedAt || 0;
         if (localTs > remoteTs + 1000) {
           needUpload.push(id);
@@ -2186,7 +2197,7 @@
     // 与 storage.js 的 LOCAL_ONLY_SETTINGS 保持一致：每台设备各自的偏好 / UI 状态不上云。
     const LOCAL_ONLY = ['theme', 'fontSize', 'fontFamily', 'noteTransition',
       'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
-      'editorPadding', 'sidebarWidth', 'editorMode', 'outlineOpen',
+      'editorPadding', 'sidebarWidth', 'outlineOpen',
       'activeWorkspace', 'lastOpenedId', 'recent', 'imagesDir',
       'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes', 'webdavProxy', 'webdavCryptoPass'];
     const LOCAL_PREFIX = ['webdav_', '_'];

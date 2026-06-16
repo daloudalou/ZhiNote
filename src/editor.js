@@ -53,10 +53,12 @@ const TextAlign = Extension.create({
   },
   addKeyboardShortcuts() {
     return {
-      'Mod-Shift-l': () => this.editor.commands.setTextAlign('left'),
-      'Mod-Shift-e': () => this.editor.commands.setTextAlign('center'),
-      'Mod-Shift-r': () => this.editor.commands.setTextAlign('right'),
-      'Mod-Shift-j': () => this.editor.commands.setTextAlign('justify'),
+      // 对齐快捷键用 Ctrl+Alt+L/E/R/J（与标题 Ctrl+Alt+1…6 同套）：
+      // 避开旧的 Ctrl+Shift+E（阅读模式）撞键，也躲开浏览器保留的 Ctrl+Shift+R/J。
+      'Mod-Alt-l': () => this.editor.commands.setTextAlign('left'),
+      'Mod-Alt-e': () => this.editor.commands.setTextAlign('center'),
+      'Mod-Alt-r': () => this.editor.commands.setTextAlign('right'),
+      'Mod-Alt-j': () => this.editor.commands.setTextAlign('justify'),
     };
   },
 });
@@ -686,7 +688,9 @@ const CustomCodeBlock = CodeBlock.extend({
       if (shouldFold) {
         const noteId = window._currentNoteId || '';
         const key = `${noteId}:${getPos()}`;
-        folded = _codeBlockFoldState.has(key) ? _codeBlockFoldState.get(key) : true;
+        // 默认折叠；用户可在 外观设置→代码块默认 改为展开。手动 toggle 过的块以本会话记忆为准。
+        const defFolded = !(window.storage && window.storage.getSetting && window.storage.getSetting('codeBlockExpanded') === true);
+        folded = _codeBlockFoldState.has(key) ? _codeBlockFoldState.get(key) : defFolded;
       }
 
       const syncFoldUI = (animate) => {
@@ -841,7 +845,7 @@ function _showCodeLangPicker(anchor, wrapper, ed, getPos) {
   document.body.appendChild(picker);
   // 钳进视口：默认贴 anchor 下方；下方放不下就翻到上方，避免长语言列表底部被裁。
   {
-    const margin = 8, vw = window.innerWidth, vh = window.innerHeight;
+    const margin = 8, vw = window.innerWidth, vh = (window.visibleViewportH ? window.visibleViewportH() : window.innerHeight);
     const maxH = vh - margin * 2;
     if (picker.offsetHeight > maxH) { picker.style.maxHeight = maxH + 'px'; picker.style.overflowY = 'auto'; }
     const pw = picker.offsetWidth, ph = Math.min(picker.offsetHeight, maxH);
@@ -2433,7 +2437,7 @@ const editor = (() => {
   // 超过视口高度则限高+滚动。返回钳制后的左上角坐标。
   function _clampFloatingMenu(menu, x, y) {
     const margin = 8;
-    const vw = window.innerWidth, vh = window.innerHeight;
+    const vw = window.innerWidth, vh = (window.visibleViewportH ? window.visibleViewportH() : window.innerHeight);
     const maxH = vh - margin * 2;
     if (menu.offsetHeight > maxH) { menu.style.maxHeight = maxH + 'px'; menu.style.overflowY = 'auto'; }
     const mw = menu.offsetWidth;
@@ -2999,6 +3003,7 @@ const editor = (() => {
     _resetHistory();
     // 记录「打开时的 doc 基线」：之后 flushSave 据此判断是否有真实编辑。
     try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    _refreshMdSourceIfOpen();
     requestAnimationFrame(() => { _suppressInput = false; });
 
     // 定位：默认不把光标放进正文（避免一打开就进入编辑态），只恢复上次的滚动位置。
@@ -3073,6 +3078,7 @@ const editor = (() => {
   }
 
   function close() {
+    if (_mdSourceOpen) toggleMarkdownSource(false);
     if (_editor && _currentId) { try { _scrollPos[_currentId] = document.getElementById('editor')?.scrollTop || 0; } catch (_) {} }
     flushSave();
     _currentId = null;
@@ -3101,6 +3107,63 @@ const editor = (() => {
   function setReadonly(on) {
     if (!_editor) return;
     _editor.setEditable(!on);
+  }
+
+  // ===== 查看 Markdown 源码（只读）=====
+  // 原地把编辑区盖成一块等宽只读源码面板；不改存储、不可编辑，零序列化风险。
+  let _mdSourceOpen = false;
+  let _mdsvWired = false;
+
+  function isMarkdownSourceOpen() { return _mdSourceOpen; }
+
+  // 源码视图打开时，把面板内容刷新成当前笔记的 Markdown（切笔记 / 下行同步重载后调用）。
+  function _refreshMdSourceIfOpen() {
+    if (!_mdSourceOpen) return;
+    const code = document.getElementById('mdsv-code');
+    if (code) code.textContent = getValue();
+    const body = document.querySelector('#md-source-view .mdsv-body');
+    if (body) body.scrollTop = 0;
+  }
+
+  function _wireMdSourceOnce() {
+    if (_mdsvWired) return;
+    const copyBtn = document.getElementById('mdsv-copy');
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        const md = getValue();
+        const done = () => { copyBtn.textContent = '已复制'; setTimeout(() => { copyBtn.textContent = '复制全部'; }, 1200); };
+        try {
+          if (navigator.clipboard?.writeText) navigator.clipboard.writeText(md).then(done).catch(() => {});
+          else { const ta = document.createElement('textarea'); ta.value = md; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); }
+        } catch (_) {}
+      });
+    }
+    _mdsvWired = true;
+  }
+
+  function toggleMarkdownSource(force) {
+    const view = document.getElementById('md-source-view');
+    if (!view) return;
+    const next = (typeof force === 'boolean') ? force : !_mdSourceOpen;
+    if (next && !_currentId) return; // 没有打开的笔记，不进源码
+    if (next === _mdSourceOpen) return;
+    _mdSourceOpen = next;
+    if (next) {
+      _wireMdSourceOnce();
+      const code = document.getElementById('mdsv-code');
+      if (code) code.textContent = getValue();
+      try { if (_editor?.isFocused) _editor.commands.blur(); } catch (_) {}
+      view.classList.remove('hidden');
+      document.body.classList.add('md-source-open');
+      // 滚回顶部，从头看源码
+      const body = view.querySelector('.mdsv-body');
+      if (body) body.scrollTop = 0;
+    } else {
+      view.classList.add('hidden');
+      document.body.classList.remove('md-source-open');
+    }
+    const btn = document.getElementById('btn-view-md');
+    if (btn) btn.classList.toggle('active', _mdSourceOpen);
   }
 
   // 把当前文档里仍是占位的外置图片重新解析、命中缓存就替换上去（images-ready 兜底用）。
@@ -3205,6 +3268,7 @@ const editor = (() => {
     _resetHistory();
     // 同 open()：重载后刷新 doc 基线，避免下行同步刚覆盖内容又被 flushSave 误判为本地编辑。
     try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    _refreshMdSourceIfOpen();
     requestAnimationFrame(() => { _suppressInput = false; });
     refreshOutline();
   }
@@ -3318,12 +3382,20 @@ const editor = (() => {
     return !hasContent;
   }
 
+  // 外观设置「代码块默认 折叠/展开」变更后调用：清掉本会话逐块折叠记忆，按新默认重渲染当前笔记。
+  function applyCodeBlockFoldDefault() {
+    _codeBlockFoldState.clear();
+    reloadCurrent();
+  }
+
   return {
     initEditor, open, close, reloadCurrent,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
     currentId, getValue, focus, insertAtCursor, instance, execCommand,
     insertImageFromDataUrl,
     showImageContextMenu,
+    applyCodeBlockFoldDefault,
+    toggleMarkdownSource, isMarkdownSourceOpen,
     // 阶段1 基础设施
     serializeDocToMd, parseMdToDoc, docToPlainText, walkDocImages, docIsEmpty,
   };
