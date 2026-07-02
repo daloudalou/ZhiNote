@@ -1,0 +1,107 @@
+/**
+ * ydoc.js —— 合并账本工具箱（CRDT 大改 阶段1：可复用引擎，暂不接线）
+ *
+ * 把 crdt.bundle.js（Yjs + y-prosemirror）封装成几个高层函数，供 storage.js / webdav-sync.js
+ * 在后续阶段调用：把一篇笔记的 doc(JSON) 维护成一份 Yjs「账本」，两端账本可自动合并。
+ *
+ * 关键约定（已在 build/verify-migration.js 实测）：
+ *   - updateYFragment 的 meta 必须是 { mapping:Map, isOMark:Map }；缺 isOMark 处理带格式文字会报错。
+ *   - 两端要正确合并，必须基于「同一份」账本（build 一次后各端 applyUpdate 叠加），不能各自 build。
+ *     故账本的「首次创建」由同步层在加锁下完成（阶段2），本模块只提供纯函数，不决定何时建。
+ *
+ * 全部为纯函数 + 懒解析 window.__crdtBundle / 编辑器 schema，未就绪时抛清晰错误，绝不静默改数据。
+ */
+(function () {
+  'use strict';
+
+  function bundle() {
+    const cb = window.__crdtBundle;
+    if (!cb || !cb.Y) throw new Error('ydoc: __crdtBundle 未就绪');
+    return cb;
+  }
+
+  function defaultSchema() {
+    const ed = window.editor && window.editor.instance && window.editor.instance();
+    if (!ed || !ed.schema) throw new Error('ydoc: 编辑器 schema 未就绪');
+    return ed.schema;
+  }
+
+  // Uint8Array ⇄ base64（分块避免大数组爆栈）
+  function bytesToB64(u8) {
+    let s = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < u8.length; i += CHUNK) {
+      s += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+    }
+    return btoa(s);
+  }
+  function b64ToBytes(b64) {
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return u8;
+  }
+
+  const META = () => ({ mapping: new Map(), isOMark: new Map() });
+
+  /** 由 doc(ProseMirror JSON) 全新构建「确定化创世账本」→ base64。仅在「首次建账本」时用。
+   *  关键：固定 clientID=0 建创世——同一篇 doc 在任何设备各自独立建出的账本**逐字节相同**（同根），
+   *  之后各端的修改用各自（随机）作者号叠加，故无需中心协调即可正确合并、不重复（已实测增删改并发）。
+   *  注意：不要用 cb.prosemirrorJSONToYDoc（它内部 new Y.Doc() 用随机 clientID → 创世不确定 → 合并会重复）。 */
+  function build(doc, schema) {
+    const cb = bundle();
+    const sc = schema || defaultSchema();
+    const yd = new cb.Y.Doc();
+    yd.clientID = 0;
+    const frag = yd.getXmlFragment('prosemirror');
+    yd.transact(function () {
+      cb.updateYFragment(yd, frag, sc.nodeFromJSON(doc), META());
+    });
+    const out = cb.Y.encodeStateAsUpdate(yd);
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(out);
+  }
+
+  /** 把本次 doc 叠加进已有账本（自动算最小增量）→ 新 base64。保存正文后调用。 */
+  function update(b64, doc, schema) {
+    const cb = bundle();
+    const sc = schema || defaultSchema();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(b64));
+    const frag = yd.getXmlFragment('prosemirror');
+    yd.transact(function () {
+      cb.updateYFragment(yd, frag, sc.nodeFromJSON(doc), META());
+    });
+    const out = cb.Y.encodeStateAsUpdate(yd);
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(out);
+  }
+
+  /** 合并两份账本（同步时双向叠加）→ 融合后的 base64。CRDT 保证无重复、无丢失、确定性。 */
+  function merge(b64a, b64b) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(b64a));
+    cb.Y.applyUpdate(yd, b64ToBytes(b64b));
+    const out = cb.Y.encodeStateAsUpdate(yd);
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(out);
+  }
+
+  /** 账本 → doc(ProseMirror JSON)。合并后回写 note.doc 用。 */
+  function toDoc(b64, schema) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(b64));
+    const json = cb.yDocToProsemirrorJSON(yd, 'prosemirror');
+    if (yd.destroy) yd.destroy();
+    return json;
+  }
+
+  /** 引擎是否可用（__crdtBundle + 编辑器 schema 均就绪）。调用方据此决定走账本还是退回旧路径。 */
+  function ready() {
+    try { bundle(); defaultSchema(); return true; } catch (e) { return false; }
+  }
+
+  window.__ydoc = { ready, build, update, merge, toDoc, bytesToB64, b64ToBytes };
+})();

@@ -1051,6 +1051,90 @@ const editor = (() => {
   let _currentId = null;
   let _saveTimer = null;
   let _suppressInput = false;
+  // 「即时同步」用：记录最近一次本地编辑时刻 + 是否有未落盘改动。
+  // 供 realtime.js 判断"用户是否正在打字"——正在打字时先不刷新对端来的内容，避免打断输入/跳光标。
+  let _lastEditAt = 0;
+  let _dirtyUnsaved = false;
+  let _isComposing = false;  // 输入法（拼音/注音等）合成进行中——其间绝不落地对端内容，否则整篇重载会打断输入、毁掉半截拼音
+  let _pendingReloadWhileComposing = false; // 合成期间收到的重载请求挂起，合成结束后再补做（修「网盘下载回来重载打断拼音」）
+
+  // ── 阶段 C：正文入树（y-prosemirror 实时绑定）。特性开关默认关，开则编辑器直接绑到每篇正文的 CRDT，
+  //    对端改动用 Y.applyUpdate 增量打补丁（光标不跳、不整篇重载、不打断输入法）；关则走原 doc-JSON 往返路径。
+  let _bound = false;        // 本次编辑器实例是否启用绑定（init 时按设置定，运行时切换需重建/刷新）
+  let _yDoc = null, _yFrag = null, _pSync = null, _pUndo = null, _yLocalObs = null;
+  const _EMPTY_DOC = { type: 'doc', content: [{ type: 'paragraph' }] };
+  function _crdt() { return window.__crdtBundle; }
+  function _crdtReady() { const c = _crdt(); return !!(c && c.Y && c.ySyncPlugin && c.yUndoPlugin); }
+  function _b64ToBytes(b64) { return window.__ydoc.b64ToBytes(b64); }
+  function _bytesToB64(u8) { return window.__ydoc.bytesToB64(u8); }
+  // 读绑定开关：优先 localStorage（同步、脚本期即可读）——编辑器在 storage.init 完成前就会 initEditor，
+  //   那时 getSetting 还读不到盘上设置，会误判为关；localStorage 不受此影响。storage 设置作兜底。
+  function _readBindFlag() {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const v = localStorage.getItem('zhinote.crdtBindEditor');
+        if (v != null) return v === '1' || v === 'true';
+      }
+    } catch (_) {}
+    try { const s = window.storage && window.storage.getSetting && window.storage.getSetting('crdtBindEditor'); if (s != null) return !!s; } catch (_) {}
+    return true;   // t7 大改：默认开启「字符级实时」绑定；用户可在设置里显式关掉（存 localStorage/设置）
+  }
+  function isCrdtBound() { return !!(_bound && _yDoc); }
+
+  // 解除当前绑定：注销 y 插件、停观察、销毁活账本。切笔记/关闭前调。
+  function _unbindCrdt() {
+    try { if (_pUndo && _editor) _editor.unregisterPlugin((_pUndo.spec && _pUndo.spec.key) || _pUndo.key); } catch (_) {}
+    try { if (_pSync && _editor) _editor.unregisterPlugin((_pSync.spec && _pSync.spec.key) || _pSync.key); } catch (_) {}
+    _pUndo = _pSync = null;
+    try { if (_yLocalObs && _yDoc) _yDoc.off('update', _yLocalObs); } catch (_) {}
+    _yLocalObs = null;
+    try { if (_yDoc && _yDoc.destroy) _yDoc.destroy(); } catch (_) {}
+    _yDoc = _yFrag = null;
+  }
+
+  // 把一篇笔记绑定到活的 Y.Doc：有 note.ydoc 用它作基线，否则用 note.doc 确定化创世(clientID=0，同根可合并)。
+  // 失败则返回 false，调用方退回普通 setContent 载入。
+  function _bindNoteCrdt(note) {
+    if (!_editor || !_crdtReady()) return false;
+    const c = _crdt(), Y = c.Y;
+    _unbindCrdt();
+    let yd;
+    try {
+      yd = new Y.Doc();
+      if (note.ydoc) {
+        Y.applyUpdate(yd, _b64ToBytes(note.ydoc));
+      } else {
+        const saved = yd.clientID; yd.clientID = 0;
+        const frag0 = yd.getXmlFragment('prosemirror');
+        // 老格式笔记只有 content(markdown)、没有 doc/ydoc：先把 markdown 解析成 doc 作创世，
+        // 否则会被绑成空文档、正文丢失（导入老备份后正文全空的根因）。
+        const genesis = note.doc || (note.content ? parseMdToDoc(note.content) : _EMPTY_DOC);
+        yd.transact(() => c.updateYFragment(yd, frag0, _editor.schema.nodeFromJSON(genesis), { mapping: new Map(), isOMark: new Map() }), 'genesis');
+        yd.clientID = saved;  // 创世用 0（同根），之后本地编辑用随机作者号
+      }
+      _yDoc = yd;
+      _yFrag = yd.getXmlFragment('prosemirror');
+      _pSync = c.ySyncPlugin(_yFrag);
+      _editor.registerPlugin(_pSync);     // 先 ySync：编辑器内容即来自此片段
+      _pUndo = c.yUndoPlugin();
+      _editor.registerPlugin(_pUndo);     // 再 yUndo：撤销按客户端隔离
+      _yLocalObs = (update, origin) => { if (origin === 'remote') return; scheduleSave(null); };
+      yd.on('update', _yLocalObs);
+      return true;
+    } catch (e) {
+      console.warn('[editor] CRDT 绑定失败，退回普通载入', e);
+      try { if (yd && yd.destroy) yd.destroy(); } catch (_) {}
+      _yDoc = _yFrag = _pSync = _pUndo = null;
+      return false;
+    }
+  }
+
+  // 对端/网盘下行的账本(base64) → 增量并入活账本，ySync 自动就地打补丁，光标不跳、不重载。
+  // 返回是否成功落地（供 realtime 决定走快车道还是退回旧路径）。
+  function applyRemoteUpdate(id, b64) {
+    if (!_bound || !_yDoc || id !== _currentId || !b64) return false;
+    try { _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(b64), 'remote'); return true; } catch (_) { return false; }
+  }
   // 双击空格跳出续写：记录上一次空格的时间与「插入后光标位置」，
   // 只有「窗口内、原地连按第二下空格、且当前光标处有激活的行内格式」才触发。
   const DOUBLE_SPACE_WINDOW = 200;  // ms，短一些，避免误吃正常双空格
@@ -1102,6 +1186,10 @@ const editor = (() => {
   function initEditor() {
     if (_editor) return _editor;
 
+    // 阶段 C 绑定开关：仅在 init 时定一次（运行时切换需刷新页面重建编辑器）。
+    // 绑定开 → 关掉 StarterKit 自带历史，改用 yUndoPlugin（两套历史会打架）。
+    _bound = _readBindFlag() && _crdtReady();
+
     const bubbleMenuEl = document.getElementById('bubble-menu');
     // 触屏：iOS 系统选择菜单固定出现在选区上方且无法屏蔽，浮动条改到选区下方错位共存
     const _coarsePtr = window.matchMedia('(pointer: coarse)').matches;
@@ -1145,7 +1233,22 @@ const editor = (() => {
           codeBlock: false,
           link: false,
           underline: false,
+          // 阶段 C：绑定模式下用 yUndoPlugin 取代默认历史，否则两套撤销打架。
+          //   本编辑器是 TipTap v3，关历史的开关是 undoRedo:false（不是 v2 的 history）。
+          ...(_bound ? { undoRedo: false } : {}),
         }),
+        // 绑定模式：yUndoPlugin 只提供 undo/redo 函数、不绑快捷键，需自己补 Ctrl+Z / Ctrl+Y。
+        ...(_bound ? [Extension.create({
+          name: 'crdtUndoKeymap',
+          addKeyboardShortcuts() {
+            const self = this;
+            return {
+              'Mod-z': () => { try { return !!_crdt().undo(self.editor.state); } catch (_) { return false; } },
+              'Mod-y': () => { try { return !!_crdt().redo(self.editor.state); } catch (_) { return false; } },
+              'Mod-Shift-z': () => { try { return !!_crdt().redo(self.editor.state); } catch (_) { return false; } },
+            };
+          },
+        })] : []),
         CustomCodeBlock.configure({
           languageClassPrefix: 'language-',
           HTMLAttributes: { class: 'code-block' },
@@ -1432,6 +1535,20 @@ const editor = (() => {
     });
 
     _ensureMarkedPatched();
+
+    // 输入法合成态追踪：拼音/注音输入期间置 _isComposing，供 isBusyTyping 拦下对端内容的落地，
+    // 避免整篇重载打断输入法（"拼音打一半就破坏了"的根因）。
+    try {
+      const _dom = _editor.view && _editor.view.dom;
+      if (_dom) {
+        _dom.addEventListener('compositionstart', () => { _isComposing = true; });
+        _dom.addEventListener('compositionend', () => {
+          _isComposing = false; _lastEditAt = Date.now();
+          // 合成期间被推迟的整篇重载，等拼音落定后补做（避免半截拼音被对端/网盘下行内容冲掉）
+          if (_pendingReloadWhileComposing) { _pendingReloadWhileComposing = false; setTimeout(() => { try { reloadCurrent(); } catch (_) {} }, 0); }
+        });
+      }
+    } catch (_) {}
 
     // 图片后端全量载入完成（外置图片冷启动）后，把当前笔记里仍是占位的图补显一遍。
     // 这是 lazy 单张加载之外的兜底：覆盖未开 webdav 的纯本地情形（NodeView 那条 webdav 补救路径走不到）。
@@ -2519,8 +2636,9 @@ const editor = (() => {
   function execCommand(cmd, opts) {
     if (!_editor) return;
     switch (cmd) {
-      case 'undo': _editor.chain().focus().undo().run(); break;
-      case 'redo': _editor.chain().focus().redo().run(); break;
+      // 绑定模式下 StarterKit 历史已关，撤销/重做改走 yUndoPlugin（按客户端隔离，只撤自己的改动）。
+      case 'undo': if (_bound) { try { _crdt().undo(_editor.state); } catch (_) {} _editor.commands.focus(); } else { _editor.chain().focus().undo().run(); } break;
+      case 'redo': if (_bound) { try { _crdt().redo(_editor.state); } catch (_) {} _editor.commands.focus(); } else { _editor.chain().focus().redo().run(); } break;
       case 'toggleBold': _editor.chain().focus().toggleBold().run(); break;
       case 'toggleItalic': _editor.chain().focus().toggleItalic().run(); break;
       case 'toggleStrike': _editor.chain().focus().toggleStrike().run(); break;
@@ -2795,10 +2913,11 @@ const editor = (() => {
 
   function scheduleSave(md) {
     clearTimeout(_saveTimer);
-    _saveTimer = setTimeout(() => flushSave(), 1500);
+    _lastEditAt = Date.now();
+    _dirtyUnsaved = true;
+    // 停手 0.3s 即落盘：让"即时同步"端到端约 0.5s（落盘才触发外发）；连续打字会不断重置，不会狂存。
+    _saveTimer = setTimeout(() => flushSave(), 300);
     if (window.updateWordCount) window.updateWordCount();
-    const statusEl = document.getElementById('save-status');
-    if (statusEl) { statusEl.classList.remove('saved'); statusEl.classList.add('saving'); statusEl.title = '未保存'; }
   }
 
   /** 文档是否「实质为空」：无文字，且不含表格/图片/公式/分割线等无文字但有内容的节点。
@@ -2849,6 +2968,19 @@ const editor = (() => {
     return missing;
   }
 
+  // 当前笔记引用了本地没有的图片（多为对端经即时同步刚加的图，本端只拿到了正文）→ 触发一次受限的网盘拉取，
+  //   把图片本体取回；落地后 storage 的 image-stored 事件会自动补显占位图。节流 ≥8s 一次，避免频繁拉取。
+  let _missImgSyncAt = 0;
+  function _requestMissingImagesSync() {
+    try {
+      const now = Date.now();
+      if (now - _missImgSyncAt < 8000) return;
+      if (!window.webdavSync || !window.webdavSync.doGet) return;
+      _missImgSyncAt = now;
+      window.webdavSync.doGet({ silent: true });
+    } catch (_) {}
+  }
+
   // 把笔记灌进编辑器：有 doc(JSON) 走零往返 JSON 路径（全保真、无抖动）；
   // 旧笔记（仅 content/md，尚未迁移）退回 markdown 解析路径，保证存量笔记照常打开。
   function _loadNoteIntoEditor(note) {
@@ -2872,6 +3004,7 @@ const editor = (() => {
 
   function flushSave() {
     clearTimeout(_saveTimer);
+    _dirtyUnsaved = false;
     if (!_currentId || !_editor) return;
     try {
       const doc = _editor.getJSON();
@@ -2881,8 +3014,6 @@ const editor = (() => {
       // 判脏：与「打开时的 doc 基线」比较。doc(JSON) 往返稳定、无序列化抖动 →
       // 没编辑过的笔记 docStr 必然等于基线 → 不会打开即标脏 → 不会跨设备误覆盖。
       if (_openedDoc != null && docStr === _openedDoc) {
-        const okEl = document.getElementById('save-status');
-        if (okEl) { okEl.classList.remove('saving'); okEl.classList.add('saved'); okEl.title = '已保存'; }
         return;
       }
       // 防误清空兜底：doc 判空但编辑器实际仍有内容（理论上 doc 路径两者一致，极端态保险）。
@@ -2891,12 +3022,18 @@ const editor = (() => {
         console.warn('[editor.flushSave] 拒绝保存：doc 判空但编辑器仍有内容（疑似异常态）');
         return;
       }
-      window.storage.updateDoc(_currentId, doc);
+      // 绑定模式：账本权威 = 活的 _yDoc，跳过「从 doc 重建账本」(那会毁掉 CRDT 历史)，
+      //   保存后直接把活账本状态写回 note.ydoc，供网盘留底/对端领用。
+      // ⚠️ 顺序很关键：必须先把最新活账本写回 note.ydoc，再 updateDoc。因为 updateDoc 会
+      //   emit('change',{type:'content'})，realtime 监听到即读 note.ydoc 直推对端——若先 updateDoc
+      //   再写 ydoc，推出去的永远是上一拍的旧账本（用户报的「打123只同步到12，下一步才出现3」）。
+      if (_bound && _yDoc) {
+        try { window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc))); } catch (_) {}
+      }
+      window.storage.updateDoc(_currentId, doc, _bound ? { skipLedger: true } : undefined);
       window.storage.save({ immediate: true });
       // 保存成功后把基线推进到当前 doc，后续无新编辑则不再重复标脏。
       _openedDoc = docStr;
-      const statusEl = document.getElementById('save-status');
-      if (statusEl) { statusEl.classList.remove('saving'); statusEl.classList.add('saved'); statusEl.title = '已保存'; }
     } catch (err) {
       console.error('[editor.flushSave]', err);
     }
@@ -2964,6 +3101,7 @@ const editor = (() => {
 
     _currentId = id;
     window._currentNoteId = id;
+    try { window.realtime && window.realtime.onActiveNote && window.realtime.onActiveNote(id); } catch (_) {}
     if (!_editor) initEditor();
     if (!_editor) { console.warn('[editor] Cannot open note: editor not available'); return; }
 
@@ -2998,9 +3136,15 @@ const editor = (() => {
     }
 
     _suppressInput = true;
-    _loadNoteIntoEditor(note);
-    _normalizeEmptyListItems();
-    _resetHistory();
+    if (_bound) {
+      // 绑定模式：内容来自活账本(ySync)，不走 setContent；绑定失败则退回普通载入。
+      if (!_bindNoteCrdt(note)) { _loadNoteIntoEditor(note); _resetHistory(); }
+      else _normalizeEmptyListItems();
+    } else {
+      _loadNoteIntoEditor(note);
+      _normalizeEmptyListItems();
+      _resetHistory();
+    }
     // 记录「打开时的 doc 基线」：之后 flushSave 据此判断是否有真实编辑。
     try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
     _refreshMdSourceIfOpen();
@@ -3073,15 +3217,17 @@ const editor = (() => {
     if (window.tree?.setActive) window.tree.setActive(id);
     if (window.tree?.scrollToNote) window.tree.scrollToNote(id);
 
-    const pinned = window.storage?.getSetting('pinned') || [];
-    document.getElementById('btn-pin')?.classList.toggle('active', pinned.includes(id));
+    const pinned = window.storage?.isPinned(id);
+    document.getElementById('btn-pin')?.classList.toggle('active', !!pinned);
   }
 
   function close() {
     if (_mdSourceOpen) toggleMarkdownSource(false);
     if (_editor && _currentId) { try { _scrollPos[_currentId] = document.getElementById('editor')?.scrollTop || 0; } catch (_) {} }
     flushSave();
+    if (_bound) _unbindCrdt();
     _currentId = null;
+    try { window.realtime && window.realtime.onActiveNote && window.realtime.onActiveNote(null); } catch (_) {}
     const wrap = document.getElementById('editor-wrap');
     const empty = document.getElementById('empty-state');
     if (wrap) wrap.classList.add('hidden');
@@ -3252,30 +3398,84 @@ const editor = (() => {
     setTimeout(() => target.classList.remove('outline-flash'), 1200);
   }
 
+  // 用户是否正在打字（供 realtime.js 判断"别打断"）：有未落盘改动，或最近 1.5s 内有输入且编辑器聚焦。
+  function isBusyTyping() {
+    if (_isComposing) return true;                 // 正在打拼音/注音 → 绝不落地对端内容
+    if (_dirtyUnsaved) return true;                // 有未落盘本地改动 → 先并入再说
+    // 焦点在编辑器内即视为"在用"：一律先不整篇重载，避免光标被弹飞。
+    // 对端改动暂存，待失焦/切走（或停手）后再合并落地；纯阅读时失焦即秒级更新。
+    return !!(_editor && _editor.isFocused);
+  }
+  // 立即把待保存内容落盘（realtime.js 在应用对端内容前调用，确保本端最新改动已并入账本）。
+  function flushSaveNow() { try { flushSave(); } catch (_) {} }
+
   function reloadCurrent() {
     if (!_currentId) return;
+    // 输入法合成中（正打拼音）→ 绝不整篇重载打断输入；挂起请求，compositionend 后补做。
+    //   注意只挡"合成中"，不挡"仅聚焦"——否则只是聚焦在看的笔记永远收不到对端/网盘的下行更新。
+    if (_isComposing) { _pendingReloadWhileComposing = true; return; }
     clearTimeout(_saveTimer);
     const note = window.storage?.get(_currentId);
-    if (!note) { close(); return; }
+    // 同步瞬时缺失（对端刚建/网盘还没下到）→ 不关编辑器、不清空，保持正在看的内容，避免翻欢迎页。
+    //   真删/进回收站由 app 的 _ensureEditorNoteAlive 统一关闭（认墓碑/回收站，不认"暂时查不到"）。
+    if (!note) return;
+    // 绑定模式：把最新账本增量并入活账本即可（ySync 就地打补丁、光标不跳），绝不整篇重载。
+    if (_bound && _yDoc) {
+      try {
+        if (note.ydoc) _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(note.ydoc), 'remote');
+      } catch (_) { try { _bindNoteCrdt(note); } catch (__) {} }
+      return;
+    }
     // 下行同步触发的重载：不阻塞渲染（保持同步时序），后台批量预热完成后再刷新占位图。
     const _miss = _prewarmNoteImages(note);
     if (_miss && _miss.length && window.storage?.loadImages) {
       window.storage.loadImages(_miss).then(() => { try { _refreshPlaceholderImages(); } catch (_) {} }).catch(() => {});
+      // 本地确实没有这些图：多为对端刚加的图——正文已走即时同步到了本端，但图片本体还在云端、即时同步不传图。
+      //   触发一次受限的网盘拉取把图取回，落地后 image-stored 会自动补显（修「切设备后占位图要手动拖一下才出来」）。
+      _requestMissingImagesSync();
     }
+    // 保住光标：重载前记下选区与是否聚焦，重载后夹取到合法范围再还原，避免"内容跳过来光标乱飞"。
+    let _sel = null;
+    try {
+      if (_editor && _editor.isFocused) _sel = { from: _editor.state.selection.from, to: _editor.state.selection.to, focused: true };
+    } catch (_) { _sel = null; }
     _suppressInput = true;
     _loadNoteIntoEditor(note);
     _normalizeEmptyListItems();
     _resetHistory();
     // 同 open()：重载后刷新 doc 基线，避免下行同步刚覆盖内容又被 flushSave 误判为本地编辑。
     try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    if (_sel) {
+      try {
+        const max = Math.max(1, _editor.state.doc.content.size - 1);
+        const from = Math.min(_sel.from, max), to = Math.min(_sel.to, max);
+        _editor.commands.setTextSelection({ from, to });
+        if (_sel.focused) _editor.commands.focus();
+      } catch (_) {}
+    }
     _refreshMdSourceIfOpen();
     requestAnimationFrame(() => { _suppressInput = false; });
     refreshOutline();
+    refreshTitle();
+  }
+
+  /** 仅把「编辑区顶部标题框」刷成存储里的最新标题（标题权威 = 结构总账）。
+   *  不碰正文/光标/选区——远端改名时(走 global-sync，不重载正文)用它单独刷标题。
+   *  用户正在标题框里打字时不抢，避免吞输入。侧栏标题由 tree.render() 另行刷新。 */
+  function refreshTitle() {
+    if (!_currentId) return;
+    const note = window.storage && window.storage.get ? window.storage.get(_currentId) : null;
+    if (!note) return;
+    const titleInput = document.getElementById('title-input');
+    if (!titleInput) return;
+    if (document.activeElement === titleInput) return; // 正在改名 → 不抢
+    const t = note.title || '';
+    if (titleInput.value !== t) titleInput.value = t;
   }
 
   // ============================================================
   // JSON 存储迁移 · 阶段1 基础设施（纯新增，不改现有行为）
-  //   方案见 docs/JSON存储迁移方案.md。doc = ProseMirror 文档 JSON。
+  //   格式说明见 .cursor/rules/data-model.mdc。doc = ProseMirror 文档 JSON。
   // ============================================================
 
   /** doc JSON → 干净 Markdown（用编辑器的 markdown manager，可转任意 doc，不依赖当前在编辑的文档）。 */
@@ -3382,6 +3582,14 @@ const editor = (() => {
     return !hasContent;
   }
 
+  // 置顶按钮高亮态刷新（同步下行后、切换笔记后调用），与 storage.isPinned 保持一致。
+  function refreshPinButton() {
+    const id = _currentId;
+    const btn = document.getElementById('btn-pin');
+    if (!btn) return;
+    btn.classList.toggle('active', !!(id && window.storage?.isPinned(id)));
+  }
+
   // 外观设置「代码块默认 折叠/展开」变更后调用：清掉本会话逐块折叠记忆，按新默认重渲染当前笔记。
   function applyCodeBlockFoldDefault() {
     _codeBlockFoldState.clear();
@@ -3389,12 +3597,15 @@ const editor = (() => {
   }
 
   return {
-    initEditor, open, close, reloadCurrent,
+    initEditor, open, close, reloadCurrent, refreshTitle,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
     currentId, getValue, focus, insertAtCursor, instance, execCommand,
+    isBusyTyping, flushSaveNow,
+    applyRemoteUpdate, isCrdtBound,
     insertImageFromDataUrl,
     showImageContextMenu,
     applyCodeBlockFoldDefault,
+    refreshPinButton,
     toggleMarkdownSource, isMarkdownSourceOpen,
     // 阶段1 基础设施
     serializeDocToMd, parseMdToDoc, docToPlainText, walkDocImages, docIsEmpty,

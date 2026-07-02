@@ -54,7 +54,16 @@ async function bootstrap() {
       link.href = 'manifest.webmanifest';
       document.head.appendChild(link);
     } catch (_) {}
-    if ('serviceWorker' in navigator && (location.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(location.hostname))) {
+    const _isLocalhost = ['localhost', '127.0.0.1'].includes(location.hostname);
+    if ('serviceWorker' in navigator && _isLocalhost) {
+      // 本地调试：不注册离线缓存，并清掉历史遗留的 SW + 缓存。
+      // 否则 SW 会把旧 index.html 缓存死、之后一直返回旧版（"改了不生效/像卡住"的根因），
+      // 且缓存的旧页面会自己重新注册 SW，形成无法靠刷新打破的死循环。正式版(https)照常保留离线能力。
+      try {
+        navigator.serviceWorker.getRegistrations().then((rs) => { rs.forEach((r) => r.unregister()); }).catch(() => {});
+        if (window.caches && caches.keys) caches.keys().then((ks) => { ks.forEach((k) => caches.delete(k)); }).catch(() => {});
+      } catch (_) {}
+    } else if ('serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js').then((reg) => {
         // 后台更新提示：缓存优先策略下新版本要"再启动一次"才生效，这里把"再启动一次"
         // 变成一个可点的提示——新 SW 在后台装好并接管（controllerchange）后，提示一键刷新。
@@ -197,7 +206,10 @@ async function bootstrap() {
   function _ensureEditorNoteAlive(force) {
     if (!force && window._bulkImporting) return;
     const cid = editor.currentId?.();
-    if (cid && !storage.get(cid)) editor.close();
+    if (!cid || storage.get(cid)) return;
+    // 【B+ 止架】只有「真删/进回收站」才关编辑器；同步瞬时缺失（对端刚建还没到/网盘还没下到）一律保持，
+    //   绝不翻欢迎页（用户报的"另一端显示的笔记变成欢迎页"）。缺的那篇随即时同步/网盘补回后照常显示。
+    if (storage.isNoteDeleted && storage.isNoteDeleted(cid)) editor.close();
   }
 
   storage.on('change', (payload) => {
@@ -214,6 +226,14 @@ async function bootstrap() {
     if (payload?.type === 'reload' || payload?.type === 'global-sync') {
       try { refreshWorkspaceSwitcher(); } catch (_) {}
       try { renderWelcomeRecent(); } catch (_) {}
+      try { editor.refreshPinButton?.(); } catch (_) {}
+      // 远端改名（标题权威=结构总账，走 global-sync 不重载正文）→ 单独刷编辑区顶部标题框。
+      //   侧栏标题已由上面 tree.render() 刷新；这里补上"两处标题"的第二处。
+      try { editor.refreshTitle?.(); } catch (_) {}
+    }
+    // 本地有未上云的改动 → 同步徽标转「本地待上云」(淡蓝)；reload/global-sync 是远端下行，不算本地待传。
+    if (payload?.type !== 'reload' && payload?.type !== 'global-sync') {
+      try { _maybeBadgeLocal(); } catch (_) {}
     }
     // 同步模块：本地数据变更 → 调度 PUT（由 storage.js markDirty 统一调度 WebDAV）
   });
@@ -234,8 +254,8 @@ async function bootstrap() {
     refreshEditorModeBar();
     _syncProtectionTimer = setTimeout(() => {
       _endSyncProtection();
-      // 不是失败：只是后台同步还没拉完，先放开编辑。但提醒：同步真正完成后可能覆盖此处改动
-      toast('后台同步用时较长，已解除锁定、可继续编辑；同步完成后这里的改动可能被云端覆盖', 'info', { duration: 7000 });
+      // 不是失败：只是后台同步还没拉完，先放开编辑。v3 起改动会自动合并，不再有"被覆盖"风险。
+      toast('后台同步用时较长，已可继续编辑；你的改动会和其他设备的修改自动合并', 'info', { duration: 6000 });
     }, SYNC_PROTECTION_TIMEOUT);
   }
 
@@ -254,20 +274,27 @@ async function bootstrap() {
   // 云同步事件 → toast 提示
   let _lastSyncFailMsg = '';
   let _lastSyncFailAt = 0;
+  // 即时同步是否"活着"（有其它设备在场）：用于让网盘的后台上传在多设备实时时低调、不打扰。
+  function _realtimeLive() { try { return !!(window.realtime && window.realtime.status && window.realtime.status().active); } catch (_) { return false; } }
   storage.on('cloud-sync', (payload) => {
     if (payload.type === 'webdav-sync-start') {
       // 同步前先把编辑器里未落盘的正文 flush 到 storage，
       // 否则远端较新时 reloadCurrent 会覆盖掉内存里的未保存修改
       editor.flushSave?.();
-      // 静默后台轮询：不闪同步徽标（避免每 30s 抖一下）；只有真正下载/失败时才提示
-      if (!payload.silent) _setCloudSyncDot('syncing');
+      // 静默后台轮询：不闪同步徽标（避免每 30s 抖一下）；只有真正下载/失败时才提示。
+      // 【止血·绿点狂转】本地编辑/操作触发的网盘上传只是日常保存留底，**任何时候都不再转圈打扰**
+      //   （用户报"打字停一下就转、操作一下就转"——单台设备每次保存都狂闪）。上传期间徽标保持平静：
+      //   编辑时已由 _maybeBadgeLocal 显示淡蓝"待上云"，上传成功后转绿"已同步"，无转圈动画。
+      //   真正值得提示的——下载远端改动 / 首次同步 / 手动同步 / 失败——照旧转圈或报错。
+      const _bgPut = typeof payload.detail === 'string' && payload.detail.indexOf('put') === 0;
+      if (!payload.silent && !_bgPut) _setCloudSyncDot('syncing');
     } else if (payload.type === 'sync-protection-start') {
       _startSyncProtection();
     } else if (payload.type === 'webdav-sync-ok') {
       if (_syncProtectionActive) _endSyncProtection();
       // 同步成功（非重试占位）→ 清掉失败去重记录，下次再失败仍会正常提示
       if (payload.detail !== 'retry-transient') { _lastSyncFailMsg = ''; _lastSyncFailAt = 0; }
-      // 静默轮询且无变更（unchanged/empty）时不动徽标，保持稳定不闪
+      // 上传/下载成功 → 平静地标记"已同步"（steady 绿，不闪不转）。静默轮询且无变更（unchanged/empty）时不动徽标。
       if (!(payload.silent && (payload.detail === 'get-unchanged' || payload.detail === 'get-empty'))) {
         _setCloudSyncDot('synced');
       }
@@ -320,10 +347,13 @@ async function bootstrap() {
       _setCloudSyncDot('pending');
       toast('同步请求频率受限，将自动恢复', 'warning', { id: 'webdav-rate', duration: 5000 });
     } else if (payload.type === 'webdav-conflict') {
+      // v3 起真冲突由账本自动合并、不再冒副本；此事件只在「无账本的旧格式笔记」回退路径触发，已很少见。
       const _msg = payload.copyMade
-        ? '检测到云端对该笔记也有修改：已采用云端版本，你本地未上传的版本已另存为"（本地冲突副本）"，请对比后保留所需的一份'
-        : '检测到云端也修改了该笔记，已保留本地版本';
-      toast(_msg, 'warning', { id: 'webdav-conflict', duration: 0 });
+        ? '这篇旧格式笔记云端也改过：已采用云端版本，你本地的版本另存为"（本地冲突副本）"，可对比后保留所需的一份'
+        : '云端也修改了该笔记，已保留本地版本';
+      toast(_msg, 'info', { id: 'webdav-conflict', duration: 8000 });
+    } else if (payload.type === 'webdav-merged') {
+      // v3 账本自动合并：默认静默（仅徽标转 synced 由 sync-ok 处理）；此处预留，不打扰用户。
     }
   });
   // 启动自动同步调度
@@ -331,6 +361,9 @@ async function bootstrap() {
     // 同步配置可能被云端覆盖，重新刷新徽标状态
     const _postMethod = storage.getSetting('syncMethod') || 'none';
     if (_postMethod === 'none') _setCloudSyncDot('disabled');
+    // 即时同步重判：realtime.js 的 init 可能在 storage 数据加载完成前就跑过一次 applyConfig，
+    // 那时 syncMethod 还是空 → _enabled 被钉死为 false 且无人重评。此处设置已就绪，补评一次。
+    try { window.realtime && window.realtime.applyConfig(); } catch (_) {}
   });
 
   refreshEditorModeBar();
@@ -2028,14 +2061,16 @@ async function _mirrorAfterOverwrite() {
   if ((storage.getSetting('syncMethod') || 'none') !== 'webdav' || !window.webdavSync?.mirrorLocalToCloud) return;
   try {
     editor.flushSave?.();
+    // 可见反馈：整库重传海外网盘（如 Koofr）会较慢，给个常驻进度提示，避免用户以为"没在覆盖云端、只停在蓝色"。
+    toast('正在用本地覆盖云端（重传全部笔记，海外网盘会较慢，请勿关闭窗口）…', 'info', { id: 'mirror-progress', duration: 0 });
     const r = await window.webdavSync.mirrorLocalToCloud();
     if (r && r.ok) {
-      toast(`已同步覆盖云端${r.removed ? `，清理了 ${r.removed} 篇云端多余笔记` : ''}`, 'success');
+      toast(`已同步覆盖云端${r.removed ? `，清理了 ${r.removed} 篇云端多余笔记` : ''}`, 'success', { id: 'mirror-progress', duration: 4000 });
     } else {
-      toast(`云端覆盖失败：${(r && r.error) || '未知错误'}。本地已替换，可在「管理云端笔记 → 覆盖云端」重试`, 'warning', { duration: 0 });
+      toast(`云端覆盖失败：${(r && r.error) || '未知错误'}。本地已替换，可在「管理云端笔记 → 覆盖云端」重试`, 'warning', { id: 'mirror-progress', duration: 0 });
     }
   } catch (e) {
-    toast(`云端覆盖失败：${e.message}。本地已替换，可在「管理云端笔记 → 覆盖云端」重试`, 'warning', { duration: 0 });
+    toast(`云端覆盖失败：${e.message}。本地已替换，可在「管理云端笔记 → 覆盖云端」重试`, 'warning', { id: 'mirror-progress', duration: 0 });
   }
 }
 
@@ -2639,7 +2674,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
     it.className = 'workspace-popup-item' + (ws.id === cur.id ? ' active' : '');
     it.innerHTML = `
       <button class="ws-icon-btn" data-act="icon" title="更换图标">${ws.icon || '📒'}</button>
-      <span class="ws-name">${escapeHtml(ws.name)}</span>
+      <span class="ws-name">${escapeHtml(ws.name || '未命名')}</span>
       <span class="ws-actions">
         <button data-act="rename" title="重命名">✎</button>
         ${all.length > 1 ? '<button data-act="del" title="删除本子">🗑</button>' : ''}
@@ -3553,12 +3588,12 @@ function refreshEditorModeBar() {
   bar.style.pointerEvents = '';
   let msg = '';
   if (document.body.classList.contains('sync-protection-mode')) {
-    bar.innerHTML = '检测到其他设备的更新，正在同步…（首次或内容较多时会久一些，请稍候）<span class="sync-protection-skip">仍要立即编辑</span>';
+    bar.innerHTML = '正在合并其他设备的修改…（首次或内容较多时会久一些，请稍候）<span class="sync-protection-skip">仍要立即编辑</span>';
     bar.classList.remove('hidden');
     bar.style.pointerEvents = 'auto';
     bar.querySelector('.sync-protection-skip')?.addEventListener('click', () => {
       window._endSyncProtection?.();
-      toast('已解除锁定；后台同步完成后，这里的改动可能被云端版本覆盖', 'info', { duration: 6000 });
+      toast('已可继续编辑；你的改动会和其他设备的修改自动合并', 'info', { duration: 5000 });
     });
     return;
   } else if (document.body.classList.contains('md-focus-mode')) {
@@ -3571,9 +3606,12 @@ function refreshEditorModeBar() {
     setTimeout(() => hint.remove(), 4800);
     return;
   } else if (document.body.classList.contains('cloze-mode')) {
-    msg = '挖空模式 · 悬停查看 · Alt+M 标记';
+    // 触屏（手机/平板）：提示条会折行占大块空间，且键盘快捷键无意义 → 用短文案，保持一行小药丸
+    const _touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    msg = _touch ? '挖空模式' : '挖空模式 · 悬停查看 · Alt+M 标记';
   } else if (document.body.classList.contains('readonly-mode')) {
-    msg = '阅读模式 · 点击右上角按钮或按 Ctrl+Shift+E 退出';
+    const _touch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    msg = _touch ? '阅读模式 · 点右上退出' : '阅读模式 · 点击右上角按钮或按 Ctrl+Shift+E 退出';
   }
   if (msg) {
     bar.textContent = msg;
@@ -4129,6 +4167,14 @@ function handleQuickerMessage(msg) {
  *  运行期不轮询、不实时存：移动/缩放后的位置在隐藏/最大化等操作时由子程序统一落盘。
  */
 async function windowOp(mode, extra) {
+  // 隐藏/最小化 = 用户看不见了 → 立即告知即时同步「离场」（停心跳、对端紫点熄灭、省额度）。
+  //   不靠 WebView2 的可见性上报（宿主隐藏时它不一定报），直接在按钮这一步兜底；显示回来由 focus/visibility 唤醒。
+  if (mode === '隐藏' || mode === '最小化') { try { window.realtime && window.realtime.notifyHidden && window.realtime.notifyHidden(); } catch (_) {} }
+  // 显示/还原类操作 = 用户回来了 → 立即唤醒即时同步（重连+招呼）。宿主重新显示窗口时常常不触发 focus/可见性事件，
+  //   只靠它们会让即时同步永久"隐身、连不上"（用户报的根因）。这里在按钮这一步兜底唤醒；看门狗再兜一层。
+  else if (mode === '还原' || mode === '最大化' || mode === '复位' || mode === '复位窗口') {
+    try { window.realtime && window.realtime.notifyShown && window.realtime.notifyShown(); } catch (_) {}
+  }
   // 经宿主适配层：Quicker 宿主走 WindowOp 子程序；非 Quicker 宿主（浏览器/PWA）静默忽略。
   return await window.host.window.op(mode, extra);
 }
@@ -4159,36 +4205,44 @@ function _zhSyncError(err) {
   return '同步出错（' + s + '），请重试';
 }
 
+/** 本地有未上云的改动 → 徽标转「本地待上云」(淡蓝)。正在传(转圈)或出错时不打断。 */
+function _maybeBadgeLocal() {
+  const method = storage.getSetting('syncMethod') || 'none';
+  if (method === 'none') return;
+  const el = document.getElementById('cloud-sync-dot');
+  if (!el || el.classList.contains('syncing') || el.classList.contains('error')) return;
+  _setCloudSyncDot('local');
+}
+
 /** 云同步徽标：显示在 btn-cloud-sync 右上角 */
 let _lastSyncTime = null;
+let _cloudBaseTitle = '云同步';   // 同步本身的 tooltip；紫点状态由 _updateRtDot 追加，避免重复拼接
 function _setCloudSyncDot(state, detail) {
   const el = document.getElementById('cloud-sync-dot');
   if (!el) return;
-  el.classList.remove('synced', 'syncing', 'pending', 'error', 'disabled');
-  const btn = document.getElementById('btn-cloud-sync');
+  el.classList.remove('synced', 'syncing', 'pending', 'error', 'disabled', 'local');
   switch (state) {
-    case 'synced':
-      el.classList.add('synced');
-      _lastSyncTime = Date.now();
-      if (btn) btn.title = '已同步 · 上次：刚刚';
-      break;
-    case 'syncing':
-      el.classList.add('syncing');
-      if (btn) btn.title = '同步中…';
-      break;
-    case 'pending':
-      el.classList.add('pending');
-      if (btn) btn.title = '待同步';
-      break;
-    case 'error':
-      el.classList.add('error');
-      if (btn) btn.title = '同步失败' + (detail ? '：' + detail : '');
-      break;
-    case 'disabled':
-      el.classList.add('disabled');
-      if (btn) btn.title = '未启用云同步';
-      break;
+    case 'synced':   el.classList.add('synced');   _lastSyncTime = Date.now(); _cloudBaseTitle = '已同步 · 刚刚'; break;
+    case 'local':    el.classList.add('local');    _cloudBaseTitle = '已存本机 · 待上云'; break;
+    case 'syncing':  el.classList.add('syncing');  _cloudBaseTitle = '同步中…'; break;
+    case 'pending':  el.classList.add('pending');  _cloudBaseTitle = '等待同步'; break;
+    case 'error':    el.classList.add('error');    _cloudBaseTitle = '同步失败' + (detail ? '：' + detail : ''); break;
+    case 'disabled': el.classList.add('disabled'); _cloudBaseTitle = '未开启云同步'; break;
   }
+  _updateRtDot();
+}
+
+/** 即时同步指示灯（紫点）：有其他设备在场时亮紫+呼吸。
+ *  tooltip 只显示当前「最高优先级」一项：即时同步中 > 云同步状态 > 本地（不并列、不拼接）。 */
+function _updateRtDot() {
+  const btn = document.getElementById('btn-cloud-sync');
+  const dot = document.getElementById('rt-sync-dot');
+  let st = null;
+  try { st = window.realtime && window.realtime.status && window.realtime.status(); } catch (_) {}
+  const active = !!(st && st.active);
+  const syncing = !!(st && st.syncing);
+  if (dot) { dot.classList.toggle('active', active); dot.classList.toggle('syncing', syncing); }
+  if (btn) btn.title = active ? '即时同步中' : _cloudBaseTitle;
 }
 
 /** 定时刷新云同步按钮 tooltip 中的"上次同步"时间 */
@@ -4203,8 +4257,13 @@ setInterval(() => {
   else if (sec < 60) ago = sec + ' 秒前';
   else if (sec < 3600) ago = Math.floor(sec / 60) + ' 分钟前';
   else ago = Math.floor(sec / 3600) + ' 小时前';
-  btn.title = '已同步 · 上次：' + ago;
+  _cloudBaseTitle = '已同步 · ' + ago;
+  _updateRtDot();
 }, 15000);
+
+// 即时同步指示灯：事件驱动（在场变化即刷新）+ 轻量轮询兜底（捕捉对端离开/超时）。
+window.addEventListener('zhinote-rt-status', () => { try { _updateRtDot(); } catch (_) {} });
+setInterval(() => { try { _updateRtDot(); } catch (_) {} }, 3000);
 
 /** 顶栏云同步图标：左键智能同步（脏就上传 + 检查云端拉取最新）*/
 async function smartCloudSync() {
@@ -5084,12 +5143,18 @@ async function _doBackupImport(text, anchor) {
 async function _doBackupImportWithMode(text, mode) {
   if (mode === 'overwrite') {
     if (!(await _confirmOverwriteCloudIfSync())) return;
-    await storage.importJSON(text);
-    tree.render();
-    const curId = editor.currentId?.();
-    if (curId) editor.open(curId);
-    toast('备份恢复成功（已覆盖）', 'success');
-    await _mirrorAfterOverwrite();
+    // 整段「替换本地 → 覆盖云端」期间挂起即时层入站结构/整篇，防落后设备在世代升上去前回灌删除。
+    try { window.realtime && window.realtime.beginAuthoritativeReset && window.realtime.beginAuthoritativeReset(); } catch (_) {}
+    try {
+      await storage.importJSON(text);
+      tree.render();
+      const curId = editor.currentId?.();
+      if (curId) editor.open(curId);
+      toast('备份恢复成功（已覆盖）', 'success');
+      await _mirrorAfterOverwrite();
+    } finally {
+      try { window.realtime && window.realtime.endAuthoritativeReset && window.realtime.endAuthoritativeReset(); } catch (_) {}
+    }
   } else {
     let parsed;
     const trimmed = String(text || '').trim();
@@ -5441,6 +5506,8 @@ function openSettingsModal(initialTab) {
   if (!['appearance', 'sync', 'backup', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
   const curSyncMethod = storage.getSetting('syncMethod') || 'none';
   const curProvider = storage.getSetting('webdavProvider') || 'jianguoyun';
+  // 实验：正文实时绑定开关（存 localStorage，编辑器在 storage.init 前就要读，故不用普通设置）
+  const _crdtBindOn = (function(){ try { const v = localStorage.getItem('zhinote.crdtBindEditor'); return v == null ? true : (v === '1' || v === 'true'); } catch (_) { return true; } })();
   body.innerHTML = `
     <div class="settings-tabs" role="tablist" id="settings-tab-seg">
       <button type="button" class="settings-tabs-btn ${lastTab==='appearance'?'active':''}" data-tab="appearance">外观</button>
@@ -5640,6 +5707,29 @@ function openSettingsModal(initialTab) {
         <button type="button" id="set-webdav-proxy-copy" class="link-btn" style="margin-top:6px;">📋 复制 Worker 代理代码</button>
       </div>
     </details>`;})()}
+    ${(() => {
+      const rawRt = (storage.getSetting('webdavRealtime') || '').trim();
+      const rtMode = (rawRt === 'off') ? 'off' : ((!rawRt || rawRt === 'builtin') ? 'builtin' : 'custom');
+      return `
+    <label style="margin-top:14px;">即时同步</label>
+    <select id="set-webdav-realtime-mode" style="width:100%;">
+      <option value="builtin" ${rtMode==='builtin'?'selected':''}>内置（默认，免费共享额度，到顶当天自动退回网盘）</option>
+      <option value="custom" ${rtMode==='custom'?'selected':''}>自建（填你部署的地址，更稳更快）</option>
+      <option value="off" ${rtMode==='off'?'selected':''}>关闭（只用网盘同步）</option>
+    </select>
+    <input type="text" id="set-webdav-realtime" placeholder="如 https://你的中转.workers.dev" value="${escapeHtml(rtMode==='custom'?rawRt:'')}" style="width:100%;margin-top:8px;${rtMode==='custom'?'':'display:none;'}">
+    <div id="rt-need-webdav-hint" style="display:none;font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">填写上方网盘服务器地址后可用：即时同步依赖网盘账号建立加密通道。</div>
+    <details style="font-size:12px;color:var(--text-tertiary);margin-top:6px;">
+      <summary style="cursor:pointer;">这是什么？如何自建？</summary>
+      <div style="margin-top:6px;line-height:1.8;">
+        多台设备打开同一篇笔记时，对方保存后约 1 秒就同步过来（仅靠网盘则要等一轮，约 10~30 秒）；网络不通时自动退回网盘同步，数据安全不受影响。内容加密后传输，中转只经手密文。<br>
+        <b>自建（讲究隐私 / 想更稳的用户）：</b><br>
+        ① 下载开源仓库里的 realtime-relay 文件夹：<a href="https://github.com/daloudalou/ZhiNote/tree/main/realtime-relay" target="_blank" rel="noopener">github.com/daloudalou/ZhiNote</a>；<br>
+        ② 在该文件夹运行 <code>npx wrangler deploy</code>（需 Node.js，按提示登录 Cloudflare 即可）；<br>
+        ③ 部署完会给出形如 <code>https://zhinote-relay.子域.workers.dev</code> 的地址，浏览器打开看到「OK」即成功；国内打不开时，在该 Worker 的 Settings → Domains &amp; Routes 绑自己的域名；<br>
+        ④ 上方选「自建」，把该地址填进输入框 → 保存。
+      </div>
+    </details>`;})()}
     <div class="sync-actions-row">
       <button id="set-webdav-test" class="link-btn" title="测试连接">测试连接</button>
       <button id="set-webdav-sync-now" class="link-btn" title="立即同步一次">立即同步</button>
@@ -5647,6 +5737,17 @@ function openSettingsModal(initialTab) {
       <button id="set-webdav-repair" class="link-btn" title="云端清单（manifest.json）损坏、同步反复报错时使用">修复云端清单</button>
     </div>
     <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
+    </div>
+    <div class="settings-section">实验性</div>
+    <div class="set-col">
+      <label>正文实时绑定（逐字同步，光标不跳）</label>
+      <select id="set-crdt-bind" style="width:100%;margin-top:0;">
+        <option value="1"${_crdtBindOn?' selected':''}>开启（默认）</option>
+        <option value="0"${_crdtBindOn?'':' selected'}>关闭</option>
+      </select>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+        实验功能：多台设备同时编辑同一篇笔记时逐字实时合并，不再整篇刷新、光标不跳、不打断输入法。切换后会刷新页面生效。
+      </div>
     </div>
     </div>
     <div id="settings-tab-backup" class="${lastTab!=='backup'?'settings-tab-hidden':''}">
@@ -5919,6 +6020,14 @@ function openSettingsModal(initialTab) {
             try { await window.webdavSync?.loadConfig(); } catch (_) {}
           }
         }
+        // 实时同步：独立保存，变更后刷新运行中连接（'off'/'builtin'/自建地址）
+        if (body.querySelector('#set-webdav-realtime-mode')) {
+          const newRt = _readRealtimeSetting();
+          if (newRt !== (storage.getSetting('webdavRealtime') || '')) {
+            storage.setSetting('webdavRealtime', newRt);
+            try { window.realtime?.applyConfig(); } catch (_) {}
+          }
+        }
 
         const syncChanged = (() => {
           if (selectedMethod === 'none') return curSyncMethod !== 'none';
@@ -5974,6 +6083,7 @@ function openSettingsModal(initialTab) {
             return;
           }
           await storage.save({ immediate: true });
+          try { window.realtime?.applyConfig(); } catch (_) {} // 口令变 → 房间号变，即时同步需重连
           closeModal();
           return;
         }
@@ -6280,6 +6390,31 @@ function openSettingsModal(initialTab) {
     if (inp) inp.style.display = _proxyModeSel.value === 'custom' ? '' : 'none';
   });
 
+  // 读取多端协同 UI 的存储语义值：'builtin' = 内置默认（默认开启）；'off' = 关闭；其余 = 自建地址
+  function _readRealtimeSetting() {
+    const mode = body.querySelector('#set-webdav-realtime-mode')?.value || 'off';
+    if (mode === 'builtin') return 'builtin';
+    if (mode === 'custom') return (body.querySelector('#set-webdav-realtime')?.value || '').trim().replace(/\/+$/, '');
+    return 'off';
+  }
+  // 实时模式切换：仅"自建"显示地址输入框
+  const _rtModeSel = body.querySelector('#set-webdav-realtime-mode');
+  _rtModeSel?.addEventListener('change', () => {
+    const inp = body.querySelector('#set-webdav-realtime');
+    if (inp) inp.style.display = _rtModeSel.value === 'custom' ? '' : 'none';
+  });
+  // 未配网盘（服务器地址为空）→ 灰掉即时同步：它依赖网盘账号生成加密房间，没网盘无从谈起。
+  const _rtAddrInp = body.querySelector('#set-webdav-realtime');
+  function _syncRealtimeGating() {
+    const hasUrl = !!(urlInput && urlInput.value.trim());
+    if (_rtModeSel) { _rtModeSel.disabled = !hasUrl; _rtModeSel.style.opacity = hasUrl ? '' : '.55'; }
+    if (_rtAddrInp) _rtAddrInp.disabled = !hasUrl;
+    const hint = body.querySelector('#rt-need-webdav-hint');
+    if (hint) hint.style.display = hasUrl ? 'none' : '';
+  }
+  _syncRealtimeGating();
+  urlInput?.addEventListener('input', _syncRealtimeGating);
+
   // 复制自建代理 Worker 代码（仅网页宿主渲染此按钮；与 docs/webdav-proxy-worker.js 保持同步）
   body.querySelector('#set-webdav-proxy-copy')?.addEventListener('click', async () => {
     try {
@@ -6355,6 +6490,15 @@ function openSettingsModal(initialTab) {
     btn.disabled = true;
     try { await runRepairManifestFlow(); }
     finally { btn.disabled = false; }
+  });
+
+  // 实验：正文实时绑定开关 —— 改了立即写 localStorage（编辑器在启动早期读它），随即刷新页面生效。
+  body.querySelector('#set-crdt-bind')?.addEventListener('change', (e) => {
+    const on = e.target.value === '1';
+    try { localStorage.setItem('zhinote.crdtBindEditor', on ? '1' : '0'); } catch (_) {}
+    try { editor.flushSave && editor.flushSave(); } catch (_) {}
+    toast(on ? '已开启「正文实时绑定」，正在刷新生效…' : '已关闭「正文实时绑定」，正在刷新生效…', 'success', 1500);
+    setTimeout(() => { try { location.reload(); } catch (_) {} }, 900);
   });
 
   // 管理云端笔记（扫描恢复 + 删除云端 + 用本地覆盖云端，统一在一个弹窗内）

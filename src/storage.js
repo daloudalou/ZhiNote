@@ -413,6 +413,10 @@ const storage = (() => {
     // 数据格式版本（内容 JSON 化）：旧数据无此字段=1；实际 md→doc 迁移在 migrateNotesToDoc() 做
     // （需编辑器 markdown manager 就绪，故在 bootstrap 编辑器初始化后调用，而非这里）。
     data.dataFormatVersion ??= 1;
+    // v2(已 JSON 化) → v3(账本可用)：本构建是「账本感知」客户端，把已 JSON 化的数据声明为 v3。
+    // 不批量标脏、不在此建账本（账本随编辑/合并按需懒建）；声明 v3 仅用于版本闸（旧客户端见之暂停）。
+    // v1 未 JSON 化的数据保持 1，待 migrateNotesToDoc() 一次性升到 3。
+    if (data.dataFormatVersion === 2) data.dataFormatVersion = 3;
     data.notes ??= {};
     data.rootOrder ??= [];
     data.trash ??= {};
@@ -427,6 +431,8 @@ const storage = (() => {
     data.localImages ??= {};
     data.wsTombstones ??= {}; // 已彻底删除的笔记本墓碑（id → 时间戳），防止同步把删掉的笔记本拉回
     data.tplTombstones ??= {}; // 已删除模板墓碑，防止同步把删掉的模板拉回
+    data.noteTombstones ??= {}; // 已永久删除笔记墓碑（id→时间戳）：由真实删除动作显式写入，供结构总账携带；
+                                // 取代旧「按总账有/本地无」推断（那分不清"已删"与"正文未同步"，曾误删新建笔记）。
     if (!Array.isArray(data.workspaces) || !data.workspaces.length) {
       data.workspaces = [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }];
     }
@@ -453,6 +459,20 @@ const storage = (() => {
       n.createdAt ??= now();
       n.updatedAt ??= n.createdAt;
       n.workspaceId ??= 'ws-default';
+      n.pinnedAt ??= null;
+    }
+    // 置顶从 settings.pinned（整份列表、易覆盖丢项）迁到 note.pinnedAt（随笔记同步，对齐以后按篇合并）。
+    if (!data.settings._pinnedNoteFieldV1) {
+      const oldList = Array.isArray(data.settings.pinned) ? data.settings.pinned : [];
+      if (oldList.length) {
+        const base = Date.now();
+        oldList.forEach((id, i) => {
+          const n = data.notes[id];
+          if (n && !n.pinnedAt) n.pinnedAt = new Date(base - i * 1000).toISOString();
+        });
+      }
+      data.settings.pinned = [];
+      data.settings._pinnedNoteFieldV1 = true;
     }
     if (needV3Migration) {
       // 一次性把所有笔记里已有的 base64 入仓库（不写 _data 引用，因为闭包还没建立）
@@ -831,10 +851,17 @@ const storage = (() => {
         _data.rootOrder = (_data.rootOrder || []).filter(x => x !== nid);
       }
     } else if (strategy === 'purge') {
+      // 彻底删除：必须给每篇写「删除墓碑」+ 标脏，删除才会经结构总账(即时)与网盘双通道传播。
+      //   否则对端只收到"笔记本没了"、收不到"这些笔记也删了" → 对端笔记还在；而本地笔记本一没，
+      //   这些无归属笔记又被 reconcile 收编进当前笔记本（"无名笔记本/笔记乱窜"）并回传污染云端（用户报的 #7）。
+      _data.noteTombstones = _data.noteTombstones || {};
       for (const nid of affectedIds) {
         delete _data.notes[nid];
         _data.rootOrder = (_data.rootOrder || []).filter(x => x !== nid);
+        _data.noteTombstones[nid] = Date.now();
+        _dirtyNoteIds.add(nid);
       }
+      _globalDirty = true;
     }
     if (_data.settings.activeWorkspace === id) _data.settings.activeWorkspace = fallback;
     save();
@@ -850,6 +877,15 @@ const storage = (() => {
     // 不会再出现几万字符的 base64 源码
     // 编辑器在 DOM 层面用 MutationObserver 把 <img src="zhinote://..."> 实时换成真 base64
     return _data.notes[id] || null;
+  }
+
+  /** 这篇笔记是否「真的没了」——已永久删除(有墓碑) 或 已在回收站。
+   *  用于区分「真删」与「同步瞬时缺失」：后者(对端刚建/网盘还没下到)绝不能关编辑器翻欢迎页（B+ 止架）。 */
+  function isNoteDeleted(id) {
+    if (!id || !_data) return false;
+    if (_data.noteTombstones && _data.noteTombstones[id]) return true; // 永久删除墓碑
+    if (_data.trash && _data.trash[id]) return true;                   // 在回收站
+    return false;
   }
 
   /** 获取单张本地图片的 dataURL（同步，仅命中内存缓存；供 editor 在 DOM 层面 rehydrate img.src 用） */
@@ -939,25 +975,20 @@ const storage = (() => {
   function getChildren(parentId) {
     const wsId = _data.settings.activeWorkspace || 'ws-default';
     if (parentId == null) {
-      const ordered = _data.rootOrder
-        .map(id => _data.notes[id])
-        .filter(n => n && n.workspaceId === wsId);
-      // 兜底：任何「顶级且属于当前笔记本、却没记进 rootOrder」的笔记也要显示，
-      // 避免出现「搜索能搜到、左侧却不显示」（rootOrder 偶发漏记导致的笔记隐身）。
+      // 兜底：任何「顶级且属于当前笔记本、却没记进 rootOrder」的笔记也补回 rootOrder（供 manifest/自愈），
+      // 避免「搜索能搜到、左侧却不显示」。显示顺序一律按 frac 权威排序，不再依赖 rootOrder 序列。
       const inRoot = new Set(_data.rootOrder);
-      const orphans = [];
       for (const id in _data.notes) {
         const n = _data.notes[id];
-        if (n && n.parentId == null && n.workspaceId === wsId && !inRoot.has(id)) {
-          orphans.push(n);
-          _data.rootOrder.push(id); // 顺手补回，下次起即归位（幂等）
-        }
+        if (n && n.parentId == null && n.workspaceId === wsId && !inRoot.has(id)) _data.rootOrder.push(id);
       }
-      return orphans.length ? ordered.concat(orphans) : ordered;
+      return Object.values(_data.notes)
+        .filter(n => n && n.parentId == null && n.workspaceId === wsId)
+        .sort(_cmpSib);
     }
     const children = Object.values(_data.notes)
       .filter(n => n.parentId === parentId && n.workspaceId === wsId)
-      .sort((a, b) => a.order - b.order);
+      .sort(_cmpSib);
     return children;
   }
 
@@ -972,14 +1003,89 @@ const storage = (() => {
     return chain;
   }
 
-  function recomputeOrder(parentId) {
-    const siblings = parentId == null
-      ? _data.rootOrder.map(id => _data.notes[id]).filter(Boolean)
-      : Object.values(_data.notes).filter(n => n.parentId === parentId).sort((a, b) => a.order - b.order);
-    siblings.forEach((n, i) => { n.order = i; });
-    if (parentId == null) {
-      _data.rootOrder = siblings.map(n => n.id);
+  // ── 分数序（fractional indexing）：跨设备稳定排序的「权威」字段 note.frac ─────────────
+  //   每篇笔记存一个字符串 frac 作为「同级排序」权威键：拖动只改被拖那一篇的 frac、不动其它兄弟，
+  //   并发插到同位由 id 兜底裁决 → 两端确定性收敛，根治「位置乱跳/两篇互换/反复重排」。
+  //   order/rootOrder 仍维护（旧版兼容 + 网盘 manifest 回退），但 order **不再进同步元数据**
+  //   （见 _LEDGER_META），故不会两端 LWW 互踩；positional order 现在是 frac 排序的确定性函数。
+  function _fi() {
+    const cb = window.__crdtBundle;
+    return (cb && typeof cb.generateKeyBetween === 'function') ? cb : null;
+  }
+  // 同级排序比较器：唯一实现已收口到 order.js（window.__order），此处仅转调，保证全项目排序逻辑只有一份。
+  function _cmpSib(a, b) { return window.__order.cmpSib(a, b); }
+  const _rootWs = (n) => (n.workspaceId || 'ws-default');
+  function _siblingsOf(parentId, wsId) {
+    if (parentId == null) return Object.values(_data.notes).filter(n => n.parentId == null && _rootWs(n) === (wsId || 'ws-default'));
+    return Object.values(_data.notes).filter(n => n.parentId === parentId);
+  }
+  // 在某同级组里，为 note 生成「位于 prevFrac 与 nextFrac 之间」的 frac（带降级兜底，绝不抛出）。
+  function _genFrac(prevFrac, nextFrac) {
+    const fi = _fi(); if (!fi) return null;
+    const p = prevFrac || null, q = nextFrac || null;
+    try { return fi.generateKeyBetween(p, q); }
+    catch (_) { try { return fi.generateKeyBetween(p, null); } catch (__) { try { return fi.generateKeyBetween(null, null); } catch (e) { return null; } } }
+  }
+  // 给笔记分配「紧跟在 afterId 之后」的 frac；afterId 为空则放到同级末尾。
+  function _assignFracAfter(note, parentId, wsId, afterId) {
+    const sibs = _siblingsOf(parentId, wsId).filter(n => n.id !== note.id).sort(_cmpSib);
+    let index = sibs.length;
+    if (afterId) { const i = sibs.findIndex(n => n.id === afterId); if (i >= 0) index = i + 1; }
+    _assignFracAt(note, parentId, wsId, index);
+  }
+  // 把某同级组的 frac 重新均匀编号（保持当前 _cmpSib 顺序）——用于「撞车/逆序」自愈。
+  //   确定性：两端同样的成员集合 + 同样的 _cmpSib 顺序 → 生成同一串 frac → 各自重排后收敛，不打架。
+  //   返回是否改动。注意：调用方随后会 recomputeOrder 把 order 一并对齐。
+  function _respaceSiblings(parentId, wsId) {
+    const fi = _fi(); if (!fi) return false;
+    const sibs = _siblingsOf(parentId, wsId).sort(_cmpSib);
+    if (!sibs.length) return false;
+    let keys = null;
+    try { keys = fi.generateNKeysBetween(null, null, sibs.length); } catch (_) { keys = null; }
+    if (!keys || keys.length !== sibs.length) return false;
+    for (let i = 0; i < sibs.length; i++) sibs[i].frac = keys[i];
+    return true;
+  }
+  // 给「新建/移动到末尾或指定位置」的笔记分配 frac。index 为目标同级下标（含本篇前的排好序列表）。
+  function _assignFracAt(note, parentId, wsId, index) {
+    const fi = _fi(); if (!fi) return;
+    let sibs = _siblingsOf(parentId, wsId).filter(n => n.id !== note.id).sort(_cmpSib);
+    let prev = null, next = null;
+    const pick = () => {
+      prev = null; next = null;
+      if (index == null || index >= sibs.length) { prev = sibs.length ? sibs[sibs.length - 1].frac : null; }
+      else if (index <= 0) { next = sibs[0] ? sibs[0].frac : null; }
+      else { prev = sibs[index - 1] ? sibs[index - 1].frac : null; next = sibs[index] ? sibs[index].frac : null; }
+    };
+    pick();
+    // 撞车/逆序：两个邻居 frac 相等或倒序时，无法「夹在中间」取值（generateKeyBetween 会失败/降级到末尾，
+    //   表现为"拖到这个位置不生效、弹到别处"）。先把这一组重新均匀编号自愈，再重取邻居即可正确落位。
+    //   撞车主因：两台设备同时往末尾新建笔记 → 各自算出同一个 frac。靠 id 兜底显示稳，但插中间会卡。
+    if (prev != null && next != null && !(prev < next)) {
+      _respaceSiblings(parentId, wsId);
+      sibs = _siblingsOf(parentId, wsId).filter(n => n.id !== note.id).sort(_cmpSib);
+      pick();
     }
+    const f = _genFrac(prev, next); if (f != null) note.frac = f;
+  }
+  // 缺失 frac 的确定性补齐 + rootOrder 的唯一推导，唯一实现已收口到 order.js（window.__order），此处仅转调。
+  function _backfillFrac(data) { return window.__order.backfillFrac(data || _data); }
+  // rootOrder 唯一推导：所有顶级笔记按 (笔记本, frac, id) 确定性排序——纯 frac 函数，与到达顺序/历史无关。
+  function _deriveRootOrder(data) { return window.__order.deriveRootOrder(data || _data); }
+
+  function recomputeOrder(parentId) {
+    if (parentId == null) {
+      // 根笔记：按 (笔记本, frac) 确定性排序 → 组内 order 设为本笔记本内下标；rootOrder 全局重建。
+      // order 现为 frac 排序的确定性函数（不再是反过来驱动顺序），两端必然一致，杜绝振荡。
+      const roots = Object.values(_data.notes).filter(n => n.parentId == null);
+      const byWs = {};
+      roots.forEach(n => { const ws = _rootWs(n); (byWs[ws] = byWs[ws] || []).push(n); });
+      Object.keys(byWs).forEach(ws => { byWs[ws].sort(_cmpSib).forEach((n, i) => { n.order = i; }); });
+      _data.rootOrder = _deriveRootOrder(_data);
+      return;
+    }
+    const siblings = Object.values(_data.notes).filter(n => n.parentId === parentId).sort(_cmpSib);
+    siblings.forEach((n, i) => { n.order = i; });
   }
 
   function create({ parentId = null, title = '无标题', content = '', doc = null, insertAfterId = null, workspaceId = null } = {}) {
@@ -1018,6 +1124,8 @@ const storage = (() => {
         note.order = (after.order || 0) + 0.5;
       }
     }
+    // 分配分数序（权威排序键）：紧跟 insertAfterId 之后，否则同级末尾。
+    _assignFracAfter(note, parentId, wsId, (insertAfterId && _data.notes[insertAfterId]) ? insertAfterId : null);
     recomputeOrder(parentId);
     if (parentId == null) recomputeOrder(null);
     save();
@@ -1056,19 +1164,352 @@ const storage = (() => {
     return doc;
   }
 
+  /** 维护一篇笔记的「合并账本」(note.ydoc)，与正文 doc 同步演进。
+   *  - 首次建账本：用「改之前的正文」(oldDoc) 作确定化创世根——它最接近上次同步的共同版本，
+   *    两端从同一共同版本各自独立建出的创世账本逐字节相同（同根），故能正确合并、不重复。
+   *    （全新笔记无 oldDoc → 用新正文创世。）
+   *  - 之后每次：把新正文叠加进账本（自动算最小增量）。
+   *  账本只是合并工具，任何失败都不得影响正文保存，故整体 try/catch 吞掉。 */
+  function _maintainLedger(note, newDoc, oldDoc) {
+    try {
+      const Y = window.__ydoc;
+      if (!Y || !Y.ready()) return;
+      if (!note.ydoc) note.ydoc = Y.build(oldDoc || newDoc);
+      note.ydoc = Y.update(note.ydoc, newDoc);
+    } catch (e) { console.warn('[storage] 维护合并账本失败（不影响正文）', e); }
+  }
+
+  // ── 工作区「结构底稿」影子维护（方案2 第1步）────────────────────────────────
+  //   把全局结构(笔记元数据/笔记本/模板/回收站/三类墓碑)演进进 _data.structLedger(wsdoc)，
+  //   与正文账本同手法。**此阶段仅影子维护**：不读取、不上传、不改 dataFormatVersion，
+  //   线上行为零变化；任何失败 try/catch 吞掉，绝不影响真实数据。下一步才接入同步。
+  //   注意 settings 含密钥，此阶段一律不纳入底稿，待接同步时用既有「可同步白名单」处理。
+  function _buildStructSnapshot() {
+    // 根笔记顺序由 rootOrder 决定（子笔记由各自 order 决定）；把根序换算进 note.order 入账。
+    // **关键**：用「本笔记本内的下标」而非全局下标——否则别的笔记本多/少一篇就会让本篇 order 变化，
+    // 两端 order 永远对不齐 → 合并来回冲突 → 反复重发整账（位置乱跳 + 信令被刷爆导致掉线）。
+    _backfillFrac(_data);   // 迁移/自愈：给历史笔记确定性补齐 frac（引擎未就绪则跳过，下次再补）
+    // 每个同级组按 frac 权威序算「下标 rank」当 order：rank 是已收敛 frac 的确定性函数，
+    //   两端逐字节一致、入账后不再抖动（旧版无 frac 时靠它兜底排序）；frac 原样入账作新版权威键。
+    const rankIdx = {};
+    {
+      const groups = {};
+      for (const id in _data.notes) {
+        const n = _data.notes[id];
+        const key = (n.parentId == null) ? ('r:' + (n.workspaceId || 'ws-default')) : ('p:' + n.parentId);
+        (groups[key] = groups[key] || []).push(n);
+      }
+      for (const k in groups) groups[k].sort(_cmpSib).forEach((n, i) => { rankIdx[n.id] = i; });
+    }
+    const notes = {};
+    for (const id in _data.notes) {
+      const n = _data.notes[id];
+      notes[id] = {
+        title: n.title || '', pinnedAt: n.pinnedAt || null, color: n.color || null,
+        icon: n.icon || '', parentId: n.parentId == null ? null : n.parentId,
+        workspaceId: n.workspaceId || 'ws-default',
+        order: (rankIdx[id] != null ? rankIdx[id] : (n.order || 0)),
+        frac: (typeof n.frac === 'string' ? n.frac : ''),
+        expanded: !!n.expanded, createdAt: n.createdAt || '', updatedAt: n.updatedAt || '',
+      };
+    }
+    const workspaces = {};
+    (_data.workspaces || []).forEach((w, i) => { workspaces[w.id] = { name: w.name || '', icon: w.icon || '', order: i }; });
+    const templates = {};
+    (_data.templates || []).forEach((t, i) => { templates[t.id] = { name: t.name || '', content: t.content || '', order: i }; });
+    const trash = {};
+    for (const id in (_data.trash || {})) {
+      const tn = _data.trash[id];
+      trash[id] = { title: tn.title || '', workspaceId: tn.workspaceId || 'ws-default', parentId: tn.parentId == null ? null : tn.parentId, deletedAt: tn.deletedAt || '', updatedAt: tn.updatedAt || '' };
+    }
+    const tombstones = {};
+    for (const id in (_data.tplTombstones || {})) tombstones['templates:' + id] = _data.tplTombstones[id];
+    for (const id in (_data.wsTombstones || {})) tombstones['workspaces:' + id] = _data.wsTombstones[id];
+    for (const id in (_data.noteTombstones || {})) tombstones['notes:' + id] = _data.noteTombstones[id];
+    return { notes, workspaces, templates, trash, settings: {}, tombstones };
+  }
+
+  let _structLedgerTimer = null;
+  function _scheduleStructLedger() {
+    if (!window.__wsdoc || !window.__wsdoc.ready || !window.__wsdoc.ready()) return;
+    clearTimeout(_structLedgerTimer);
+    _structLedgerTimer = setTimeout(_maintainStructLedger, 400);
+  }
+  function _maintainStructLedger() {
+    try {
+      const W = window.__wsdoc;
+      if (!W || !W.ready()) return;
+      const snap = _buildStructSnapshot();
+      if (_data.structLedger) {
+        // 本地即权威：把「已从本地彻底消失」的记录补成墓碑，让底稿与本地一致。
+        //   notes 与 trash 共用一个 id 空间(同一集合)，只有两边都没有才算永久删除。
+        const prev = W.toData(_data.structLedger);
+        const now = Date.now();
+        const tomb = snap.tombstones || (snap.tombstones = {});
+        // 笔记永久删除墓碑改由 _data.noteTombstones 显式提供（见 _buildStructSnapshot）。
+        //   绝不再「总账有、本地无 → 推断已删」：它分不清"已删"和"正文还没同步到本端"，
+        //   曾导致对端把刚新建、正文未到的笔记误打墓碑并回传，全网删除（数据丢失）。
+        ['workspaces', 'templates'].forEach(function (coll) {
+          const cur = snap[coll] || {}, old = prev[coll] || {};
+          for (const id in old) { if (!cur[id] && !tomb[coll + ':' + id]) tomb[coll + ':' + id] = now; }
+        });
+        _data.structLedger = W.update(_data.structLedger, snap);
+      } else {
+        _data.structLedger = W.build(snap);
+      }
+      save();
+    } catch (e) { console.warn('[storage] 维护结构底稿失败（不影响数据）', e); }
+  }
+
+  // ── 结构总账·同步层接口（方案2 wire-sync）──────────────────────────────────
+  //   供 webdav-sync 调用，统一收口「创世/认领」规则（见 docs/CRDT同步大改方案.md 七·补）：
+  //   - 同步层**绝不直接 merge 总账**（两份独立创世 merge 会丢数据，已验证）；一律走这里。
+  //   - 本阶段总账仅「跟着同步、两端一致地存着」，**不当结构权威**——不改 _data.notes 等真实结构，零风险。
+  /** 取本端最新结构总账（先把当前结构刷进去再返回 base64）；引擎未就绪/无结构则返回 undefined。 */
+  function _webdavGetStructLedger() {
+    try {
+      const W = window.__wsdoc;
+      if (!W || !W.ready()) return _data.structLedger;
+      _maintainStructLedger();           // 刷入最新结构（含防抖未落的改动）
+      return _data.structLedger;
+    } catch (_) { return _data.structLedger; }
+  }
+  /** 把云端总账按规则并入本地：未扎根(本地独立创世/从未同步)→认领对方基线；已扎根→正常合并。 */
+  function _webdavApplyStructLedger(remoteB64) {
+    try {
+      const W = window.__wsdoc;
+      if (!W || !W.ready() || !remoteB64) return false;
+      const before = _data.structLedger;
+      _maintainStructLedger();           // 确保本地总账反映当前结构
+      if (!_data.structLedger || !_data.structLedgerRooted) {
+        // 认领：在对方基线上叠加本端当前结构，丢弃本地独立创世（避免撞车丢数据）
+        _data.structLedger = W.update(remoteB64, _buildStructSnapshot());
+      } else {
+        // 已扎根（同源于云端基线）→ 正常合并
+        _data.structLedger = W.merge(_data.structLedger, remoteB64);
+      }
+      _data.structLedgerRooted = true;
+      save();
+      const merged = _data.structLedger !== before;
+      // 让总账当「结构/元数据」权威：把合并结果落地到真实结构（只动元数据、不碰正文、不造空壳）。
+      let missing = [];
+      if (merged) { try { const ar = _applyStructLedgerToData(); if (ar && ar.missing) missing = ar.missing; } catch (_) {} }
+      return { changed: merged, missing: missing };
+    } catch (e) { console.warn('[storage] 并入云端结构总账失败（忽略，不影响主同步）', e); return { changed: false, missing: [] }; }
+  }
+  /** 本端是首个上传者（云端原无总账）→ 标记已扎根，避免下次把自己的基线又当外来基线认领。 */
+  function _webdavMarkStructLedgerRooted() { try { if (_data.structLedger) { _data.structLedgerRooted = true; save(); } } catch (_) {} }
+
+  /** 覆盖恢复/覆盖云端专用：用本地当前实际内容重建一份**全新、零删除标记**的结构总账。
+   *  先清掉本地三类过期墓碑（导入/恢复以备份实际内容为准，旧删除标记必须丢，否则
+   *  CRDT「删除优先」会把恢复的笔记/笔记本永久删掉、且合并永不复活——覆盖恢复后刷新丢笔记的根因）。
+   *  W.build 产生全新文档（无历史/无 tombstone）；随后由 mirror 以「替换+epoch++」推云，
+   *  其它设备进入采纳模式对齐到这份干净全集。仅在用户主动覆盖时调用，不影响日常同步。 */
+  function _webdavRebuildStructLedgerFresh() {
+    try {
+      const W = window.__wsdoc;
+      // 先用内嵌总账里的「真实笔记本/模板名」修正明文：某些备份的明文笔记本名被旧事故写坏成序号(1、2…)，
+      //   而其内嵌总账仍保有真名。按 id 对齐取总账名，既保住真名，重建后也不会再变回序号。
+      if (W && W.ready && W.ready() && _data.structLedger) {
+        try {
+          const led = W.toData(_data.structLedger);
+          const _validName = (s) => (typeof s === 'string' && s.trim() && s.trim() !== '未命名笔记本');
+          if (led && led.workspaces && Array.isArray(_data.workspaces)) {
+            for (const w of _data.workspaces) {
+              const lw = w && led.workspaces[w.id];
+              if (lw) { if (_validName(lw.name)) w.name = lw.name; if (typeof lw.icon === 'string' && lw.icon) w.icon = lw.icon; }
+            }
+          }
+          if (led && led.templates && Array.isArray(_data.templates)) {
+            for (const t of _data.templates) {
+              const lt = t && led.templates[t.id];
+              if (lt && _validName(lt.name)) t.name = lt.name;
+            }
+          }
+        } catch (_) {}
+      }
+      delete _data.wsTombstones;
+      delete _data.noteTombstones;
+      delete _data.tplTombstones;
+      if (!W || !W.ready()) { _data.structLedger = undefined; _data.structLedgerRooted = false; _globalDirty = true; save(); return false; }
+      _data.structLedger = W.build(_buildStructSnapshot());
+      _data.structLedgerRooted = true;
+      _globalDirty = true;   // 让 doPut 的 globalDirty 分支运行，把笔记本/模板/总账一并权威推云
+      save();
+      return true;
+    } catch (e) { console.warn('[storage] 重建干净结构总账失败', e); return false; }
+  }
+
+  /** 采纳权威世代（epoch 跳变/下载覆盖）专用：直接以云端总账为本地权威，**不合并**本地旧总账。
+   *  先清掉本地三类过期墓碑——否则本地旧的「删除优先」墓碑会把权威刚恢复/分发的笔记又删掉，
+   *  并在本端下次上传时回传、把云端再次污染（设备B反向污染A的根因）。随后落地到真实结构。 */
+  function _webdavReplaceStructLedger(remoteB64) {
+    try {
+      const W = window.__wsdoc;
+      if (!W || !W.ready() || !remoteB64) return false;
+      delete _data.wsTombstones;
+      delete _data.noteTombstones;
+      delete _data.tplTombstones;
+      _data.structLedger = remoteB64;     // 以云端权威总账为准（丢弃本地独立创世/旧墓碑）
+      _data.structLedgerRooted = true;
+      save();
+      _applyStructLedgerToData();          // 按权威总账落地结构/元数据（只动元数据，不碰正文、不造空壳）
+      return true;
+    } catch (e) { console.warn('[storage] 采纳云端结构总账失败', e); return false; }
+  }
+
+  // ── 总账「落地」纯函数（方案2 第2步·当权威；先纯函数+模拟，未接线）────────────────
+  //   把总账的「结构+元数据」合并进一个数据对象。**只动元数据，绝不碰正文(doc/ydoc)；
+  //   只更新本地已存在的笔记，绝不据总账凭空造笔记**（笔记存在性+正文仍归 v3）。
+  //   纯函数：只操作传入的 data，便于用合成数据单测，不依赖闭包 _data。
+  //   注意：**不含 `updatedAt`**——它是「正文同步」的 LWW 时间戳，总账里存的是结构变更那刻的旧值，
+  //   若回写会把笔记时间戳倒退、可能让较新正文被网盘误判为旧而覆盖。时间戳归正文路径独占。
+  // 注意：**不含 order**。order（第几名）现在是 frac 的确定性函数，两端各自由 frac 算出必然一致，
+  //   再同步它纯属重复、且会引入「两端 order 对不齐」的噪音（撞车时曾被 _cmpSib 误用 → 显示乱）。
+  //   排序权威唯一来源 = frac。order 仅本地维护，作旧版/无 frac 时的兜底。
+  const _LEDGER_META = ['title', 'pinnedAt', 'color', 'icon', 'parentId', 'workspaceId', 'frac', 'expanded'];
+  function _applyMetaIfDiff(target, src, fields) {
+    // 把 undefined / null / '' 视作等价的「空」，避免 icon:undefined↔'' 之类无意义差异被判为改动、触发多余上传抖动。
+    const norm = v => (v === undefined || v === null) ? '' : v;
+    let changed = false;
+    for (const k of fields) {
+      if (!(k in src)) continue;
+      if (k === 'frac' && !src[k]) continue;   // 绝不用空 frac 覆盖本地已有 frac（旧版/迁移中途的记录）
+      if (norm(target[k]) === norm(src[k])) continue;
+      target[k] = src[k] === undefined ? null : src[k];
+      changed = true;
+    }
+    return changed;
+  }
+  /** 返回 { changed, removed:[{id,note}] }（removed 供调用方落地前留底）。 */
+  function _mergeLedgerIntoData(data, led) {
+    const removed = [];
+    let changed = false;
+    data.notes = data.notes || {}; data.trash = data.trash || {};
+    data.rootOrder = data.rootOrder || []; data.trashOrder = data.trashOrder || [];
+    const tomb = (led && led.tombstones) || {};
+
+    // 1) 永久删除墓碑：删笔记本体（先收集留底）/ 笔记本 / 模板
+    for (const key in tomb) {
+      const i = key.indexOf(':'); if (i < 0) continue;
+      const coll = key.slice(0, i), id = key.slice(i + 1);
+      if (coll === 'notes') {
+        data.noteTombstones = data.noteTombstones || {};
+        if (!data.noteTombstones[id]) data.noteTombstones[id] = tomb[key]; // 持久化墓碑→本端后续也会携带、不复活
+        if (data.notes[id]) { removed.push({ id, note: data.notes[id] }); delete data.notes[id]; changed = true; }
+        if (data.trash[id]) { removed.push({ id, note: data.trash[id] }); delete data.trash[id]; changed = true; }
+        data.rootOrder = data.rootOrder.filter(x => x !== id);
+        data.trashOrder = data.trashOrder.filter(x => x !== id);
+      } else if (coll === 'workspaces') { data.wsTombstones = data.wsTombstones || {}; if (!data.wsTombstones[id]) { data.wsTombstones[id] = tomb[key]; changed = true; } }
+      else if (coll === 'templates') { data.tplTombstones = data.tplTombstones || {}; if (!data.tplTombstones[id]) { data.tplTombstones[id] = tomb[key]; changed = true; } }
+    }
+
+    // 2) 笔记本（map→array 按 order；union 保留本地独有；墓碑过滤）
+    if (led && led.workspaces) {
+      const wt = data.wsTombstones || {};
+      const fromLed = Object.keys(led.workspaces).filter(id => !wt[id])
+        .map(id => ({ id, name: led.workspaces[id].name || '', icon: led.workspaces[id].icon || '', _o: led.workspaces[id].order || 0 }))
+        .sort((a, b) => a._o - b._o);
+      const seen = new Set(fromLed.map(w => w.id));
+      const localOnly = (data.workspaces || []).filter(w => w && !seen.has(w.id) && !wt[w.id]);
+      let merged = fromLed.map(w => ({ id: w.id, name: w.name, icon: w.icon })).concat(localOnly);
+      if (!merged.length) merged = [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }];
+      if (JSON.stringify(merged) !== JSON.stringify(data.workspaces)) { data.workspaces = merged; changed = true; }
+    }
+    // 3) 模板（同笔记本）
+    if (led && led.templates) {
+      const tt = data.tplTombstones || {};
+      const fromLed = Object.keys(led.templates).filter(id => !tt[id])
+        .map(id => ({ id, name: led.templates[id].name || '', content: led.templates[id].content || '', _o: led.templates[id].order || 0 }))
+        .sort((a, b) => a._o - b._o);
+      const seen = new Set(fromLed.map(t => t.id));
+      const localOnly = (data.templates || []).filter(t => t && !seen.has(t.id) && !tt[t.id]);
+      const merged = fromLed.map(t => ({ id: t.id, name: t.name, content: t.content })).concat(localOnly);
+      if (JSON.stringify(merged) !== JSON.stringify(data.templates || [])) { data.templates = merged; changed = true; }
+    }
+
+    // 4) 笔记元数据（只动本地已存在；不创建空壳）
+    const missing = [];                          // 总账有、本地无、且未墓碑 → 正文待网盘补全（不在此造空壳）
+    const ntomb = data.noteTombstones || {};
+    const lnotes = (led && led.notes) || {}, ltrash = (led && led.trash) || {};
+    for (const id in lnotes) {
+      if (data.notes[id]) { if (_applyMetaIfDiff(data.notes[id], lnotes[id], _LEDGER_META)) changed = true; }
+      else if (data.trash[id]) {                 // 还原：trash→notes
+        const n = data.trash[id]; delete data.trash[id]; data.trashOrder = data.trashOrder.filter(x => x !== id);
+        _applyMetaIfDiff(n, lnotes[id], _LEDGER_META); delete n.deletedAt; data.notes[id] = n;
+        changed = true;
+      }
+      else if (!ntomb[id]) missing.push(id);
+    }
+    for (const id in ltrash) {
+      if (data.trash[id]) { if (_applyMetaIfDiff(data.trash[id], ltrash[id], _LEDGER_META)) changed = true; }
+      else if (data.notes[id]) {                 // 删到回收站：notes→trash
+        const n = data.notes[id]; delete data.notes[id]; data.rootOrder = data.rootOrder.filter(x => x !== id);
+        _applyMetaIfDiff(n, ltrash[id], _LEDGER_META); if (!n.deletedAt) n.deletedAt = new Date().toISOString();
+        data.trash[id] = n; if (!data.trashOrder.includes(id)) data.trashOrder.unshift(id);
+        changed = true;
+      }
+    }
+
+    // 5) 先把缺失的 frac 确定性补齐（旧版/迁移中途的对端记录可能无 frac），再按 (笔记本, frac) 重建 rootOrder。
+    //    frac 是稳定存储的权威键（不随合并集合的瞬时差异变化）→ 两端必然算出同一个 rootOrder，杜绝岔开与抖动。
+    if (_backfillFrac(data)) changed = true;
+    const roots = _deriveRootOrder(data);
+    if (JSON.stringify(roots) !== JSON.stringify(data.rootOrder)) { data.rootOrder = roots; changed = true; }
+
+    return { changed, removed, missing };
+  }
+
+  /** 把本端当前结构总账（_data.structLedger）落地到真实结构 _data。
+   *  只动元数据/笔记本/模板/回收站开关，绝不碰正文；本地没有的笔记不创建空壳。
+   *  永久删除墓碑删本体前，先复用网盘「同步留底」备份，可在留底里找回。
+   *  落地后自愈 + 存盘 + 发 global-sync 让侧栏/切换器刷新（global-sync 不反向上传、不再自维护账本）。 */
+  function _applyStructLedgerToData() {
+    try {
+      const W = window.__wsdoc;
+      if (!W || !W.ready() || !_data || !_data.structLedger) return false;
+      const led = W.toData(_data.structLedger);
+      const r = _mergeLedgerIntoData(_data, led);
+      if (r.removed && r.removed.length) {
+        for (const x of r.removed) {
+          try { if (window.webdavSync && window.webdavSync.backupBeforeOverwrite) window.webdavSync.backupBeforeOverwrite(x.id, x.note, 'ledger-purge'); } catch (_) {}
+        }
+      }
+      if (r.changed) {
+        reconcileStructure();
+        save({ immediate: true });
+        emit('change', { type: 'global-sync' });
+      }
+      return r;
+    } catch (e) { console.warn('[storage] 结构总账落地失败（忽略，不影响数据）', e); return null; }
+  }
+
   /** JSON 存储：写入笔记的 ProseMirror 文档 JSON（唯一事实来源）。
    *  阶段2/3 保留旧 content(md) 作兜底，不在此删除；阶段4 迁移统一清理。 */
-  function updateDoc(id, doc) {
+  function updateDoc(id, doc, opts) {
     const n = _data.notes[id];
     if (!n || !doc) return;
     ingestDocImages(doc);  // data: → zhinote://，base64 收进本地仓库
     const str = JSON.stringify(doc);
     if (n.doc && JSON.stringify(n.doc) === str) return;  // 无变化，避免空顶 updatedAt
+    const oldDoc = n.doc;  // 改之前的正文，作首次建账本的创世根
     n.doc = doc;
     n.updatedAt = now();
+    // 阶段 C 绑定模式：账本权威 = 编辑器活的 Y.Doc（调用方随后用 _setNoteYdoc 写回），
+    //   这里跳过「从 doc 重建账本」——否则会毁掉活账本的 CRDT 历史、合并出错。
+    if (!(opts && opts.skipLedger)) _maintainLedger(n, doc, oldDoc);  // 合并账本与正文同步演进（v3）
     save();
     emit('change', { type: 'content', id, silent: true });
     if (typeof markDirty === 'function') markDirty();
+  }
+
+  /** 阶段 C：把编辑器活账本(Y.Doc)的状态(base64)写回 note.ydoc，并标记该篇待同步。
+   *  仅绑定模式下由 editor.flushSave 调用；账本权威在编辑器侧，这里只负责落库+留底。 */
+  function _setNoteYdoc(id, b64) {
+    const n = _data.notes[id];
+    if (!n || !b64) return;
+    n.ydoc = b64;
+    _dirtyNoteIds.add(id);
   }
 
   function setColor(id, color) {
@@ -1087,6 +1528,29 @@ const storage = (() => {
     n.updatedAt = now();
     save();
     emit('change', { type: 'icon', id });
+  }
+
+  /** 置顶/取消置顶：写在笔记上（pinnedAt），走笔记 dirty 上传，与以后按篇合并同路。 */
+  function isPinned(id) {
+    const n = _data.notes[id];
+    return !!(n && n.pinnedAt);
+  }
+
+  function getPinnedNotes() {
+    return Object.values(_data.notes || {})
+      .filter(n => n.pinnedAt)
+      .sort((a, b) => String(b.pinnedAt).localeCompare(String(a.pinnedAt)));
+  }
+
+  function setPinned(id, pinned) {
+    const n = _data.notes[id];
+    if (!n) return;
+    const next = pinned ? now() : null;
+    if ((n.pinnedAt || null) === next) return;
+    n.pinnedAt = next;
+    n.updatedAt = now();
+    save();
+    emit('change', { type: 'pinned', id });
   }
 
   function setExpanded(id, expanded) {
@@ -1144,6 +1608,7 @@ const storage = (() => {
       if (permanent) {
         delete _data.notes[nid];
         _dirtyNoteIds.add(nid);
+        (_data.noteTombstones || (_data.noteTombstones = {}))[nid] = now();
       } else {
         _data.trash[nid] = { ...node, deletedAt: now() };
         delete _data.notes[nid];
@@ -1175,6 +1640,8 @@ const storage = (() => {
       _data.notes[id].parentId = null;
       if (!_data.rootOrder.includes(id)) _data.rootOrder.unshift(id);
     }
+    // 还原回末尾：分配新 frac（旧 frac 可能与现存兄弟冲突，重排到末尾最稳）。
+    { const rn = _data.notes[id]; _assignFracAfter(rn, rn.parentId, _rootWs(rn), null); }
     recomputeOrder(_data.notes[id].parentId);
     save();
     emit('change', { type: 'restore', id });
@@ -1191,8 +1658,11 @@ const storage = (() => {
 
   function purgeFromTrash(id) {
     const ids = [id, ..._collectDescendantsInTrash(id)];
-    for (const nid of ids) delete _data.trash[nid];
+    // 显式写墓碑 + 标脏：永久删除经「总账墓碑(即时同步)」与「网盘 deleted 清单」双通道传播，
+    //   替代原先靠 _maintainStructLedger 推断（已移除）。
+    for (const nid of ids) { delete _data.trash[nid]; _dirtyNoteIds.add(nid); (_data.noteTombstones || (_data.noteTombstones = {}))[nid] = now(); }
     _data.trashOrder = _data.trashOrder.filter(x => x !== id);
+    _globalDirty = true;
     save();
     emit('change', { type: 'purge', id });
   }
@@ -1201,7 +1671,7 @@ const storage = (() => {
     const ids = Object.keys(_data.trash);
     _data.trash = {};
     _data.trashOrder = [];
-    for (const id of ids) _dirtyNoteIds.add(id); // 让同步据此写墓碑 + 删云端文件，避免清空回收站的笔记复活
+    for (const id of ids) { _dirtyNoteIds.add(id); (_data.noteTombstones || (_data.noteTombstones = {}))[id] = now(); } // 写墓碑+删云端文件，防复活
     if (ids.length) _globalDirty = true;
     save();
     emit('change', { type: 'emptyTrash' });
@@ -1248,6 +1718,8 @@ const storage = (() => {
       siblings.forEach((sib, i) => sib.order = i);
       _data.notes[newParentId].expanded = true;
     }
+    // 分数序：只改被拖这一篇的 frac 到目标位置（newIndex 为同级下标），其它兄弟不动 → 两端只需合并一处。
+    _assignFracAt(n, newParentId, (n.workspaceId || _data.settings.activeWorkspace || 'ws-default'), newIndex);
     recomputeOrder(oldParentId);
     recomputeOrder(newParentId);
     save();
@@ -1270,6 +1742,7 @@ const storage = (() => {
     n.workspaceId = targetWsId;
     n.order = _data.rootOrder.length;
     _data.rootOrder.push(id);
+    _assignFracAfter(n, null, targetWsId, null);   // 落到目标笔记本根的末尾
     // 递归移动所有子笔记
     const moveChildren = (parentId) => {
       for (const cid in _data.notes) {
@@ -1298,6 +1771,12 @@ const storage = (() => {
     if (!_data.settings) _data.settings = DEFAULT_DATA().settings;
     _data.settings[key] = value;
     save({ immediate: false });
+    // 可同步的设置（如 codeBlockExpanded 等）变更要标记 globalDirty 并调度上传。
+    const _localOnly = LOCAL_ONLY_SETTINGS.includes(key) || LOCAL_ONLY_PREFIX.some(p => key.startsWith(p));
+    if (!_localOnly) {
+      _globalDirty = true;
+      markDirty();
+    }
   }
 
   function getTemplates() { return _data.templates || []; }
@@ -1421,7 +1900,19 @@ const storage = (() => {
     return hits;
   }
 
-  function exportJSON() { return JSON.stringify(_data, null, 2); }
+  function exportJSON() {
+    // 安全：导出的备份文件**绝不**包含同步敏感信息（WebDAV 地址/账号/密码、加密口令）。
+    //   否则把备份分享/上传出去就等于泄露同步登录与解密钥匙（备份本就是给人/跨设备传的）。
+    //   其余设置无害，保留；恢复时由 importJSON 一律沿用本机本地设置，不会被这些值影响。
+    const clone = Object.assign({}, _data);
+    if (_data && _data.settings) {
+      const s = Object.assign({}, _data.settings);
+      delete s.webdavCryptoPass;
+      for (const k in s) { if (k.indexOf('webdav_') === 0) delete s[k]; }
+      clone.settings = s;
+    }
+    return JSON.stringify(clone, null, 2);
+  }
 
   function exportCurrentNoteMd(id) {
     const note = _data.notes[id];
@@ -1504,6 +1995,33 @@ const storage = (() => {
     return results;
   }
 
+  /** 导入净化：把导入数据里可能的脏类型/空名规整掉，避免怪数据流入界面与同步。
+   *  - 笔记本名：非字符串→转字符串；空白名→「未命名笔记本」；icon 非字符串→默认。
+   *  - 模板名：非字符串→转字符串。
+   *  - 笔记标题：非字符串→转字符串（空仍允许，由别处兜底为「无标题」）。
+   *  仅在导入(整库替换)时调用，不在日常加载跑，避免误改既有数据触发同步。 */
+  function _sanitizeImportedStructure() {
+    try {
+      if (Array.isArray(_data.workspaces)) {
+        for (const w of _data.workspaces) {
+          if (!w) continue;
+          if (typeof w.name !== 'string') w.name = (w.name == null ? '' : String(w.name));
+          if (!w.name.trim()) w.name = '未命名笔记本';
+          if (typeof w.icon !== 'string' || !w.icon) w.icon = '📒';
+        }
+      }
+      if (Array.isArray(_data.templates)) {
+        for (const t of _data.templates) {
+          if (t && typeof t.name !== 'string') t.name = (t.name == null ? '' : String(t.name));
+        }
+      }
+      for (const id in (_data.notes || {})) {
+        const n = _data.notes[id];
+        if (n && typeof n.title !== 'string') n.title = (n.title == null ? '无标题' : String(n.title));
+      }
+    } catch (e) { console.warn('[storage] 导入净化失败（忽略）', e); }
+  }
+
   async function importJSON(text) {
     let parsed;
     const trimmed = String(text || '').trim();
@@ -1522,8 +2040,31 @@ const storage = (() => {
       // 兼容旧格式或纯字符串
       parsed = JSON.parse(trimmed);
     }
+    // 整库替换前自动留底当前数据：万一导入错文件/文件本身损坏，可凭恢复键找回（控制台打印）。
+    //   与迁移留底同一持久位（Quicker 变量 / localStorage），不占用户外部备份。
+    try {
+      if (_data) {
+        const tag = 'preimport_' + Date.now();
+        await _backupDataSnapshot(tag);
+        console.warn('[storage] 覆盖导入前已自动留底当前数据；如需找回，恢复键 tag=' + tag);
+      }
+    } catch (_) {}
+    // 备份只恢复「笔记内容」，不该改这台设备的「本地独有/敏感」设置：同步口令/地址/代理、加密口令、
+    //   主题、当前笔记本等一律沿用本机现值。否则：① 导入旧备份会把同步登录改回旧值/清空（同步突然失效）；
+    //   ② 配合下方 exportJSON 已抹掉口令，导入新备份更不能把口令清成空。
+    const _prevSettings = (_data && _data.settings) ? _data.settings : null;
     migrate(parsed);
     _data = parsed;
+    if (_prevSettings) {
+      _data.settings = _data.settings || {};
+      for (const k of LOCAL_ONLY_SETTINGS) { if (k in _prevSettings) _data.settings[k] = _prevSettings[k]; }
+      for (const k in _prevSettings) { if (LOCAL_ONLY_PREFIX.some(p => k.startsWith(p))) _data.settings[k] = _prevSettings[k]; }
+    }
+    _sanitizeImportedStructure();   // 规整脏类型/空名（如备份里 name 是数字、空串），避免流入界面与同步
+    // 整库替换语义：以这份备份的实际内容为唯一真相，重建一份全新、零删除标记的结构总账
+    //   （并用内嵌总账修正被写坏的笔记本名）。否则备份自带的旧墓碑会在同步/刷新时把刚恢复的
+    //   笔记又删掉（覆盖恢复后丢笔记的根因）。引擎未就绪时退化为丢弃旧总账，随后懒重建。
+    try { _webdavRebuildStructLedgerFresh(); } catch (_) {}
     await rawSave(_data, { full: true }); // 整库替换 → 强制全量落盘（分片 diff 会同步重写/清理所有片）
     emit('change', { type: 'reload' });
     // 导入后标记所有笔记为 dirty，确保下次同步时上传覆盖远端（而非被远端删除标记覆盖）
@@ -1535,7 +2076,6 @@ const storage = (() => {
 
   function save({ immediate = false, full = false } = {}) {
     if (!_data) return;
-    setSaveStatus('saving', '保存中...');
     if (immediate) {
       return _flush({ full });
     }
@@ -1549,10 +2089,8 @@ const storage = (() => {
     _saveInFlight = true;
     try {
       await rawSave(_data, { full });
-      setSaveStatus('saved', '已保存');
     } catch (err) {
       console.error('[storage] 保存失败', err);
-      setSaveStatus('error', '保存失败');
     } finally {
       _saveInFlight = false;
       if (_pendingSave) {
@@ -1560,18 +2098,6 @@ const storage = (() => {
         const f = _pendingFull; _pendingFull = false;
         _flush({ full: f });
       }
-    }
-  }
-
-  function setSaveStatus(cls, text) {
-    const el = document.getElementById('save-status');
-    if (!el) return;
-    el.className = 'save-status ' + cls;
-    // 用小圆点替代文字，鼠标悬停时显示具体文字
-    el.textContent = '●';
-    el.title = text || (cls === 'saved' ? '已保存' : cls === 'saving' ? '保存中…' : cls === 'error' ? '保存失败' : '');
-    if (cls === 'saved') {
-      // 不再回填文字，圆点本身就表达"已保存"
     }
   }
 
@@ -1603,6 +2129,8 @@ const storage = (() => {
       if (t !== 'reload' && t !== 'global-sync') {
         try { markDirty(); } catch (_) {}
       }
+      // 结构变动（非正文）→ 影子维护结构底稿（方案2 第1步，暂不接线读取/上传）
+      if (t !== 'content' && t !== 'global-sync') { try { _scheduleStructLedger(); } catch (_) {} }
     }
     _listeners.forEach(l => { if (l.event === event) l.cb(payload); });
   }
@@ -1646,7 +2174,7 @@ const storage = (() => {
    *  需在编辑器（markdown manager）就绪后调用。返回迁移报告。 */
   async function migrateNotesToDoc() {
     if (!_data) return { ran: false, reason: 'no-data' };
-    if ((_data.dataFormatVersion || 1) >= 2) return { ran: false, reason: 'already-v2' };
+    if ((_data.dataFormatVersion || 1) >= 2) return { ran: false, reason: 'already-migrated' };
     if (!window.editor || typeof window.editor.parseMdToDoc !== 'function') {
       console.warn('[storage] JSON 迁移中止：editor.parseMdToDoc 不可用（编辑器未就绪）');
       return { ran: false, reason: 'editor-not-ready' };
@@ -1676,7 +2204,8 @@ const storage = (() => {
     if (_data.trash) for (const id in _data.trash) convert(_data.trash[id]);
 
     // 3) 置格式版本 + 全部标脏（下次同步把 doc 全集推上云，并由 webdav 首推时 epoch++）
-    _data.dataFormatVersion = 2;
+    //    直接置 v3（账本感知客户端）：账本随后按需懒建，此处不建以免拖慢迁移。
+    _data.dataFormatVersion = 3;
     markAllNotesDirty();
     await save({ immediate: true });
     const report = { ran: true, migrated, skipped, failed };
@@ -1689,9 +2218,62 @@ const storage = (() => {
   function clearGlobalDirty() { _globalDirty = false; }
 
   // ─── WebDAV 辅助函数（供 webdav-sync.js 调用） ──────────────────────────────
+  // 结构/属性的唯一权威 = 结构总账(CRDT)。按篇网盘文件**只管正文**，不再仲裁这些字段（Stage B 收口）。
+  //   归属(parentId/workspaceId)、排序(frac/order)、置顶/颜色/图标/展开，一律以总账为准。
+  const _LEDGER_OWNED = ['title', 'parentId', 'workspaceId', 'pinnedAt', 'color', 'icon', 'expanded', 'frac', 'order'];
   function _webdavApplyNote(id, noteData) {
     if (!_data.notes) _data.notes = {};
+    const prev = _data.notes[id];
+    // 本地已存在的笔记：应用远端时**保留本地的结构/属性字段**，绝不被文件里(可能陈旧、且走另一套时间-LWW
+    //   仲裁)的值覆盖 → 杜绝「按篇通道 vs 总账」两条路互踩（反复重排/绿点狂转/两端不一致的总病根）。
+    //   总账会在同一次 doGet 周期稍后(structLedger 在按篇之后应用)把它们设成权威值；离线则下次周期校正。
+    //   仅本地不存在(新笔记/冲突副本/扫描恢复)时整篇采纳——无本地可保，随后总账校正归位。
+    if (prev && noteData) {
+      const keep = {};
+      for (const k of _LEDGER_OWNED) if (k in prev) keep[k] = prev[k];
+      _data.notes[id] = Object.assign({}, noteData, keep);
+    } else {
+      _data.notes[id] = noteData;
+    }
+  }
+
+  /** 实时同步落地：把「已合并好」的正文+账本直接写进笔记（不再 _maintainLedger 重建账本）。
+   *  返回是否真有变化（无变化则不动 updatedAt、不发事件，避免回声/抖动）。
+   *  同时 markDirty，让合并结果也经网盘兜底上云。 */
+  function _realtimeApply(id, mergedDoc, mergedYdocB64) {
+    const n = _data.notes[id];
+    if (!n || !mergedDoc) return false;
+    const str = JSON.stringify(mergedDoc);
+    const sameDoc = n.doc && JSON.stringify(n.doc) === str;
+    const sameYdoc = n.ydoc === mergedYdocB64;
+    if (sameDoc && sameYdoc) return false;
+    ingestDocImages(mergedDoc);
+    n.doc = mergedDoc;
+    if (mergedYdocB64) n.ydoc = mergedYdocB64;
+    n.updatedAt = now();
+    save();
+    emit('change', { type: 'content', id, silent: true });
+    if (typeof markDirty === 'function') markDirty();
+    return true;
+  }
+
+  /** 即时同步：把对端发来的整篇笔记就地建出，让「对端新建/本端缺失」的笔记立刻出现，不必干等网盘。
+   *  严格只建本地真缺失（notes/trash 都没有）且未永久删除的笔记，绝不覆盖本地已有或已删；
+   *  建出后调 _applyStructLedgerToData 按总账排位/归笔记本，并 markDirty 经网盘兜底上云。
+   *  返回是否真的建出（已存在/已墓碑 → false，不动）。 */
+  function _realtimeMaterializeNote(id, noteData) {
+    if (!id || !noteData || typeof noteData !== 'object') return false;
+    _data.notes = _data.notes || {}; _data.trash = _data.trash || {};
+    if (_data.notes[id] || _data.trash[id]) return false;          // 已存在(含回收站) → 不覆盖
+    const ntomb = _data.noteTombstones || {};
+    if (ntomb[id]) return false;                                   // 已永久删除 → 不复活
+    noteData.id = id;                                              // 防御：以索取的 id 为准
     _data.notes[id] = noteData;
+    try { ingestDocImages(noteData.doc); } catch (_) {}            // 入库正文图片引用（缺的图后续网盘补显）
+    const r = _applyStructLedgerToData();                          // 按总账排位/归笔记本 + 存盘 + 发 global-sync
+    if (!r) { try { save(); emit('change', { type: 'global-sync' }); } catch (_) {} }
+    if (typeof markDirty === 'function') markDirty();
+    return true;
   }
 
   function _webdavRemoveNote(id) {
@@ -1743,27 +2325,30 @@ const storage = (() => {
       const n = _data.notes[id];
       if (n && n.parentId != null && !_data.notes[n.parentId]) { n.parentId = null; changed = true; }
     }
-    // 2) workspaceId 指向不存在的笔记本 → 落回有效笔记本
+    // 2) workspaceId 指向不存在的笔记本 → 分两种情况处理：
+    //    a. 指向「已彻底删除(有墓碑)」的笔记本：这是被删本子的漏网/竞态笔记（删除时还没到、或子笔记 workspaceId 没更新）
+    //       → 一并删除并写笔记墓碑，经双通道传播；**绝不**塞进当前本子（修 #1「删本子漏一两篇到当前」+ 污染回传）。
+    //    b. 指向「未知(无墓碑)」的笔记本：历史数据自愈 → 落回有效笔记本，避免笔记永久不可见。
+    const _wsTomb = _data.wsTombstones || {};
     for (const id in _data.notes) {
       const n = _data.notes[id];
-      if (n && (!n.workspaceId || !wsIds.has(n.workspaceId))) { n.workspaceId = fallbackWs; changed = true; }
+      if (!n) continue;
+      if (n.workspaceId && _wsTomb[n.workspaceId]) {
+        delete _data.notes[id];
+        _data.rootOrder = (_data.rootOrder || []).filter(x => x !== id);
+        (_data.noteTombstones || (_data.noteTombstones = {}))[id] = Date.now();
+        _dirtyNoteIds.add(id);
+        changed = true;
+        continue;
+      }
+      if (!n.workspaceId || !wsIds.has(n.workspaceId)) { n.workspaceId = fallbackWs; changed = true; }
     }
-    // 3) rootOrder 只保留"存在且为顶级"的笔记，并去重（重复 id 会让同一篇渲染两次）；
-    //    遗漏的顶级笔记补回（核心：修复消失的笔记）
-    const _seenRoot = new Set();
-    const cleanedRoot = (_data.rootOrder || []).filter(id => {
-      if (!_data.notes[id] || _data.notes[id].parentId != null) return false;
-      if (_seenRoot.has(id)) return false;
-      _seenRoot.add(id);
-      return true;
-    });
-    if (cleanedRoot.length !== (_data.rootOrder || []).length) changed = true;
-    const inRoot = new Set(cleanedRoot);
-    for (const id in _data.notes) {
-      const n = _data.notes[id];
-      if (n && n.parentId == null && !inRoot.has(id)) { cleanedRoot.push(id); inRoot.add(id); changed = true; }
-    }
-    _data.rootOrder = cleanedRoot;
+    // 3) rootOrder 唯一推导（顺序单权威收口）：先确定性补齐缺失 frac，再按 (笔记本, frac, id) 重排所有顶级笔记。
+    //    deriveRootOrder 天然只含「存在且 parentId==null」的笔记、自动去重，遗漏的顶级笔记也一并按 frac 落位
+    //    （不再追加到末尾再被别处重排 → 杜绝"先到末尾、稍后跳回正位"的偏移）。与到达顺序/历史 rootOrder 无关。
+    _backfillFrac(_data);
+    const derivedRoot = _deriveRootOrder(_data);
+    if (JSON.stringify(derivedRoot) !== JSON.stringify(_data.rootOrder || [])) { _data.rootOrder = derivedRoot; changed = true; }
     // 4) trashOrder 只保留存在于 trash 的；遗漏的补回
     _data.trash ??= {};
     const cleanedTrash = (_data.trashOrder || []).filter(id => _data.trash[id]);
@@ -1780,6 +2365,12 @@ const storage = (() => {
 
   function _webdavApplyGlobal(remote) {
     if (!_data) return;
+    // 【单一裁判·第一刀】结构总账(CRDT)就绪时：顺序/笔记本/模板的唯一权威 = 总账
+    //   （本周期稍后 _applyStructLedgerToData 落地）。这里**不再**用网盘清单"远端优先"覆盖结构，
+    //   杜绝"网盘先按远端排一遍→账本再纠正"的双裁判闪跳/互踩。
+    //   总账未就绪(旧数据/未生根/旧版云端)时回退旧的"远端优先并集"兜底，保证单设备/异步也能同步结构。
+    //   两种模式都处理：设置、回收站顺序、墓碑（可加性安全）。
+    const ledgerAuthoritative = !!(window.__wsdoc && window.__wsdoc.ready && window.__wsdoc.ready() && _data.structLedger);
     const localPrefs = {};
     for (const k of LOCAL_ONLY_SETTINGS) {
       if (_data.settings && _data.settings[k] !== undefined) localPrefs[k] = _data.settings[k];
@@ -1789,24 +2380,44 @@ const storage = (() => {
         if (LOCAL_ONLY_PREFIX.some(p => k.startsWith(p))) localPrefs[k] = _data.settings[k];
       }
     }
-    // 合并而非覆盖：远端优先（保留远端顺序/重命名），但本地独有的 id 一律保留，绝不抹掉。
-    // 这样另一台设备刚建、本机还没拿到 rootOrder 记录的笔记，不会被这次应用顶掉。
-    if (remote.rootOrder) _data.rootOrder = _mergeIdOrder(remote.rootOrder, _data.rootOrder);
+    // 回收站顺序（总账不重建其排序）+ 笔记本/模板墓碑（合并远端墓碑，剔除被删项）→ 两种模式都执行。
     if (remote.trashOrder) _data.trashOrder = _mergeIdOrder(remote.trashOrder, _data.trashOrder);
-    // 笔记本墓碑：合并远端墓碑，并据此剔除被删除的笔记本（防止删掉的笔记本被拉回）
     if (remote.wsDeleted) _data.wsTombstones = { ...(_data.wsTombstones || {}), ...remote.wsDeleted };
-    if (remote.workspaces) {
-      const tomb = _data.wsTombstones || {};
-      let merged = _mergeById(remote.workspaces, _data.workspaces).filter(w => !tomb[w.id]);
-      if (!merged.length) merged = [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }];
-      _data.workspaces = merged;
-    }
     if (remote.tplDeleted) _data.tplTombstones = { ...(_data.tplTombstones || {}), ...remote.tplDeleted };
-    if (remote.templates) {
-      const tt = _data.tplTombstones || {};
-      _data.templates = _mergeById(remote.templates, _data.templates).filter(t => !tt[t.id]);
+    if (!ledgerAuthoritative) {
+      // 兜底（无总账）：保留远端「笔记本/模板」并集；本地独有 id 一律保留不抹掉。
+      //   顺序单权威收口：**不再读 manifest 的 rootOrder**。顺序统一由下方 reconcileStructure() 按 frac 推导，
+      //   不论账本引擎本周期是否就绪都走同一条路 → 根除"就绪用 frac、没就绪用 manifest"二选一造成的偶发乱序。
+      if (remote.workspaces) {
+        const tomb = _data.wsTombstones || {};
+        let merged = _mergeById(remote.workspaces, _data.workspaces).filter(w => !tomb[w.id]);
+        if (!merged.length) merged = [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }];
+        _data.workspaces = merged;
+      }
+      if (remote.templates) {
+        const tt = _data.tplTombstones || {};
+        _data.templates = _mergeById(remote.templates, _data.templates).filter(t => !tt[t.id]);
+      }
+    } else {
+      // 总账权威：rootOrder 交给总账重建（不动）；笔记本/模板只做**存在性兜底**——
+      //   本地优先合并、只把远端独有项补进来（绝不用清单覆盖总账已定的名字/顺序），
+      //   免得刚下载的笔记因 workspaceId 本地缺失被 reconcile 误塞当前本子。与 _webdavMergeWorkspaces 同策略。
+      if (remote.workspaces) {
+        const tomb = _data.wsTombstones || {};
+        let merged = _mergeById(_data.workspaces, remote.workspaces).filter(w => !tomb[w.id]);
+        if (!merged.length) merged = [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }];
+        _data.workspaces = merged;
+      }
+      if (remote.templates) {
+        const tt = _data.tplTombstones || {};
+        _data.templates = _mergeById(_data.templates, remote.templates).filter(t => !tt[t.id]);
+      }
     }
-    if (remote.settings) _data.settings = { ...(_data.settings || {}), ...remote.settings };
+    if (remote.settings) {
+      const rs = { ...remote.settings };
+      delete rs.pinned; // legacy 置顶列表，已迁 note.pinnedAt
+      _data.settings = { ...(_data.settings || {}), ...rs };
+    }
     Object.assign(_data.settings, localPrefs);
     // 当前激活笔记本若已被删除，回落到第一个有效笔记本
     if (!_data.workspaces.some(w => w.id === _data.settings.activeWorkspace)) {
@@ -1829,14 +2440,18 @@ const storage = (() => {
     if (remoteWsDeleted) _data.wsTombstones = { ...(_data.wsTombstones || {}), ...remoteWsDeleted };
     if (Array.isArray(remoteWs)) {
       const tomb = _data.wsTombstones || {};
-      let merged = _mergeById(remoteWs, _data.workspaces).filter(w => !tomb[w.id]);
+      // 【Stage B 收口】**本地优先**：笔记本的名字/图标/顺序唯一权威 = 结构总账（已在本周期 _mergeLedgerIntoData
+      //   里设成权威）。本函数只负责"存在性兜底"——把远端独有的笔记本补进来，免得刚下载的笔记因 workspaceId
+      //   本地缺失被 reconcile 误塞进当前本子。绝不用网盘清单(manifest)里的版本覆盖总账已定的名字/顺序，
+      //   否则就是「按篇笔记」之外的第二处双通道互踩（改名/重排会反复跳）。改名必同步进总账(emit('workspaces')→调度总账)。
+      let merged = _mergeById(_data.workspaces, remoteWs).filter(w => !tomb[w.id]);
       if (!merged.length) merged = [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }];
       if (JSON.stringify(merged) !== JSON.stringify(_data.workspaces)) { _data.workspaces = merged; changed = true; }
     }
     if (remoteTplDeleted) _data.tplTombstones = { ...(_data.tplTombstones || {}), ...remoteTplDeleted };
     if (Array.isArray(remoteTpl)) {
       const tt = _data.tplTombstones || {};
-      const merged = _mergeById(remoteTpl, _data.templates).filter(t => !tt[t.id]);
+      const merged = _mergeById(_data.templates, remoteTpl).filter(t => !tt[t.id]); // 本地优先，同上
       if (JSON.stringify(merged) !== JSON.stringify(_data.templates)) { _data.templates = merged; changed = true; }
     }
     return changed;
@@ -1885,6 +2500,8 @@ const storage = (() => {
       }
     } finally {
       _switchingMethod = false;
+      // 网盘配置变了 → 即时同步重判启用条件（仅配好网盘才启用；账号变则房间号变）
+      try { window.realtime && window.realtime.applyConfig && window.realtime.applyConfig(); } catch (_) {}
     }
   }
 
@@ -1896,6 +2513,7 @@ const storage = (() => {
     'webdavProxy', // 跨域代理前缀：每台设备各自配置（桌面直连不需要），绝不上云
     'imagesDir',   // 图片文件夹：本机路径，跨设备无意义，绝不上云
     'webdavCryptoPass', // 加密口令：manifest 是明文，绝不能经云端 settings 泄漏；只走本机/配置导出
+    'pinned', // 置顶已迁到 note.pinnedAt（20260622）；legacy 列表不再同步，防旧端覆盖
   ];
   // 'webdav_' 前缀=同步配置；'_' 前缀=内部迁移标记，都只留本机
   const LOCAL_ONLY_PREFIX = ['webdav_', '_'];
@@ -1925,14 +2543,14 @@ const storage = (() => {
   }
 
   return {
-    init, getAll, get, getLocalImage, loadImage, loadImages, expandLocalImages, ingestImageDataUrl, getChildren, getAncestors,
+    init, getAll, get, isNoteDeleted, _setNoteYdoc, getLocalImage, loadImage, loadImages, expandLocalImages, ingestImageDataUrl, getChildren, getAncestors,
     // 图片外置后端（阶段A）
     imagesReady: () => _imgReadyPromise,
     imagesPrimaryReady: () => _imgPrimaryReadyPromise,
     getImageMap: () => _imgCache,
     getImagesBackendInfo: () => ({ backend: _imgBackend, dir: _imgDir }),
     setImagesDir,
-    create, rename, updateDoc, setColor, setIcon, setExpanded, collapseAll, expandAll, hasExpandedNodes,
+    create, rename, updateDoc, setColor, setIcon, setPinned, isPinned, getPinnedNotes, setExpanded, collapseAll, expandAll, hasExpandedNodes,
     remove, restoreFromTrash, purgeFromTrash, emptyTrash,
     move, moveToWorkspace,
     getSetting, setSetting,
@@ -1949,7 +2567,13 @@ const storage = (() => {
     getDirtyNoteIds, clearDirtyNoteIds, removeDirtyNoteIds, markNotesDirtyByIds, markAllNotesDirty, isGlobalDirty, clearGlobalDirty,
     getDataFormatVersion, migrateNotesToDoc,
     switchSyncMethod, reconcileStructure,
-    _webdavApplyNote, _webdavRemoveNote, _webdavApplyGlobal, _webdavMergeWorkspaces, _webdavStoreImage, _emitCloudSync,
+    _webdavApplyNote, _webdavRemoveNote, _webdavApplyGlobal, _webdavMergeWorkspaces, _webdavStoreImage, _emitCloudSync, _realtimeApply, _realtimeMaterializeNote,
+    // 方案2 结构底稿（影子阶段，仅供验证/调试）
+    _buildStructSnapshot, _structLedger: () => _data && _data.structLedger, _maintainStructLedgerNow: _maintainStructLedger,
+    // 方案2 wire-sync：结构总账同步层接口（统一收口创世/认领规则）
+    _webdavGetStructLedger, _webdavApplyStructLedger, _webdavMarkStructLedgerRooted, _webdavRebuildStructLedgerFresh, _webdavReplaceStructLedger,
+    // 方案2 第2步：总账落地（当结构/元数据权威）
+    _mergeLedgerIntoData, _applyStructLedgerToData,
   };
 })();
 

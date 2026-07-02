@@ -1366,6 +1366,13 @@ __modules["tiptap.bundle"] = function(__e, __require) {
   __e.PluginKey = __require("tiptap--pm--state").PluginKey;
   __e.Decoration = __require("tiptap--pm--view").Decoration;
   __e.DecorationSet = __require("tiptap--pm--view").DecorationSet;
+  // ── 协同引擎（crdt.bundle.js / y-prosemirror）外部化用：暴露内部 ProseMirror 模块整体，
+  //    让 crdt 包复用「同一份」ProseMirror（共享 Node/Plugin/Decoration 等类，避免 instanceof 失配）。
+  //    注意：__e.Node 是 TipTap 的扩展助手、非 ProseMirror Node，故这里用 pmModel/pmState/pmView 命名空间，不覆盖。
+  __e.pmModel = __require("prosemirror-model");
+  __e.pmState = __require("prosemirror-state");
+  __e.pmView = __require("prosemirror-view");
+  __e.pmTransform = __require("prosemirror-transform");
 };
 
 // Public API

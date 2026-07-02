@@ -194,7 +194,7 @@ const tree = (() => {
     container.innerHTML = '';
 
     const roots = storage.getChildren(null);
-    const pinned = (storage.getSetting('pinned') || []).map(id => storage.get(id)).filter(Boolean);
+    const pinned = storage.getPinnedNotes();
 
     if (!roots.length && !pinned.length) {
       container.innerHTML = '<div class="tree-empty">还没有笔记<br>点击上方 + 创建</div>';
@@ -1092,7 +1092,7 @@ const tree = (() => {
     const menu = document.getElementById('context-menu');
 
     menu.innerHTML = '';
-    const isPinned = (storage.getSetting('pinned') || []).includes(id);
+    const isPinned = storage.isPinned(id);
     const items = [
       { label: '新建子笔记', icon: '➕', onClick: () => {
         const child = storage.create({ parentId: id, title: '' });
@@ -1188,7 +1188,7 @@ const tree = (() => {
           const item = document.createElement('div');
           item.className = 'context-menu-item';
           const ic = document.createElement('span'); ic.className = 'ctx-icon-emoji'; ic.textContent = ws.icon || '📒';
-          const nm = document.createElement('span'); nm.textContent = ws.name;
+          const nm = document.createElement('span'); nm.textContent = ws.name || '未命名';
           item.appendChild(ic); item.appendChild(nm);
           item.addEventListener('click', () => {
             const norm = _normalizeSel(ids);
@@ -1276,7 +1276,7 @@ const tree = (() => {
           const isCurrent = note.workspaceId === ws.id;
           const item = document.createElement('div');
           item.className = 'context-menu-item' + (isCurrent ? ' disabled' : '');
-          item.innerHTML = `<span class="ctx-icon-emoji">${ws.icon || '📒'}</span><span>${ws.name}${isCurrent ? ' ✓' : ''}</span>`;
+          item.innerHTML = `<span class="ctx-icon-emoji">${ws.icon || '📒'}</span><span>${ws.name || '未命名'}${isCurrent ? ' ✓' : ''}</span>`;
           if (!isCurrent) {
             item.addEventListener('click', () => {
               storage.moveToWorkspace(id, ws.id);
@@ -1822,7 +1822,7 @@ const tree = (() => {
       const item = document.createElement('div');
       item.className = 'context-menu-item';
       const ic = document.createElement('span'); ic.className = 'ctx-icon-emoji'; ic.textContent = ws.icon || '📒';
-      const nm = document.createElement('span'); nm.textContent = ws.name;
+      const nm = document.createElement('span'); nm.textContent = ws.name || '未命名';
       item.appendChild(ic); item.appendChild(nm);
       item.addEventListener('click', () => {
         window._bulkImporting = true;

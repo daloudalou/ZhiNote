@@ -1,0 +1,13 @@
+{
+  "name": "zhinote-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "枝记 实时同步中转 (Cloudflare Worker + Durable Object)",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

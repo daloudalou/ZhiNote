@@ -199,8 +199,31 @@ const template = (() => {
 
     const rect = getCursorRect(range);
     _popupEl.classList.remove('hidden');
+    // 先重置上次可能设过的限高，按当前内容真实测量尺寸
+    _popupEl.style.maxHeight = '';
+    _popupEl.style.overflowY = '';
     _popupEl.style.left = rect.left + 'px';
     _popupEl.style.top = (rect.bottom + 4) + 'px';
+    // 边界钳制：光标靠近窗口底部时，原本直接向下展开会溢出窗口、末项被切（曾发生）。
+    // 放不下→翻到光标上方；上下都放不下→限高+滚动；并钳左右边界。可见高度用 visibleViewportH（键盘在场时即键盘上方）。
+    const margin = 8;
+    const visH = (window.visibleViewportH ? window.visibleViewportH() : window.innerHeight);
+    const pw = _popupEl.offsetWidth, ph = _popupEl.offsetHeight;
+    let left = rect.left, top = rect.bottom + 4;
+    if (left + pw > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - pw - margin);
+    if (left < margin) left = margin;
+    if (top + ph > visH - margin) {
+      const upTop = rect.top - ph - 4;
+      if (upTop >= margin) {
+        top = upTop;
+      } else {
+        _popupEl.style.maxHeight = (visH - margin * 2) + 'px';
+        _popupEl.style.overflowY = 'auto';
+        top = margin;
+      }
+    }
+    _popupEl.style.left = Math.round(left) + 'px';
+    _popupEl.style.top = Math.round(top) + 'px';
   }
 
   /** 获取光标位置矩形。range.getBoundingClientRect() 在新建块开头/空块里

@@ -61,18 +61,20 @@
   let _lastDispatchTime = 0;
   const _poolWaiters = [];
 
-  // 上传最小间隔 / 轮询间隔也按服务商差异化：坚果云频控严（官方约 30 分钟 600 次）取保守值；
-  // Koofr 等普通服务商放宽，缩短"编辑 → 其它设备看到"的端到端延迟。
+  // 上传去抖 / 上传最小间隔 / 轮询间隔都按服务商差异化：
+  // 坚果云频控严（官方约 30 分钟 600 次）取保守值；Koofr/自建等不被服务端限速，
+  // 收紧去抖与最小间隔，做到"改完即传"，缩短"编辑 → 其它设备看到"的端到端延迟。
+  let _putDebounceMs = PUT_DEBOUNCE_MS;
   let _putMinIntervalMs = 5_000;
   let _pollIntervalMs = 10_000;
 
   function _applyProviderTuning(provider) {
     if (provider === 'jianguoyun') {
       _maxConcurrency = 4; _pacingMs = 100;
-      _putMinIntervalMs = 30_000; _pollIntervalMs = 30_000;
+      _putDebounceMs = 2_000; _putMinIntervalMs = 30_000; _pollIntervalMs = 30_000;
     } else {
       _maxConcurrency = 6; _pacingMs = 0;
-      _putMinIntervalMs = 5_000; _pollIntervalMs = 10_000;
+      _putDebounceMs = 600; _putMinIntervalMs = 2_000; _pollIntervalMs = 10_000;
     }
   }
 
@@ -164,6 +166,36 @@
     return v;
   }
 
+  // ─── 实时同步中转（可选；Quicker / 网页都可用）────────────────────────────────
+  // webdavRealtime 语义：''/未设置/'builtin' = 官方内置默认中转（默认开启）；'off' = 关闭；其余 = 自建地址。
+  const DEFAULT_RELAY = 'wss://relay.zhinote.net';
+  function resolveRelay(raw) {
+    const v = (raw || '').trim();
+    if (v === 'off') return '';
+    if (!v || v === 'builtin') return DEFAULT_RELAY;
+    let u = v.replace(/\/+$/, '').replace(/^http:/i, 'ws:').replace(/^https:/i, 'wss:');
+    if (!/^wss?:/i.test(u)) u = 'wss://' + u;
+    return u;
+  }
+  // 房间号：由「网盘账号(URL+用户名) + 用户口令(无则内置) + 种子(workspaceId:noteId)」哈希得出。
+  // 关键：并入网盘账号 → 不同用户账号必然不同，即使口令相同也落入不同房间，100% 不串；
+  // 同一用户的多台设备账号/口令/笔记编号都相同 → 进同一房间。不可逆、不可猜。
+  async function rtRoomId(seed) {
+    const pass = _userCryptoPass() || AES_PASSPHRASE;
+    let acct = '';
+    try { if (_config) acct = (_config.url || '') + '|' + (_config.user || ''); } catch (_) {}
+    const data = new TextEncoder().encode('zhinote-room:' + acct + ':' + pass + ':' + (seed || ''));
+    const digest = await crypto.subtle.digest('SHA-256', data);
+    const u8 = new Uint8Array(digest);
+    let s = '';
+    for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+    // base64url，截断到 32 字符（足够防碰撞，符合服务端 [A-Za-z0-9_-]{1,128}）
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '').slice(0, 32);
+  }
+  // 实时载荷加解密：复用「笔记内容密钥」（用户口令优先）。明文是账本的 base64 串。
+  function rtEncrypt(plainB64) { return notesEncrypt(plainB64); }
+  function rtDecrypt(cipherB64) { return notesDecrypt(cipherB64); }
+
   function _buildUrl(path) {
     if (!_config) throw new Error('WebDAV 未配置');
     let base = _config.url.replace(/\/+$/, '');
@@ -200,6 +232,7 @@
       // If-Match 未命中：仅 manifest 写会带 If-Match，故 412 必为"被抢先"。让上层重新合并重试。
       if (resp.status === 412) throw new PreconditionFailedError();
       if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (resp.status === 423) throw await _lockedError('PUT', path, resp);
       if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
         throw new WebDAVError('PUT', path, resp.status, await resp.text().catch(() => ''));
       }
@@ -242,6 +275,7 @@
         throw new WebDAVError('GET', path, 404, 'Not Found');
       }
       if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (resp.status === 423) throw await _lockedError('GET', path, resp);
       if (!resp.ok) {
         throw new WebDAVError('GET', path, resp.status, await resp.text().catch(() => ''));
       }
@@ -392,6 +426,7 @@
       });
       if (resp.status === 405 || resp.status === 301) return resp;
       if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (resp.status === 423) throw await _lockedError('MKCOL', path, resp);
       if (!resp.ok && resp.status !== 201) {
         throw new WebDAVError('MKCOL', path, resp.status, await resp.text().catch(() => ''));
       }
@@ -408,6 +443,7 @@
       });
       if (resp.status === 404) return resp;
       if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (resp.status === 423) throw await _lockedError('DELETE', path, resp);
       if (!resp.ok && resp.status !== 204) {
         throw new WebDAVError('DELETE', path, resp.status, await resp.text().catch(() => ''));
       }
@@ -429,6 +465,7 @@
       });
       if (resp.status === 404) return [];
       if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (resp.status === 423) throw await _lockedError('PROPFIND', path, resp);
       if (!resp.ok && resp.status !== 207) {
         throw new WebDAVError('PROPFIND', path, resp.status, await resp.text().catch(() => ''));
       }
@@ -485,6 +522,15 @@
   // 不是错误，是"被抢先"信号——上层据此放弃本次写、保留 dirty、重新读取合并后重试。
   class PreconditionFailedError extends Error {
     constructor() { super('manifest 已被其它设备更新（412），本次写入放弃，将重新合并后重试'); this.name = 'PreconditionFailedError'; }
+  }
+  // 423 Locked：Koofr 等 WebDAV 服务器对"加锁中"的文件返回（多为并发写同一文件时的临时锁，
+  // 尤其 v3 真冲突合并后两端短时间内重写同一篇）。标 transient → 走静默重试通道
+  // （_handleTransient：递增延迟 2/8/30s 自动重试，连续 4 轮才提示一次，转 60s 慢速重试，绝不丢数据），
+  // 不再一遇 423 就弹硬错误红条。
+  async function _lockedError(method, path, resp) {
+    const e = new WebDAVError(method, path, 423, await resp.text().catch(() => ''));
+    e.transient = true;
+    return e;
   }
 
   // ─── 连接测试 ────────────────────────────────────────────────────────────────
@@ -776,27 +822,57 @@
     h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
     return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
   }
-  // 笔记内容指纹：标题 + 正文，归一化掉行尾空格/行尾空行/换行符差异，避免序列化抖动误判
+  // 笔记**正文**指纹：只认正文(doc/content)，**不含标题**——标题已收归「结构总账」为唯一权威(Stage B2)，
+  //   不再走按篇通道，改名不该被当成正文冲突。归一化行尾空格/空行/换行差异，避免序列化抖动误判。
+  // ⚠️ 必须含 doc：否则正文指纹失效(编辑正文不改变指纹)。两篇不同笔记正文恰好相同 → 指纹相同无妨：
+  //    本函数只做「同一 id 的本地↔远端」比对，从不跨笔记比对(全部用法见文件内 _noteHash 调用处)。
   function _noteHash(note) {
     if (!note) return '';
-    const t = note.title || '';
     // doc 为事实来源时用其稳定 JSON 串做指纹（getJSON/JSON.parse 往返键序稳定、跨设备一致）。
-    // ⚠️ 必须含 doc：否则迁移删 content 后所有笔记退化成"仅标题"指纹 →
-    //    编辑正文不改变指纹、不同笔记同标题撞车 → 同步冲突检测/留底全部失效。
     let c;
     if (note.doc) {
       try { c = JSON.stringify(note.doc); } catch (_) { c = ''; }
     } else {
       c = (note.content || '').replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n+$/, '');
     }
-    return _strHash(t + '\u0000' + c);
+    return _strHash(c);
+  }
+
+  // 元数据（非正文）字段：随「谁 updatedAt 更晚谁生效」(LWW) 合并，与正文(Yjs 账本)解耦。
+  // 关键修复：置顶(pinnedAt)/颜色/图标/移动(parentId,order)/换笔记本(workspaceId)/改名(title)
+  // 这些「只改属性、不动正文」的变更，_noteHash 看不见，旧逻辑会因「正文指纹一致」误判
+  // 「无变化」而丢弃本地脏标记 → 置顶传不上去（本次根因）。这里把元数据单独按时间 LWW 合并。
+  // 注意：**不含 frac、也不含 order**。排序唯一权威 = frac，且只由「结构总账」(Yjs 确定性合并) 同步：
+  //   - frac 放进按篇网盘通道(时间 LWW)会和总账两条仲裁互踩 → 反复重排+绿点狂转(t33/t34 教训)；
+  //   - order（第几名）是 frac 的确定性函数，两端各自算必然一致，按篇同步它纯属重复 + 每次重排让整组"脏"
+  //     → 操控端绿点狂传一堆没必要的 order(t36)。两者一律不走按篇通道。
+  // 注意：**不含 title**（Stage B2 起标题也收归结构总账权威，不走按篇 LWW；正文指纹也已不含标题）。
+  //   也不含 frac/order（见上）。这些字段在 storage._webdavApplyNote 里被「保留本地」，按篇通道一律不仲裁。
+  const _META_FIELDS = ['pinnedAt', 'color', 'icon', 'parentId', 'workspaceId', 'expanded'];
+  function _metaSig(note) {
+    if (!note) return '';
+    return _META_FIELDS.map(k => k + '=' + JSON.stringify(note[k] === undefined ? null : note[k])).join('|');
+  }
+  function _noteTime(note) {
+    const t = note && note.updatedAt ? new Date(note.updatedAt).getTime() : 0;
+    return isNaN(t) ? 0 : t;
+  }
+  /** 取两端元数据字段：谁 updatedAt 更晚采用谁的（本地并列时本地优先）。返回字段对象。 */
+  function _mergeMeta(localNote, remoteNote) {
+    const winner = _noteTime(localNote) >= _noteTime(remoteNote) ? localNote : remoteNote;
+    const out = {};
+    for (const k of _META_FIELDS) out[k] = winner[k];
+    return out;
   }
 
   // ─── 数据格式版本闸（dataFormatVersion）────────────────────────────────────────
-  // 本客户端支持的最高数据格式版本。v2 = 笔记内容 JSON 化（note.doc）。
+  // 本客户端支持的最高数据格式版本。
+  //   v2 = 笔记内容 JSON 化（note.doc）。
+  //   v3 = 在 v2 基础上每篇带「合并账本」(note.ydoc)，真冲突自动合并而非冒副本。
+  //        v3 客户端能处理"缺账本"的旧笔记（退回 v2 冲突副本策略），故 v2→v3 平滑。
   // 云端 manifest.dataFormatVersion 高于此值 → 说明有更新的客户端升级了云端格式，
   // 本（旧）客户端必须停止同步并提示更新，绝不下载/上传，以免污染或丢失新格式数据。
-  const SUPPORTED_DATA_FORMAT = 2;
+  const SUPPORTED_DATA_FORMAT = 3;
   function _localDataFormat() {
     try { return (window.storage.getDataFormatVersion && window.storage.getDataFormatVersion()) || 1; }
     catch (_) { return 1; }
@@ -837,6 +913,7 @@
         title: note.title || '无标题',
         content,
         doc,
+        ydoc: note.ydoc || undefined,  // 合并账本随留底一起保存，还原后账本仍完整（v3）
         parentId: note.parentId == null ? null : note.parentId,
         workspaceId: note.workspaceId || undefined,
         updatedAt: note.updatedAt || null,
@@ -865,6 +942,7 @@
         updatedAt: new Date().toISOString(),
       };
       if (b.doc) note.doc = JSON.parse(JSON.stringify(b.doc));
+      if (b.ydoc) note.ydoc = b.ydoc;  // 还原合并账本（v3）
       window.storage._webdavApplyNote(newId, note);
       const d = window.storage.getAll();
       if (d.rootOrder && !d.rootOrder.includes(newId)) d.rootOrder.push(newId);
@@ -1127,12 +1205,16 @@
     const data = window.storage.getAll();
     const globalDirty = window.storage.isGlobalDirty ? window.storage.isGlobalDirty() : false;
     let hasDownloads = false;
+    let _mergedAnyThisGet = false;  // 本轮有 v3 账本自动合并 → 末尾排一次上传让云端收敛
     _lastDownloadedIds = new Set();
 
     // 第一遍：算出需要下载的 id（顺便给"未下载且无基准"的本地笔记回填基准）。
     const toDownload = [];
     for (const id in manifest.notes) {
-      if (manifest.deleted && manifest.deleted[id]) continue; // 已删除（墓碑）→ 绝不重新下载
+      if (manifest.deleted && manifest.deleted[id]) continue; // 云端墓碑 → 绝不重新下载
+      // 【B+ 止架】本地总账已把它判为「删除/回收站」→ 即使云端清单还残留它(另一台尚未收到删除而回传)也绝不下回，
+      //   否则会和即时同步的删除互相打架，表现为笔记忽隐忽现/又被网盘弹回。删除唯一权威=墓碑。
+      if (window.storage.isNoteDeleted && window.storage.isNoteDeleted(id)) continue;
       const remoteTs = manifest.notes[id].updatedAt || 0;
       const localNote = data.notes[id];
       const localTs = localNote ? new Date(localNote.updatedAt || 0).getTime() : 0;
@@ -1260,8 +1342,20 @@
 
         if (localDiverged && !sameContent) {
           // 真冲突：本地相对基准有改动，且与远端内容不同 → 两份都不丢。
-          // 把"本地版本"另存为冲突副本，本体采用远端较新版本，
-          // 使所有设备最终收敛到同一份（业界 conflicted-copy 标准做法）。
+          // 【v3 优先】两端都有账本 → 自动合并成一份，不再冒副本；融合结果标脏待上传让云端收敛。
+          const merged = _tryLedgerMerge(localNote, remoteNote);
+          if (merged) {
+            _backupBeforeOverwrite(id, localNote, 'merge-download'); // 仍留底，极端情况下可找回合并前本地版
+            window.storage._webdavApplyNote(id, merged);
+            if (merged.parentId == null && !data.rootOrder.includes(id)) data.rootOrder.push(id);
+            if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]);
+            _setBase(id, remoteHash, remoteTs); // 基准对齐"云端现有版本"：下次上传融合版前不会误判冲突
+            _lastDownloadedIds.add(id);
+            hasDownloads = true;
+            _mergedAnyThisGet = true;
+            continue;
+          }
+          // 【v2 兜底】无账本：沿用"冲突副本 + 采纳远端"旧策略。
           const copyId = _saveConflictCopy(id, localNote);
           window.storage._webdavApplyNote(id, remoteNote);
           // 只有"顶级笔记"才进 rootOrder：子笔记若被塞进 rootOrder，会同时按
@@ -1334,6 +1428,20 @@
       }
     }
 
+    // 结构总账（方案2 wire-sync，影子）：把云端总账按「认领/合并」规则并入本地，保持跨设备一致。
+    //   仅更新本地总账，**不当结构权威**（不改真实结构、不触发重渲），故无 hasDownloads。失败忽略，绝不影响主同步。
+    try {
+      if (manifest.structLedger) {
+        if (adoptMode && window.storage._webdavReplaceStructLedger) {
+          // 采纳权威世代：直接以云端总账为准（丢弃本地可能陈旧的总账与删除标记）。
+          //   若仍走 merge，本地旧墓碑会把权威恢复的笔记又删掉、并回传污染云端（设备B反向污染的根因）。
+          window.storage._webdavReplaceStructLedger(manifest.structLedger);
+        } else if (window.storage._webdavApplyStructLedger) {
+          window.storage._webdavApplyStructLedger(manifest.structLedger);
+        }
+      }
+    } catch (e) { console.warn('[webdav] 结构总账下载并入失败（忽略，不影响主同步）', e); }
+
     // 标记待下载图片（图片仓库已外置：经 storage.getImageMap 取内存缓存，等后端载入完成再比对，
     // 否则启动早期缓存为空会把"本地其实有"的图片全部误判为待下载）
     if (window.storage.imagesReady) await window.storage.imagesReady();
@@ -1385,6 +1493,31 @@
     if (_pendingImageDownloads.size > 0) {
       _scheduleImageDownloads();
     }
+    // v3 账本合并产生了"待上传的融合版" → 排一次上传，让云端尽快收敛到合并结果（debounce，安全可重入）。
+    if (_mergedAnyThisGet) schedulePut();
+  }
+
+  /** v3 账本自动合并：两端都带 ydoc 账本时，融合两份账本得到合并正文，替代"冒冲突副本"。
+   *  返回融合后的 note 或 null（任一端无账本 / 引擎不可用 / 合并异常 → 调用方退回旧的冲突副本路径）。
+   *  以远端为基底（title/parentId 等沿用远端，与旧策略"采纳远端"一致），正文与账本用融合结果。 */
+  function _tryLedgerMerge(localNote, remoteNote) {
+    try {
+      const Y = window.__ydoc;
+      if (!Y || !Y.ready()) return null;
+      if (!localNote || !remoteNote || !localNote.ydoc || !remoteNote.ydoc) return null;
+      const mergedBytes = Y.merge(localNote.ydoc, remoteNote.ydoc);
+      const mergedDoc = Y.toDoc(mergedBytes);
+      if (!mergedDoc || mergedDoc.type !== 'doc') return null;
+      // 正文用账本融合；元数据(置顶/颜色/图标/位置/标题等)按 updatedAt LWW，绝不被无脑取远端而丢。
+      const meta = _mergeMeta(localNote, remoteNote);
+      const note = Object.assign({}, remoteNote, meta, {
+        doc: mergedDoc,
+        ydoc: mergedBytes,
+        updatedAt: new Date().toISOString(),
+      });
+      delete note.content; // 正文以合并后的 doc 为准，清掉可能陈旧的 md 兜底
+      return note;
+    } catch (e) { console.warn('[webdav] 账本合并失败，退回冲突副本', e); return null; }
   }
 
   /** 把本地未上传的版本另存为一篇独立的"本地冲突副本"笔记，确保它不被远端覆盖丢失。
@@ -1445,13 +1578,42 @@
       if (!remoteNote) continue;                // 取不到远端正文（极少见）→ 不冒险处理，放行
       const remoteHash = _noteHash(remoteNote);
       if (_noteHash(localNote) === remoteHash) {
-        // 内容其实一致（仅 manifest 时间戳不同）→ 不算冲突：对齐基准、清脏、不重复上传。
+        if (_metaSig(localNote) === _metaSig(remoteNote)) {
+          // 正文 + 元数据都一致（仅 manifest 时间戳不同）→ 不算冲突：对齐基准、清脏、不重复上传。
+          _setBase(id, remoteHash, remoteTs);
+          if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+          dirtyIds.delete(id);
+          continue;
+        }
+        // 正文一致、仅元数据不同（典型：置顶/颜色/图标/移动/换笔记本）→ 绝不丢弃，按时间 LWW 合并。
+        const meta = _mergeMeta(localNote, remoteNote);
+        const localWins = _noteTime(localNote) >= _noteTime(remoteNote);
+        const mergedNote = Object.assign({}, localNote, meta);
+        window.storage._webdavApplyNote(id, mergedNote);
+        if (mergedNote.parentId == null && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
         _setBase(id, remoteHash, remoteTs);
-        if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
-        dirtyIds.delete(id);
+        adopted.add(id);
+        if (localWins) {
+          // 本地元数据更新 → 保持脏，本次 PUT 直接上传融合版让云端/其它设备收敛（不移出 dirtyIds）。
+        } else {
+          // 远端元数据更新 → 采纳远端、清脏（云端已是该版，无需重传）。
+          if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+          dirtyIds.delete(id);
+        }
         continue;
       }
-      // 真冲突：留底 + 本地另存冲突副本（不丢）+ 本体采纳远端较新版本。
+      // 真冲突：【v3 优先】两端都有账本 → 合并成一份，保持脏让本次 PUT 直接上传融合版，云端收敛。
+      const merged = _tryLedgerMerge(localNote, remoteNote);
+      if (merged) {
+        _backupBeforeOverwrite(id, localNote, 'merge-upload'); // 仍留底，极端情况下可找回合并前本地版
+        window.storage._webdavApplyNote(id, merged);
+        if (merged.parentId == null && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
+        _setBase(id, remoteHash, remoteTs); // 对齐云端现版；上传成功后 doPut 会再更新为融合版指纹
+        adopted.add(id);
+        // 注意：不从 dirtyIds 移除——本次 PUT 继续上传融合结果。
+        continue;
+      }
+      // 【v2 兜底】无账本：留底 + 本地另存冲突副本（不丢）+ 本体采纳远端较新版本。
       _backupBeforeOverwrite(id, localNote, 'upload-conflict');
       const copyId = _saveConflictCopy(id, localNote);
       window.storage._webdavApplyNote(id, remoteNote);
@@ -1507,7 +1669,7 @@
 
   // ─── PUT（上传变更）────────────────────────────────────────────────────────────
   // strict 含义同 doGet：手动同步时错误原样上抛
-  async function doPut({ force = false, strict = false } = {}) {
+  async function doPut({ force = false, strict = false, freshLedger = false } = {}) {
     if (!_config || _stopped) return;
     // 口令不一致闸：确认与云端口令不符后绝不上传笔记正文——否则会把本设备这把钥匙的密文
     // 写上云端，造成新旧混钥，所有设备从此反复误报"口令不一致"且无法自愈（曾发生）。
@@ -1654,12 +1816,21 @@
         const delMap = manifest.deleted || {};
         manifest.rootOrder = _mergeIdOrderUp(data.rootOrder, manifest.rootOrder).filter(id => !delMap[id]);
         manifest.trashOrder = _mergeIdOrderUp(data.trashOrder, manifest.trashOrder).filter(id => !delMap[id]);
-        // 笔记本墓碑：合并本地+云端墓碑，并据此剔除已删除的笔记本，使删除经云端生效
-        manifest.wsDeleted = { ...(manifest.wsDeleted || {}), ...(data.wsTombstones || {}) };
-        manifest.workspaces = _mergeByIdUp(data.workspaces, manifest.workspaces).filter(w => !manifest.wsDeleted[w.id]);
-        // 模板墓碑：同笔记本，合并墓碑并剔除已删除模板，使删除经云端生效
-        manifest.tplDeleted = { ...(manifest.tplDeleted || {}), ...(data.tplTombstones || {}) };
-        manifest.templates = _mergeByIdUp(data.templates, manifest.templates).filter(t => !manifest.tplDeleted[t.id]);
+        if (freshLedger) {
+          // 权威覆盖（覆盖恢复/覆盖云端）：丢弃云端旧的笔记本/模板删除标记与云端独有项，
+          //   manifest 以本地导入结果为准，其它设备靠 epoch 进采纳模式对齐到这份干净全集。
+          manifest.wsDeleted = { ...(data.wsTombstones || {}) };
+          manifest.workspaces = (data.workspaces || []).filter(w => !manifest.wsDeleted[w.id]);
+          manifest.tplDeleted = { ...(data.tplTombstones || {}) };
+          manifest.templates = (data.templates || []).filter(t => !manifest.tplDeleted[t.id]);
+        } else {
+          // 笔记本墓碑：合并本地+云端墓碑，并据此剔除已删除的笔记本，使删除经云端生效
+          manifest.wsDeleted = { ...(manifest.wsDeleted || {}), ...(data.wsTombstones || {}) };
+          manifest.workspaces = _mergeByIdUp(data.workspaces, manifest.workspaces).filter(w => !manifest.wsDeleted[w.id]);
+          // 模板墓碑：同笔记本，合并墓碑并剔除已删除模板，使删除经云端生效
+          manifest.tplDeleted = { ...(manifest.tplDeleted || {}), ...(data.tplTombstones || {}) };
+          manifest.templates = _mergeByIdUp(data.templates, manifest.templates).filter(t => !manifest.tplDeleted[t.id]);
+        }
         manifest.settings = _extractSharedSettings(data.settings);
       }
 
@@ -1672,6 +1843,29 @@
           manifest.notes[id].parentId = ln.parentId == null ? null : ln.parentId;
         }
       }
+
+      // 结构总账（方案2 wire-sync，影子）：按「创世/认领」规则把本地总账并入 manifest 一起上云。
+      //   一律走 storage 收口，同步层绝不直接 merge（两份独立创世 merge 会丢数据，已验证）。
+      try {
+        if (window.storage._webdavGetStructLedger) {
+          if (freshLedger) {
+            // 权威覆盖：**绝不合并云端总账**——云端旧的删除标记在 CRDT「删除优先」下永不复活，
+            //   一合并就把刚恢复的笔记/笔记本又删掉（覆盖恢复后刷新丢笔记的根因）。
+            //   直接用本地刚重建的全新（零墓碑）总账替换云端。
+            const fresh = window.storage._webdavGetStructLedger();
+            if (fresh) manifest.structLedger = fresh;
+          } else {
+            const cloudLedger = manifest.structLedger;
+            if (cloudLedger && window.storage._webdavApplyStructLedger) {
+              window.storage._webdavApplyStructLedger(cloudLedger);   // 认领/合并云端基线进本地
+            } else if (!cloudLedger && window.storage._webdavMarkStructLedgerRooted) {
+              window.storage._webdavMarkStructLedgerRooted();          // 本机是首个上传者 → 标记扎根
+            }
+            const merged = window.storage._webdavGetStructLedger();
+            if (merged) manifest.structLedger = merged;
+          }
+        }
+      } catch (e) { console.warn('[webdav] 结构总账上传处理失败（忽略，不影响主同步）', e); }
 
       // 30 天清理 deleted
       _purgeOldDeleted(manifest);
@@ -1836,6 +2030,13 @@
     manifest.tplDeleted = { ...(manifest.tplDeleted || {}), ...(data.tplTombstones || {}) };
     manifest.templates = (data.templates || []).filter(t => !manifest.tplDeleted[t.id]);
     manifest.settings = _extractSharedSettings(data.settings);
+    // 结构总账（方案2 wire-sync）：首次同步本机即基线，写入 manifest 并标记扎根。
+    try {
+      if (window.storage._webdavGetStructLedger) {
+        const merged = window.storage._webdavGetStructLedger();
+        if (merged) { manifest.structLedger = merged; if (window.storage._webdavMarkStructLedgerRooted) window.storage._webdavMarkStructLedgerRooted(); }
+      }
+    } catch (e) { console.warn('[webdav] 首次同步结构总账写入失败（忽略）', e); }
     manifest.updatedAt = Date.now();
     manifest.deviceId = _ensureClientId();
 
@@ -1897,7 +2098,7 @@
       } else {
         doPut();
       }
-    }, PUT_DEBOUNCE_MS);
+    }, _putDebounceMs);
   }
 
   function flushPutOnBlur() {
@@ -2199,7 +2400,7 @@
       'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
       'editorPadding', 'sidebarWidth', 'outlineOpen',
       'activeWorkspace', 'lastOpenedId', 'recent', 'imagesDir',
-      'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes', 'webdavProxy', 'webdavCryptoPass'];
+      'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes', 'webdavProxy', 'webdavCryptoPass', 'pinned'];
     const LOCAL_PREFIX = ['webdav_', '_'];
     const shared = {};
     for (const k in settings) {
@@ -2211,7 +2412,10 @@
   }
 
   async function _prepareNoteBody(note) {
-    const json = JSON.stringify(note);
+    // frac 不写进按篇文件：它只由结构总账权威同步。写进文件会和总账互踩、且陈旧 frac 回传会反复重排。
+    let body = note;
+    if (note && 'frac' in note) { body = Object.assign({}, note); delete body.frac; }
+    const json = JSON.stringify(body);
     if (_config && _config.encryptNotes) return await notesEncrypt(json);
     return json;
   }
@@ -2471,6 +2675,8 @@
     // 镜像覆盖是用户主动发起的修复动作，允许在 stop() 之后、startAutoSync 之前执行
     // （切换/改口令流程先完成重加密再启动自动同步，避免轮询用新口令拉旧口令云端而误报）
     _stopped = false;
+    // 权威覆盖期间：让即时层暂不接收对端「结构/整篇」直推，堵死「落后设备把旧结构回灌、删掉刚恢复笔记」的空窗。
+    if (!dryRun) { try { window.realtime && window.realtime.beginAuthoritativeReset && window.realtime.beginAuthoritativeReset(); } catch (_) {} }
     try {
       if (_syncing) await _waitSyncDone();
       const data = window.storage.getAll();
@@ -2542,12 +2748,17 @@
       _decMismatch = false; // 镜像覆盖 = 用当前口令整体重新加密云端，正是"口令不一致"的修复动作，解除上传闸
       _decFailRounds = 0;
       if (window.storage.markAllNotesDirty) window.storage.markAllNotesDirty();
-      await doPut({ force: true, strict: true });
+      // 权威覆盖：用本地实际内容重建一份零删除标记的结构总账，doPut 以「替换」方式推云
+      //   （否则云端旧删除标记会在下次同步把恢复的笔记删掉——覆盖恢复丢笔记的根治点）。
+      try { if (window.storage._webdavRebuildStructLedgerFresh) window.storage._webdavRebuildStructLedgerFresh(); } catch (_) {}
+      await doPut({ force: true, strict: true, freshLedger: true });
       return { ok: true, removed };
     } catch (e) {
       _syncing = false;
       if (e instanceof RateLimitError) return { ok: false, error: '服务器限流（503），请稍后重试' };
       return { ok: false, error: e.message };
+    } finally {
+      if (!dryRun) { try { window.realtime && window.realtime.endAuthoritativeReset && window.realtime.endAuthoritativeReset(); } catch (_) {} }
     }
   }
 
@@ -2587,6 +2798,10 @@
     probeCloudState,
     checkCloudKey,
     resolveProxy,
+    resolveRelay,
+    rtRoomId,
+    rtEncrypt,
+    rtDecrypt,
     loadConfig,
     startAutoSync,
     stop,
@@ -2612,6 +2827,8 @@
     listLocalBackups,
     restoreLocalBackup,
     clearLocalBackups,
+    backupBeforeOverwrite: _backupBeforeOverwrite, // 供 storage 总账落地永久删除前留底
+    getAdoptedEpoch: _getAdoptedEpoch, // 供即时层「结构入口世代闸」判定对端是否落后（null=本账号首次未记录）
 
     isSyncing: () => _syncing,
     isPaused: () => _paused,

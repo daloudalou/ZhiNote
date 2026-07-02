@@ -1,0 +1,19 @@
+name = "zhinote-relay"
+main = "worker.js"
+compatibility_date = "2025-09-01"
+
+# 实时房间 = Durable Object。免费版只能用 SQLite 存储后端，故用 new_sqlite_classes。
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# 可选：绑定自己的域名（workers.dev 在国内常被拦截）。
+# 在 Cloudflare 控制台 Workers → 该 Worker → Settings → Domains & Routes 添加，
+# 或取消下面注释并填好你的 zone（需该域名已托管在同一 Cloudflare 账号）。
+# [[routes]]
+# pattern = "relay.example.com"
+# custom_domain = true

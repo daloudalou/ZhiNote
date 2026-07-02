@@ -14,7 +14,10 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync
 import { join, resolve } from 'path';
 import { execSync } from 'child_process';
 
-const ROOT = resolve(import.meta.dirname);
+// 自动定位项目根：本脚本在私有库位于 tools/（根在上一层），复制到对外仓库时位于根目录（根即自身）。
+// 哪一层含 src/ 就以哪层为根 → 两种布局都正确，勿写死。
+let ROOT = resolve(import.meta.dirname);
+if (!existsSync(join(ROOT, 'src'))) ROOT = resolve(ROOT, '..');
 const SRC = join(ROOT, 'src');
 const OUT_BASE = join(ROOT, '发布版本');
 

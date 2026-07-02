@@ -1273,7 +1273,6 @@ body.theme-dark ::highlight(md-search-current) {
   .titlebar-btn { width: 36px !important; }
   .titlebar-btn svg { width: 14px !important; height: 14px !important; }
   .word-count { font-size: 12px; }
-  .save-status { font-size: 12px; }
 }
 
 #breadcrumb {
@@ -1343,27 +1342,8 @@ body.theme-dark ::highlight(md-search-current) {
 }
 .app-tooltip.visible { opacity: 1; }
 
-.save-status {
-  font-size: 10px;
-  line-height: 1;
-  color: var(--text-tertiary);
-  padding: 0 6px;
-  min-width: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-  opacity: 0.7;
-  transition: color var(--transition), opacity var(--transition);
-}
-.save-status.saving { color: #c79543; opacity: 1; }
-.save-status.saved  { color: #5fb87a; opacity: 0.8; }
-.save-status.error  { color: #d96c6c; opacity: 1; }
-body.theme-dark .save-status.saved  { color: #4f9b66; }
-body.theme-dark .save-status.saving { color: #b88a3e; }
-body.theme-dark .save-status.error  { color: #c25f5f; }
-
-/* 云同步徽标：附加在 btn-cloud-sync 右上角 */
+/* 云同步徽标：圆点在 btn-cloud-sync 右上角（5px，沿用原尺寸/位置）。
+   五态配色：关闭=灰 / 本地待上云=淡蓝 / 已同步=绿 / 警告=琥珀 / 失败=红；同步中=小转圈。 */
 .cloud-badge {
   position: absolute;
   top: 3px;
@@ -1376,20 +1356,51 @@ body.theme-dark .save-status.error  { color: #c25f5f; }
   pointer-events: none;
   transition: background var(--transition), opacity var(--transition);
 }
-.cloud-badge.synced  { background: #5fb87a; opacity: 0.9; }
-.cloud-badge.syncing { background: #5fb87a; opacity: 1; animation: syncPulse 1s ease-in-out infinite; }
-.cloud-badge.pending { background: #c79543; opacity: 1; }
-.cloud-badge.error   { background: #d96c6c; opacity: 1; }
-.cloud-badge.disabled { background: var(--text-tertiary); opacity: 0.4; }
-body.theme-dark .cloud-badge.synced  { background: #4f9b66; }
-body.theme-dark .cloud-badge.syncing { background: #4f9b66; }
-body.theme-dark .cloud-badge.pending { background: #b88a3e; }
-body.theme-dark .cloud-badge.error   { background: #c25f5f; }
-
-@keyframes syncPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+.cloud-badge.local    { background: #6fa0e0; opacity: 1; }   /* 已存本机、未上云 */
+.cloud-badge.synced   { background: #5fb87a; opacity: 0.9; } /* 云端已传 */
+.cloud-badge.syncing  { background: #5fb87a; opacity: 1; }   /* 上传/下载中：小转圈见 ::after */
+.cloud-badge.pending  { background: #d9a441; opacity: 1; }   /* 警告：限流/重试 */
+.cloud-badge.error    { background: #d96c6c; opacity: 1; }   /* 失败 */
+.cloud-badge.disabled { background: var(--text-tertiary); opacity: 0.4; } /* 未开同步 */
+/* 同步中：圆点外一圈小转圈（与 5px 圆点同量级，克制） */
+.cloud-badge.syncing::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  border: 1px solid #5fb87a;
+  border-right-color: transparent;
+  animation: cloudBadgeSpin 0.85s linear infinite;
 }
+body.theme-dark .cloud-badge.local    { background: #5b86c4; }
+body.theme-dark .cloud-badge.synced   { background: #4f9b66; }
+body.theme-dark .cloud-badge.syncing  { background: #4f9b66; }
+body.theme-dark .cloud-badge.syncing::after { border-color: #4f9b66; border-right-color: transparent; }
+body.theme-dark .cloud-badge.pending  { background: #b88a3e; }
+body.theme-dark .cloud-badge.error    { background: #c25f5f; }
+
+@keyframes cloudBadgeSpin { to { transform: rotate(360deg); } }
+
+/* 即时同步指示灯：紫点在 btn-cloud-sync 右下角（与右上角同步徽标对称，5px）。
+   平时不显示；仅当「正与其他设备即时同步」时亮紫并轻呼吸。 */
+.rt-badge {
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #8b7fd1;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity var(--transition), transform var(--transition);
+}
+/* 检测到其他设备 → 常亮；正在收发数据 → 呼吸；未检测到 → 不显示。 */
+.rt-badge.active { opacity: 1; transform: scale(1); }
+.rt-badge.active.syncing { animation: rtBadgeBreathe 2s ease-in-out infinite; }
+body.theme-dark .rt-badge { background: #a394e6; }
+@keyframes rtBadgeBreathe { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 /* ========== 编辑区 ========== */
 #editor-container {

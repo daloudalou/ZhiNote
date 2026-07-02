@@ -219,7 +219,7 @@ const palette = (() => {
       matches.forEach(c => { _items.push({ type: 'cmd', ...c }); });
     } else {
       const allNotes = Object.values(storage.getAll().notes || {});
-      const pinned = storage.getSetting('pinned') || [];
+      const pinnedNotes = storage.getPinnedNotes();
       const recent = storage.getSetting('recent') || [];
 
       let candidates = allNotes;
@@ -239,7 +239,6 @@ const palette = (() => {
         }
       } else {
         const recentNotes = recent.map(id => storage.get(id)).filter(Boolean);
-        const pinnedNotes = pinned.map(id => storage.get(id)).filter(Boolean);
         const seen = new Set();
         candidates = [];
         for (const n of [...pinnedNotes, ...recentNotes]) {
@@ -258,7 +257,7 @@ const palette = (() => {
         return;
       }
 
-      const pinnedSet = new Set(pinned);
+      const pinnedSet = new Set(pinnedNotes.map(n => n.id));
       candidates.forEach(n => {
         const path = storage.getAncestors(n.id).slice(0, -1).map(x => x.title).join(' / ');
         const { text, matches } = q ? computeItemMatches(n, q) : { text: '', matches: [] };
@@ -355,16 +354,13 @@ const palette = (() => {
   }
 
   function togglePin(id) {
-    const pinned = storage.getSetting('pinned') || [];
-    const idx = pinned.indexOf(id);
-    if (idx >= 0) pinned.splice(idx, 1);
-    else pinned.unshift(id);
-    storage.setSetting('pinned', pinned);
+    const wasPinned = storage.isPinned(id);
+    storage.setPinned(id, !wasPinned);
     tree.render();
     if (editor.currentId() === id) {
-      document.getElementById('btn-pin')?.classList.toggle('active', idx < 0);
+      editor.refreshPinButton?.();
     }
-    toast(idx >= 0 ? '已取消置顶' : '已置顶', 'success');
+    toast(wasPinned ? '已取消置顶' : '已置顶', 'success');
   }
 
   function pushRecent(id) {
