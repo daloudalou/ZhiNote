@@ -826,12 +826,31 @@
   //   不再走按篇通道，改名不该被当成正文冲突。归一化行尾空格/空行/换行差异，避免序列化抖动误判。
   // ⚠️ 必须含 doc：否则正文指纹失效(编辑正文不改变指纹)。两篇不同笔记正文恰好相同 → 指纹相同无妨：
   //    本函数只做「同一 id 的本地↔远端」比对，从不跨笔记比对(全部用法见文件内 _noteHash 调用处)。
+  // 规范化 doc 结构：递归按键名排序、丢弃「空的 content/marks 数组」。
+  //   只做**语义无损**的整理（JSON 键顺序、空数组本就无意义）——绝不动文字/属性，
+  //   所以两篇真不同的正文不会被误判成相同（不丢改动），而同一篇正文无论经哪条路
+  //   （实时逐字 / 网盘下载 / 账本合并）落地，规范化结果都一致。
+  //   根治「文字一模一样、内部 JSON 字段顺序/空段落写法不同 → 指纹不同 → 假冲突」。
+  function _canonJson(v) {
+    if (Array.isArray(v)) return v.map(_canonJson);
+    if (v && typeof v === 'object') {
+      const out = {};
+      const keys = Object.keys(v).sort();
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i]; const val = v[k];
+        if ((k === 'content' || k === 'marks') && Array.isArray(val) && val.length === 0) continue; // 空=无
+        out[k] = _canonJson(val);
+      }
+      return out;
+    }
+    return v;
+  }
   function _noteHash(note) {
     if (!note) return '';
-    // doc 为事实来源时用其稳定 JSON 串做指纹（getJSON/JSON.parse 往返键序稳定、跨设备一致）。
+    // doc 为事实来源时用其**规范化**后的 JSON 串做指纹（跨路径/跨设备稳定，见 _canonJson）。
     let c;
     if (note.doc) {
-      try { c = JSON.stringify(note.doc); } catch (_) { c = ''; }
+      try { c = JSON.stringify(_canonJson(note.doc)); } catch (_) { c = ''; }
     } else {
       c = (note.content || '').replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n+$/, '');
     }
@@ -1355,18 +1374,16 @@
             _mergedAnyThisGet = true;
             continue;
           }
-          // 【v2 兜底】无账本：沿用"冲突副本 + 采纳远端"旧策略。
-          const copyId = _saveConflictCopy(id, localNote);
-          window.storage._webdavApplyNote(id, remoteNote);
-          // 只有"顶级笔记"才进 rootOrder：子笔记若被塞进 rootOrder，会同时按
-          // 「父节点的子项」和「顶级项」渲染两次（同 id 重复节点，删一个两个都消失）。
-          if (remoteNote.parentId == null && !data.rootOrder.includes(id)) data.rootOrder.push(id);
-          if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
-          _setBase(id, remoteHash, remoteTs);
+          // 【兜底·静默】无账本、无法自动合并（极罕见）：静默按时间保留较新的一份，
+          //   较旧的一份进「同步留底」（可找回、零丢失），**不再冒可见的"本地冲突副本"、不弹提示**。
+          const res = _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data);
+          if (res.localWins) {
+            if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]); // 本地较新 → 让后续上传把它推上云
+          } else if (window.storage.removeDirtyNoteIds) {
+            window.storage.removeDirtyNoteIds([id]);
+          }
           _lastDownloadedIds.add(id);
-          if (copyId) _lastDownloadedIds.add(copyId);
           hasDownloads = true;
-          _emit('cloud-sync', { type: 'webdav-conflict', noteId: id, noteTitle: localNote?.title || id, copyMade: !!copyId });
           continue;
         }
         // 干净下载（或内容本就一致，无需建副本）。
@@ -1545,6 +1562,20 @@
     }
   }
 
+  /** 真冲突且无法自动合并（极罕见：某端确实没账本）→ **静默**处理，不再另存可见的"本地冲突副本"、不弹提示。
+   *  按 updatedAt 保留较新的一份为正本，较旧的一份存入「同步留底」（可在留底里找回，零丢失）。
+   *  返回 { localWins }：调用方据此决定是保持脏（本地较新→上传本地）还是清脏（远端较新→采纳远端）。 */
+  function _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data) {
+    const localWins = _noteTime(localNote) >= _noteTime(remoteNote);
+    const winner = localWins ? localNote : remoteNote;
+    const loser = localWins ? remoteNote : localNote;
+    try { _backupBeforeOverwrite(id, loser, 'silent-conflict'); } catch (_) {} // 较旧版进留底，可找回
+    window.storage._webdavApplyNote(id, winner);
+    if (winner && winner.parentId == null && data && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
+    _setBase(id, remoteHash, remoteTs); // 对齐云端现版指纹；本地较新时下次 PUT 会把本地推上去收敛
+    return { localWins: localWins };
+  }
+
   /**
    * Fix A：上传前的「单篇冲突防护」（红线对称补齐——覆盖远端前必须留底）。
    *
@@ -1613,16 +1644,16 @@
         // 注意：不从 dirtyIds 移除——本次 PUT 继续上传融合结果。
         continue;
       }
-      // 【v2 兜底】无账本：留底 + 本地另存冲突副本（不丢）+ 本体采纳远端较新版本。
-      _backupBeforeOverwrite(id, localNote, 'upload-conflict');
-      const copyId = _saveConflictCopy(id, localNote);
-      window.storage._webdavApplyNote(id, remoteNote);
-      if (remoteNote.parentId == null && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
-      if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
-      dirtyIds.delete(id);
-      _setBase(id, remoteHash, remoteTs);
+      // 【兜底·静默】无账本、无法自动合并（极罕见）：静默按时间保留较新的一份，较旧的一份进「同步留底」
+      //   （可找回、零丢失），**不再冒可见的"本地冲突副本"、不弹提示**。
+      const res = _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data);
       adopted.add(id);
-      _emit('cloud-sync', { type: 'webdav-conflict', noteId: id, noteTitle: localNote.title || id, copyMade: !!copyId });
+      if (res.localWins) {
+        // 本地较新 → 保持脏，本次 PUT 继续上传本地版让云端收敛（不移出 dirtyIds）。
+      } else {
+        if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+        dirtyIds.delete(id);
+      }
     }
     if (adopted.size) {
       // 自愈结构（doPut 路径没有 reconcile）：防止采纳远端后出现"子笔记混进 rootOrder"等结构异常

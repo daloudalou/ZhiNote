@@ -1914,13 +1914,15 @@ body.theme-dark .code-lang-picker { background: var(--bg-elevated, #2a2a2a); bor
 body.theme-dark .code-lang-item:hover { background: var(--bg-hover, #3a3a3a); }
 
 /* Table */
-#editor .ProseMirror table {
+/* 用户表格：排除日历网格（.cal-grid），否则这些 ID 特指度更高的规则会覆盖日历的
+   table-layout:fixed / width:100%，使 min-width:60px、width:auto 生效 → 长记事撑宽列、日历溢出。 */
+#editor .ProseMirror table:not(.cal-grid) {
   border-collapse: collapse;
   width: auto;
   margin: 0.4em 0;
 }
-#editor .ProseMirror table th,
-#editor .ProseMirror table td {
+#editor .ProseMirror table:not(.cal-grid) th,
+#editor .ProseMirror table:not(.cal-grid) td {
   border: 1px solid var(--border, #e8e8e8);
   padding: 5px 10px;
   text-align: left;
@@ -4426,6 +4428,191 @@ body.theme-gruvbox .md-ctx-sep {
   .md-float-bar { max-width: calc(100vw - 16px); overflow-x: auto; }
 }
 
+/* ============================================================
+ * 日历块（calendarBlock / ZhiCalendar）
+ * 网格锁死不可编辑，点某天弹卡片记事；今日样式固定「整格淡底」。
+ * ============================================================ */
+.calendar-block {
+  position: relative;
+  margin: 12px 0;
+  padding: 14px 16px 12px;
+  /* 等宽 7 列的固定观感：块宽自适应到正文，但不超过 600px；列等宽、记事截断、悬停看全文 */
+  width: 100%;
+  max-width: 600px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.calendar-block .cal-title {
+  font-weight: 700; font-size: 15px; cursor: pointer; padding: 3px 9px; border-radius: 7px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  transition: background .12s, color .12s, box-shadow .12s;
+}
+.calendar-block .cal-title:hover { background: var(--bg-tertiary); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.calendar-block .cal-caret { font-size: 10px; opacity: .55; }
+.calendar-block .cal-today, .calendar-block .cal-setbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; cursor: pointer; color: var(--text-secondary);
+  transition: background .12s, color .12s;
+}
+.calendar-block .cal-today { margin-left: auto; }
+.calendar-block .cal-today:hover, .calendar-block .cal-setbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
+
+.calendar-block .cal-pop {
+  position: absolute; z-index: 40; background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg, 0 10px 30px rgba(0,0,0,.18));
+}
+.calendar-block .cal-pop.hidden { display: none; }
+.calendar-block .cal-pop-month { top: 36px; left: 0; width: 236px; padding: 10px; }
+.calendar-block .cal-pop-set { top: 36px; right: 0; width: 224px; padding: 6px; }
+.calendar-block .cal-styrow { display: flex; gap: 4px; padding: 2px 2px 6px; }
+.calendar-block .cal-sty { flex: 1; border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; font-size: 12px; padding: 6px 0; border-radius: 6px; transition: background .12s, color .12s, border-color .12s; }
+.calendar-block .cal-sty:hover { border-color: var(--accent); color: var(--text); }
+.calendar-block .cal-sty.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.calendar-block .cal-pop-div { height: 1px; background: var(--border); margin: 2px 4px 5px; }
+.calendar-block .cal-pop-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.calendar-block .cal-pop-h .cal-y { font-weight: 600; font-size: 13px; cursor: pointer; padding: 2px 8px; border-radius: 5px; transition: background .12s, color .12s; }
+.calendar-block .cal-pop-h .cal-y:hover { background: var(--bg-tertiary); color: var(--accent); }
+.calendar-block .cal-ms { min-height: 108px; }   /* 选月/选年两态高度一致，弹窗尺寸不跳 */
+.calendar-block .cal-pop-h button { border: none; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 15px; padding: 2px 8px; border-radius: 4px; }
+.calendar-block .cal-pop-h button:hover { background: var(--bg-tertiary); color: var(--text); }
+.calendar-block .cal-ms { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.calendar-block .cal-ms button { border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text); cursor: pointer; padding: 7px 0; border-radius: 6px; font-size: 12.5px; }
+.calendar-block .cal-ms button:hover { border-color: var(--accent); }
+.calendar-block .cal-ms button.cur { background: var(--accent); color: #fff; }
+.calendar-block .cal-optrow { display: flex; align-items: center; justify-content: space-between; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.calendar-block .cal-optrow:hover { background: var(--bg-tertiary); }
+.calendar-block .cal-sw { position: relative; width: 34px; height: 19px; border-radius: 19px; background: var(--border-strong); transition: background .15s; flex: none; }
+.calendar-block .cal-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.calendar-block .cal-optrow.on .cal-sw { background: var(--accent); }
+.calendar-block .cal-optrow.on .cal-sw::after { left: 17px; }
+
+/* 网格基座：CSS Grid（表头行 + 天格），彻底摆脱表格样式干扰。配色/圆角/描线交给 A/B/C/D 皮肤。 */
+.calendar-block .cal-gridwrap { }
+.calendar-block .cal-headrow { display: grid; grid-template-columns: repeat(7, 1fr); }
+.calendar-block .cal-wd { text-align: center; font-size: 11px; letter-spacing: .5px; font-weight: 600; color: var(--text-secondary); padding: 8px 0; }
+.calendar-block .cal-wd.we { color: var(--danger); }
+.calendar-block .cal-body { display: grid; grid-template-columns: repeat(7, 1fr); }
+.calendar-block .cal-day { color: var(--text); padding: 5px 7px 6px; min-height: 56px; cursor: pointer; position: relative; transition: background .12s, transform .12s, box-shadow .12s, border-color .12s; }
+.calendar-block .cal-day.cal-pad { cursor: default; }
+.calendar-block .cal-day.wend .cal-dnum { color: var(--danger); }
+.calendar-block .cal-drow { display: flex; align-items: center; justify-content: space-between; gap: 3px; min-height: 20px; }
+.calendar-block .cal-dnum { font-weight: 600; font-size: 13px; line-height: 1.3; }
+.calendar-block .cal-addhint { opacity: 0; color: var(--accent); font-size: 12px; font-weight: 700; }
+.calendar-block .cal-day:hover .cal-addhint { opacity: .5; }
+.calendar-block .cal-sub { font-size: 10px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-block .cal-sub-lunar { color: var(--text-tertiary); }
+.calendar-block .cal-sub-term { color: var(--warning); }
+.calendar-block .cal-sub-fest { color: var(--danger); }
+/* 记事：首条最多 4 字（JS 硬截断），药丸按内容宽——颜色点 + 文字 + 「+N」都完整不遮挡；全文看 hover 浮层。 */
+.calendar-block .cal-notes { margin-top: 3px; }
+.calendar-block .cal-n-inline { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; box-sizing: border-box; font-size: 10px; color: var(--text-secondary); background: var(--accent-bg); border-radius: 4px; padding: 1px 5px; }
+.calendar-block .cal-n-txt { white-space: nowrap; }
+.calendar-block .cal-n-inline.done .cal-n-txt { text-decoration: line-through; color: var(--text-tertiary); }
+.calendar-block .cal-more { flex: none; color: var(--accent); }
+/* 月格 B · 当天任务完成进度「✓ X/Y」 */
+.calendar-block .cal-prog { display: flex; align-items: center; gap: 3px; font-size: 9.5px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.2; }
+.calendar-block .cal-prog.all { color: var(--success); }
+.cal-n-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; vertical-align: middle; flex: none; }
+.cal-n-dot.cal-n-dot-empty { background: var(--border-strong); }
+
+/* ===== 皮肤 A · 净白（无线、留白、今日圆点；Notion / Cron 风）===== */
+.calendar-block[data-cal-style="A"] .cal-headrow { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.calendar-block[data-cal-style="A"] .cal-wd { color: var(--text-tertiary); }
+.calendar-block[data-cal-style="A"] .cal-day { border-radius: 9px; }
+.calendar-block[data-cal-style="A"] .cal-day:not(.cal-pad):hover { background: var(--bg-hover); }
+.calendar-block[data-cal-style="A"] .cal-day.today .cal-dnum { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--accent); color: #fff; }
+
+/* ===== 皮肤 B · 细线（gap 描线 + 圆角裁切，不缺角；今日整格淡底，无圆形）===== */
+.calendar-block[data-cal-style="B"] .cal-gridwrap { border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
+.calendar-block[data-cal-style="B"] .cal-headrow { background: var(--bg-tertiary); border-bottom: 1px solid var(--border-strong); }
+.calendar-block[data-cal-style="B"] .cal-wd { background: var(--bg-tertiary); }
+.calendar-block[data-cal-style="B"] .cal-body { gap: 1px; background: var(--border); }
+.calendar-block[data-cal-style="B"] .cal-day { background: var(--bg-elevated); }
+.calendar-block[data-cal-style="B"] .cal-day:not(.cal-pad):hover { background: var(--bg-hover); }
+.calendar-block[data-cal-style="B"] .cal-day.today { background: var(--accent-bg); }
+.calendar-block[data-cal-style="B"] .cal-day.today .cal-dnum { color: var(--accent); }
+
+/* ===== 皮肤 C · 卡片（每天一张圆角小卡，表头连续不隔开）===== */
+.calendar-block[data-cal-style="C"] .cal-headrow { margin-bottom: 6px; }
+.calendar-block[data-cal-style="C"] .cal-wd { color: var(--text-secondary); }
+.calendar-block[data-cal-style="C"] .cal-body { gap: 6px; }
+.calendar-block[data-cal-style="C"] .cal-day { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 11px; }
+.calendar-block[data-cal-style="C"] .cal-day.cal-pad { background: transparent; border-color: transparent; }
+.calendar-block[data-cal-style="C"] .cal-day:not(.cal-pad):hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,.14); border-color: var(--border-strong); }
+.calendar-block[data-cal-style="C"] .cal-day.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.calendar-block[data-cal-style="C"] .cal-day.today .cal-dnum { color: var(--accent); }
+
+/* ===== 皮肤 D · 柔底（极简无线，今日整格淡底）===== */
+.calendar-block[data-cal-style="D"] .cal-headrow { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.calendar-block[data-cal-style="D"] .cal-day { border-radius: 9px; }
+.calendar-block[data-cal-style="D"] .cal-day:not(.cal-pad):hover { background: var(--bg-hover); }
+.calendar-block[data-cal-style="D"] .cal-day.today { background: var(--accent-bg); }
+.calendar-block[data-cal-style="D"] .cal-day.today .cal-dnum { color: var(--accent); }
+
+/* 天卡片（挂 body，浮层） */
+.cal-daycard {
+  position: fixed; z-index: 3000; width: 252px; background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg, 0 14px 36px rgba(0,0,0,.22));
+  padding: 13px; font-size: 12.5px;
+}
+.cal-daycard.hidden { display: none; }
+.cal-daycard .dt { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+.cal-daycard .meta { font-size: 11px; color: var(--text-secondary); margin-bottom: 9px; line-height: 1.6; }
+.cal-daycard .meta .k { color: var(--text-tertiary); }
+.cal-daycard .meta .r { color: var(--danger); }
+.cal-daycard .meta .g { color: var(--warning); }
+.cal-daycard .cal-addrow { margin: 9px 0 6px; }
+.cal-daycard .cal-addbtn { width: 100%; border: 1px dashed var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 12px; padding: 6px 10px; border-radius: 7px; cursor: pointer; font-family: inherit; transition: color .12s, border-color .12s, background .12s; }
+.cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+.cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 4px; }
+.cal-daycard .cal-note-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; background: var(--bg-tertiary); touch-action: none; }
+.cal-daycard .cal-note-row.cal-dragging { opacity: .5; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
+.cal-daycard .cal-note-row.cal-drop { box-shadow: inset 0 2px 0 var(--accent); }
+/* 颜色选择：卡片内收窄成一行（小一点的色球 + 紧凑间距） */
+.cal-daycard .cal-pal.color-picker-row { padding: 6px 2px 2px; gap: 5px; flex-wrap: nowrap; }
+.cal-daycard .cal-pal .color-dot-choice { width: 15px; height: 15px; border-width: 1.5px; }
+.cal-daycard .cal-note-sw { width: 12px; height: 12px; border-radius: 50%; flex: none; cursor: pointer; border: 1.5px solid var(--border-strong); background: transparent; box-sizing: border-box; transition: transform .12s; }
+.cal-daycard .cal-note-sw:hover { transform: scale(1.2); }
+.cal-daycard .cal-note-sw.has { border-color: transparent; }
+/* 任务勾选框：圆形，边框=记事颜色(--ck)；勾选(.on)→整圆填色+白勾。 */
+.cal-daycard .cal-note-ck { width: 18px; height: 18px; flex: none; box-sizing: border-box; border: 1.7px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-daycard .cal-note-ck svg { opacity: 0; transition: opacity .12s; }
+.cal-daycard .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
+.cal-daycard .cal-note-ck.on svg { opacity: 1; }
+.cal-daycard .cal-note-row.done .cal-edit { text-decoration: line-through; color: var(--text-tertiary); }
+.cal-daycard .cal-edit { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; padding: 2px 3px; border-radius: 4px; outline: none; font-family: inherit; }
+.cal-daycard .cal-edit:focus { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-daycard .del { color: var(--text-tertiary); cursor: pointer; font-size: 13px; flex: none; padding: 0 2px; }
+.cal-daycard .del:hover { color: var(--danger); }
+.cal-daycard .cal-pal { padding: 6px 2px 2px; }
+.cal-daycard .cal-empty { color: var(--text-tertiary); font-size: 11.5px; padding: 4px 0; }
+
+/* 悬停预览：某天多条记事时列出全部（浮层，不挡操作） */
+.cal-hovertip {
+  position: fixed; z-index: 3100; pointer-events: none;
+  max-width: 260px; background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: var(--shadow-lg, 0 10px 28px rgba(0,0,0,.2));
+  padding: 8px 10px; font-size: 12px; color: var(--text);
+}
+.cal-hovertip.hidden { display: none; }
+.cal-hovertip-h { font-size: 10.5px; color: var(--text-tertiary); margin-bottom: 4px; }
+.cal-hovertip-alm { font-size: 10px; color: var(--text-tertiary); line-height: 1.5; margin: 0 0 6px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.cal-hovertip-i { display: flex; align-items: flex-start; gap: 5px; padding: 2px 0; }
+.cal-hovertip-i .cal-n-dot { margin-top: 5px; }
+.cal-hovertip-t { flex: 1; min-width: 0; white-space: normal; word-break: break-word; overflow-wrap: anywhere; line-height: 1.5; }
+.cal-hovertip-i.done .cal-hovertip-t { text-decoration: line-through; color: var(--text-tertiary); }
+
+@media (max-width: 480px) {
+  .calendar-block { padding: 12px 10px 10px; }
+  .calendar-block .cal-grid td { height: 42px; }
+}
+
 </style>
   <style>body:not(.app-ready) { opacity: 0; }</style>
 </head>
@@ -4717,7 +4904,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.1.0';
+    window.__MD_VER__ = 'v1.1.1';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -73015,7 +73202,7 @@ const storage = (() => {
     return { title: note.title || '无标题', content };
   }
 
-  function exportAllAsTree({ allWorkspaces = false, imagesAsFiles = false } = {}) {
+  function exportAllAsTree({ allWorkspaces = false, imagesAsFiles = false, workspaceId = null } = {}) {
     const results = [];
     const sanitize = (name) => (name || '').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim() || '无标题';
 
@@ -73040,7 +73227,7 @@ const storage = (() => {
 
     const workspaces = allWorkspaces
       ? (_data.workspaces || [{ id: 'ws-default', name: '默认笔记本' }])
-      : [{ id: _data.settings?.activeWorkspace || 'ws-default', name: '' }];
+      : [{ id: workspaceId || _data.settings?.activeWorkspace || 'ws-default', name: '' }];
     const multiWs = allWorkspaces && workspaces.length > 1;
     const notesRoot = imagesAsFiles ? NOTES_DIR : ''; // 整包：所有 .md 收进「笔记/」
 
@@ -74499,12 +74686,31 @@ window.storage = storage;
   //   不再走按篇通道，改名不该被当成正文冲突。归一化行尾空格/空行/换行差异，避免序列化抖动误判。
   // ⚠️ 必须含 doc：否则正文指纹失效(编辑正文不改变指纹)。两篇不同笔记正文恰好相同 → 指纹相同无妨：
   //    本函数只做「同一 id 的本地↔远端」比对，从不跨笔记比对(全部用法见文件内 _noteHash 调用处)。
+  // 规范化 doc 结构：递归按键名排序、丢弃「空的 content/marks 数组」。
+  //   只做**语义无损**的整理（JSON 键顺序、空数组本就无意义）——绝不动文字/属性，
+  //   所以两篇真不同的正文不会被误判成相同（不丢改动），而同一篇正文无论经哪条路
+  //   （实时逐字 / 网盘下载 / 账本合并）落地，规范化结果都一致。
+  //   根治「文字一模一样、内部 JSON 字段顺序/空段落写法不同 → 指纹不同 → 假冲突」。
+  function _canonJson(v) {
+    if (Array.isArray(v)) return v.map(_canonJson);
+    if (v && typeof v === 'object') {
+      const out = {};
+      const keys = Object.keys(v).sort();
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i]; const val = v[k];
+        if ((k === 'content' || k === 'marks') && Array.isArray(val) && val.length === 0) continue; // 空=无
+        out[k] = _canonJson(val);
+      }
+      return out;
+    }
+    return v;
+  }
   function _noteHash(note) {
     if (!note) return '';
-    // doc 为事实来源时用其稳定 JSON 串做指纹（getJSON/JSON.parse 往返键序稳定、跨设备一致）。
+    // doc 为事实来源时用其**规范化**后的 JSON 串做指纹（跨路径/跨设备稳定，见 _canonJson）。
     let c;
     if (note.doc) {
-      try { c = JSON.stringify(note.doc); } catch (_) { c = ''; }
+      try { c = JSON.stringify(_canonJson(note.doc)); } catch (_) { c = ''; }
     } else {
       c = (note.content || '').replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n+$/, '');
     }
@@ -75028,18 +75234,16 @@ window.storage = storage;
             _mergedAnyThisGet = true;
             continue;
           }
-          // 【v2 兜底】无账本：沿用"冲突副本 + 采纳远端"旧策略。
-          const copyId = _saveConflictCopy(id, localNote);
-          window.storage._webdavApplyNote(id, remoteNote);
-          // 只有"顶级笔记"才进 rootOrder：子笔记若被塞进 rootOrder，会同时按
-          // 「父节点的子项」和「顶级项」渲染两次（同 id 重复节点，删一个两个都消失）。
-          if (remoteNote.parentId == null && !data.rootOrder.includes(id)) data.rootOrder.push(id);
-          if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
-          _setBase(id, remoteHash, remoteTs);
+          // 【兜底·静默】无账本、无法自动合并（极罕见）：静默按时间保留较新的一份，
+          //   较旧的一份进「同步留底」（可找回、零丢失），**不再冒可见的"本地冲突副本"、不弹提示**。
+          const res = _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data);
+          if (res.localWins) {
+            if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]); // 本地较新 → 让后续上传把它推上云
+          } else if (window.storage.removeDirtyNoteIds) {
+            window.storage.removeDirtyNoteIds([id]);
+          }
           _lastDownloadedIds.add(id);
-          if (copyId) _lastDownloadedIds.add(copyId);
           hasDownloads = true;
-          _emit('cloud-sync', { type: 'webdav-conflict', noteId: id, noteTitle: localNote?.title || id, copyMade: !!copyId });
           continue;
         }
         // 干净下载（或内容本就一致，无需建副本）。
@@ -75218,6 +75422,20 @@ window.storage = storage;
     }
   }
 
+  /** 真冲突且无法自动合并（极罕见：某端确实没账本）→ **静默**处理，不再另存可见的"本地冲突副本"、不弹提示。
+   *  按 updatedAt 保留较新的一份为正本，较旧的一份存入「同步留底」（可在留底里找回，零丢失）。
+   *  返回 { localWins }：调用方据此决定是保持脏（本地较新→上传本地）还是清脏（远端较新→采纳远端）。 */
+  function _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data) {
+    const localWins = _noteTime(localNote) >= _noteTime(remoteNote);
+    const winner = localWins ? localNote : remoteNote;
+    const loser = localWins ? remoteNote : localNote;
+    try { _backupBeforeOverwrite(id, loser, 'silent-conflict'); } catch (_) {} // 较旧版进留底，可找回
+    window.storage._webdavApplyNote(id, winner);
+    if (winner && winner.parentId == null && data && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
+    _setBase(id, remoteHash, remoteTs); // 对齐云端现版指纹；本地较新时下次 PUT 会把本地推上去收敛
+    return { localWins: localWins };
+  }
+
   /**
    * Fix A：上传前的「单篇冲突防护」（红线对称补齐——覆盖远端前必须留底）。
    *
@@ -75286,16 +75504,16 @@ window.storage = storage;
         // 注意：不从 dirtyIds 移除——本次 PUT 继续上传融合结果。
         continue;
       }
-      // 【v2 兜底】无账本：留底 + 本地另存冲突副本（不丢）+ 本体采纳远端较新版本。
-      _backupBeforeOverwrite(id, localNote, 'upload-conflict');
-      const copyId = _saveConflictCopy(id, localNote);
-      window.storage._webdavApplyNote(id, remoteNote);
-      if (remoteNote.parentId == null && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
-      if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
-      dirtyIds.delete(id);
-      _setBase(id, remoteHash, remoteTs);
+      // 【兜底·静默】无账本、无法自动合并（极罕见）：静默按时间保留较新的一份，较旧的一份进「同步留底」
+      //   （可找回、零丢失），**不再冒可见的"本地冲突副本"、不弹提示**。
+      const res = _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data);
       adopted.add(id);
-      _emit('cloud-sync', { type: 'webdav-conflict', noteId: id, noteTitle: localNote.title || id, copyMade: !!copyId });
+      if (res.localWins) {
+        // 本地较新 → 保持脏，本次 PUT 继续上传本地版让云端收敛（不移出 dirtyIds）。
+      } else {
+        if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+        dirtyIds.delete(id);
+      }
     }
     if (adopted.size) {
       // 自愈结构（doPut 路径没有 reconcile）：防止采纳远端后出现"子笔记混进 rootOrder"等结构异常
@@ -78212,6 +78430,7 @@ const tree = (() => {
         editor.open(note.id);
       }},
       { label: '打开文件', icon: '📂', onClick: () => openFileAsNote(null) },
+      { label: '导入笔记本', icon: '📓', onClick: () => { if (window.importNotebookFromZip) window.importNotebookFromZip(); } },
       { type: 'divider' },
       ...(hasSel || _selectMode
         ? [{ label: '取消选择', icon: '↩️', onClick: () => clearSelection() }]
@@ -79217,6 +79436,12 @@ const template = (() => {
   let _currentFilter = '';
   let _slashInserted = false;
 
+  // 内置「简易日历」：不落库（不进模板 CRUD/同步），选中即插入日历块。始终出现在快选列表首位。
+  const BUILTIN_CALENDAR = { id: 'tpl-calendar', name: '简易日历', builtin: true, action: 'calendar' };
+  // 日历图标（线性·日历带勾），与右键「插入 → 简易日历」保持一致。
+  const CAL_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><path d="M9 14.5l2 2 4-4"/></svg>';
+  function withBuiltins(list) { return [BUILTIN_CALENDAR].concat(list || []); }
+
   /** 模板模糊匹配：直接子串 / 拼音全拼 / 拼音首字母 / 字符子序列。空查询返回全部 */
   function matchTemplates(list, query) {
     if (!query) return list.slice();
@@ -79365,7 +79590,7 @@ const template = (() => {
   }
 
   function showPopup(range) {
-    const templates = storage.getTemplates();
+    const templates = withBuiltins(storage.getTemplates());
     const filtered = matchTemplates(templates, _currentFilter);
 
     if (!_popupEl) {
@@ -79391,7 +79616,7 @@ const template = (() => {
       filtered.forEach((tpl, i) => {
         const it = document.createElement('div');
         it.className = 'context-menu-item tpl-item' + (i === 0 ? ' active' : '');
-        it.innerHTML = `<span style="width:14px;color:var(--accent);">⌗</span><span>${escapeHtml(tpl.name)}</span>`;
+        it.innerHTML = `<span style="width:14px;color:var(--accent);display:inline-flex;">${tpl.action === 'calendar' ? CAL_ICON : '⌗'}</span><span>${escapeHtml(tpl.name)}</span>`;
         it.addEventListener('click', () => {
           insertTemplate(tpl);
           hidePopup();
@@ -79480,8 +79705,8 @@ const template = (() => {
     const id = editor.currentId();
     if (!id) return;
     const note = storage.get(id);
-    const content = applyVariables(tpl.content || '', { title: note?.title });
 
+    // 先清掉触发用的 "/xxx" 文本（无论哪种模板都要）。
     const sel = window.getSelection();
     if (sel && sel.rangeCount) {
       const range = sel.getRangeAt(0);
@@ -79500,6 +79725,14 @@ const template = (() => {
         }
       }
     }
+
+    // 内置「简易日历」：插入日历块节点（默认当月 + 自动弹月历），而非 Markdown 文本。
+    if (tpl && tpl.action === 'calendar') {
+      if (typeof window.insertCalendarBlock === 'function') window.insertCalendarBlock();
+      return;
+    }
+
+    const content = applyVariables(tpl.content || '', { title: note?.title });
     editor.insertAtCursor(content);
   }
 
@@ -79601,19 +79834,14 @@ const template = (() => {
       if (window.toast) toast('请先打开一条笔记再插入模板', 'warning');
       return;
     }
-    const list = storage.getTemplates();
+    const list = withBuiltins(storage.getTemplates());
     const pop = document.createElement('div');
     pop.className = 'context-menu tpl-quickpick';
     pop.style.minWidth = '220px';
     pop.style.maxHeight = '400px';
     pop.style.overflowY = 'auto';
 
-    if (!list.length) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'padding:18px;color:var(--text-tertiary);font-size:12px;text-align:center;';
-      empty.textContent = '暂无模板，点击下方"管理"创建';
-      pop.appendChild(empty);
-    } else {
+    {
       const header = document.createElement('div');
       header.style.cssText = 'padding:6px 12px;font-size:11px;color:var(--text-tertiary);background:var(--bg-tertiary);';
       header.textContent = '点击插入到当前光标位置';
@@ -79621,7 +79849,7 @@ const template = (() => {
       list.forEach(tpl => {
         const it = document.createElement('div');
         it.className = 'context-menu-item';
-        it.innerHTML = `<span style="width:16px;color:var(--accent);">⌗</span><span style="flex:1;">${escapeHtml(tpl.name)}</span><span style="color:var(--text-tertiary);font-size:11px;">↵</span>`;
+        it.innerHTML = `<span style="width:16px;color:var(--accent);display:inline-flex;">${tpl.action === 'calendar' ? CAL_ICON : '⌗'}</span><span style="flex:1;">${escapeHtml(tpl.name)}</span><span style="color:var(--text-tertiary);font-size:11px;">↵</span>`;
         it.addEventListener('click', () => {
           insertTemplate(tpl);
           remove();
@@ -82546,6 +82774,702 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 </script>
   <script>
 /**
+ * 日历块引擎 window.ZhiCalendar
+ * ------------------------------------------------------------------
+ * 职责：把「日历块」的农历/节气/节日精确计算 + 交互渲染集中在此，供 editor.js 的
+ *   calendarBlock 节点（atom）挂载。数据以**规范化 JSON 字符串**存于节点 attrs.data，
+ *   序列化为 ```calendar 围栏块（见 editor.js），保证 md→doc→md 往返稳定、不产生幻影编辑。
+ *
+ * 对外接口：
+ *   ZhiCalendar.defaultData()            → 当月默认数据（规范 JSON 串）
+ *   ZhiCalendar.mount(dom, dataStr, cb)  → 挂载到 dom，数据变化时 cb(newStr)；返回 {update,destroy}
+ *   ZhiCalendar._pendingAutoOpen         → 插入后自动弹当月月历（一次性）
+ *
+ * 农历算法采用业界通用的 1900–2100 lunarInfo 表 + 天文节气偏移表（与开源日历库一致，逐日精确）。
+ */
+(function () {
+  'use strict';
+
+  // ===== 农历数据表（1900–2100，通用实现） =====
+  var lunarInfo = [
+    0x04bd8, 0x04ae0, 0x0a570, 0x054d5, 0x0d260, 0x0d950, 0x16554, 0x056a0, 0x09ad0, 0x055d2,
+    0x04ae0, 0x0a5b6, 0x0a4d0, 0x0d250, 0x1d255, 0x0b540, 0x0d6a0, 0x0ada2, 0x095b0, 0x14977,
+    0x04970, 0x0a4b0, 0x0b4b5, 0x06a50, 0x06d40, 0x1ab54, 0x02b60, 0x09570, 0x052f2, 0x04970,
+    0x06566, 0x0d4a0, 0x0ea50, 0x06e95, 0x05ad0, 0x02b60, 0x186e3, 0x092e0, 0x1c8d7, 0x0c950,
+    0x0d4a0, 0x1d8a6, 0x0b550, 0x056a0, 0x1a5b4, 0x025d0, 0x092d0, 0x0d2b2, 0x0a950, 0x0b557,
+    0x06ca0, 0x0b550, 0x15355, 0x04da0, 0x0a5b0, 0x14573, 0x052b0, 0x0a9a8, 0x0e950, 0x06aa0,
+    0x0aea6, 0x0ab50, 0x04b60, 0x0aae4, 0x0a570, 0x05260, 0x0f263, 0x0d950, 0x05b57, 0x056a0,
+    0x096d0, 0x04dd5, 0x04ad0, 0x0a4d0, 0x0d4d4, 0x0d250, 0x0d558, 0x0b540, 0x0b6a0, 0x195a6,
+    0x095b0, 0x049b0, 0x0a974, 0x0a4b0, 0x0b27a, 0x06a50, 0x06d40, 0x0af46, 0x0ab60, 0x09570,
+    0x04af5, 0x04970, 0x064b0, 0x074a3, 0x0ea50, 0x06b58, 0x055c0, 0x0ab60, 0x096d5, 0x092e0,
+    0x0c960, 0x0d954, 0x0d4a0, 0x0da50, 0x07552, 0x056a0, 0x0abb7, 0x025d0, 0x092d0, 0x0cab5,
+    0x0a950, 0x0b4a0, 0x0baa4, 0x0ad50, 0x055d9, 0x04ba0, 0x0a5b0, 0x15176, 0x052b0, 0x0a930,
+    0x07954, 0x06aa0, 0x0ad50, 0x05b52, 0x04b60, 0x0a6e6, 0x0a4e0, 0x0d260, 0x0ea65, 0x0d530,
+    0x05aa0, 0x076a3, 0x096d0, 0x04afb, 0x04ad0, 0x0a4d0, 0x1d0b6, 0x0d250, 0x0d520, 0x0dd45,
+    0x0b5a0, 0x056d0, 0x055b2, 0x049b0, 0x0a577, 0x0a4b0, 0x0aa50, 0x1b255, 0x06d20, 0x0ada0,
+    0x14b63, 0x09370, 0x049f8, 0x04970, 0x064b0, 0x168a6, 0x0ea50, 0x06b20, 0x1a6c4, 0x0aae0,
+    0x0a2e0, 0x0d2e3, 0x0c960, 0x0d557, 0x0d4a0, 0x0da50, 0x05d55, 0x056a0, 0x0a6d0, 0x055d4,
+    0x052d0, 0x0a9b8, 0x0a950, 0x0b4a0, 0x0b6a6, 0x0ad50, 0x055a0, 0x0aba4, 0x0a5b0, 0x052b0,
+    0x0b273, 0x06930, 0x07337, 0x06aa0, 0x0ad50, 0x14b55, 0x04b60, 0x0a570, 0x054e4, 0x0d160,
+    0x0e968, 0x0d520, 0x0daa0, 0x16aa6, 0x056d0, 0x04ae0, 0x0a9d4, 0x0a2d0, 0x0d150, 0x0f252,
+    0x0d520,
+  ];
+
+  // 24 节气相对 1900-01-06 02:05 的分钟偏移基准表
+  var sTermInfo = [
+    0, 21208, 42467, 63836, 85337, 107014, 128867, 150921, 173149, 195551, 218072, 240693,
+    263343, 285989, 308563, 331033, 353350, 375494, 397447, 419210, 440795, 462224, 483532, 504758,
+  ];
+  var solarTerm = ['小寒', '大寒', '立春', '雨水', '惊蛰', '春分', '清明', '谷雨', '立夏', '小满', '芒种', '夏至',
+    '小暑', '大暑', '立秋', '处暑', '白露', '秋分', '寒露', '霜降', '立冬', '小雪', '大雪', '冬至'];
+
+  var Gan = ['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸'];
+  var Zhi = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申', '酉', '戌', '亥'];
+  var Animals = ['鼠', '牛', '虎', '兔', '龙', '蛇', '马', '羊', '猴', '鸡', '狗', '猪'];
+  var nStr1 = ['日', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+  var monthCn = ['正', '二', '三', '四', '五', '六', '七', '八', '九', '十', '冬', '腊'];
+
+  // 阳历固定节日
+  var SOLAR_FEST = {
+    '1-1': '元旦', '2-14': '情人节', '3-8': '妇女节', '3-12': '植树节', '4-1': '愚人节',
+    '5-1': '劳动节', '5-4': '青年节', '6-1': '儿童节', '7-1': '建党节', '8-1': '建军节',
+    '9-10': '教师节', '10-1': '国庆', '12-24': '平安夜', '12-25': '圣诞节',
+  };
+  var LUNAR_FEST = {
+    '1-1': '春节', '1-15': '元宵', '2-2': '龙头节', '5-5': '端午', '7-7': '七夕',
+    '7-15': '中元', '8-15': '中秋', '9-9': '重阳', '12-8': '腊八', '12-23': '小年',
+  };
+
+  function leapMonth(y) { return lunarInfo[y - 1900] & 0xf; }
+  function leapDays(y) { if (leapMonth(y)) return (lunarInfo[y - 1900] & 0x10000) ? 30 : 29; return 0; }
+  function monthDays(y, m) { return (lunarInfo[y - 1900] & (0x10000 >> m)) ? 30 : 29; }
+  function lYearDays(y) {
+    var i, sum = 348;
+    for (i = 0x8000; i > 0x8; i >>= 1) sum += (lunarInfo[y - 1900] & i) ? 1 : 0;
+    return sum + leapDays(y);
+  }
+
+  function solar2lunar(y, m, d) {
+    if (y < 1900 || y > 2100) return { year: y, month: 1, day: 1, isLeap: false, ok: false };
+    var offset = (Date.UTC(y, m - 1, d) - Date.UTC(1900, 0, 31)) / 86400000;
+    var temp = 0, i, leap = 0, isLeap = false;
+    for (i = 1900; i < 2101 && offset > 0; i++) { temp = lYearDays(i); offset -= temp; }
+    if (offset < 0) { offset += temp; i--; }
+    var year = i;
+    leap = leapMonth(i);
+    for (i = 1; i < 13 && offset > 0; i++) {
+      if (leap > 0 && i === (leap + 1) && !isLeap) { --i; isLeap = true; temp = leapDays(year); }
+      else { temp = monthDays(year, i); }
+      if (isLeap && i === (leap + 1)) isLeap = false;
+      offset -= temp;
+    }
+    if (offset === 0 && leap > 0 && i === leap + 1) {
+      if (isLeap) { isLeap = false; } else { isLeap = true; --i; }
+    }
+    if (offset < 0) { offset += temp; --i; }
+    return { year: year, month: i, day: offset + 1, isLeap: isLeap, ok: true };
+  }
+
+  function getTerm(y, n) {
+    var off = new Date((31556925974.7 * (y - 1900) + sTermInfo[n - 1] * 60000) + Date.UTC(1900, 0, 6, 2, 5, 0));
+    return off.getUTCDate();
+  }
+  function toChinaDay(d) {
+    switch (d) {
+      case 10: return '初十';
+      case 20: return '二十';
+      case 30: return '三十';
+      default: return ['初', '十', '廿', '卅'][Math.floor(d / 10)] + nStr1[d % 10];
+    }
+  }
+  function monthLabel(mo, isLeap) { return (isLeap ? '闰' : '') + monthCn[mo - 1] + '月'; }
+  function ganzhiYear(y) { var g = (y - 4) % 10, z = (y - 4) % 12; if (g < 0) g += 10; if (z < 0) z += 12; return Gan[g] + Zhi[z]; }
+  function zodiac(y) { var z = (y - 4) % 12; if (z < 0) z += 12; return Animals[z]; }
+
+  function lunarFest(lu) {
+    if (lu.isLeap) return '';
+    var key = lu.month + '-' + lu.day;
+    if (LUNAR_FEST[key]) return LUNAR_FEST[key];
+    if (lu.month === 12 && lu.day === monthDays(lu.year, 12)) return '除夕';
+    return '';
+  }
+
+  // 汇总某阳历日的农历/节气/节日信息
+  function dayInfo(y, m0, d) {
+    var lu = solar2lunar(y, m0 + 1, d);
+    var term = '';
+    if (lu.ok) {
+      if (d === getTerm(y, m0 * 2 + 1)) term = solarTerm[m0 * 2];
+      else if (d === getTerm(y, m0 * 2 + 2)) term = solarTerm[m0 * 2 + 1];
+    }
+    return {
+      lunar: lu,
+      lunarDay: lu.ok ? toChinaDay(lu.day) : '',
+      lunarMonth: lu.ok ? monthLabel(lu.month, lu.isLeap) : '',
+      isFirst: lu.ok && lu.day === 1,
+      term: term,
+      solarFest: SOLAR_FEST[(m0 + 1) + '-' + d] || '',
+      lunarFest: lu.ok ? lunarFest(lu) : '',
+      ganzhi: lu.ok ? ganzhiYear(lu.year) : '',
+      zodiac: lu.ok ? zodiac(lu.year) : '',
+    };
+  }
+
+  // ===== 规范化 JSON（键排序，保证往返/跨端指纹稳定） =====
+  function sortKeys(v) {
+    if (Array.isArray(v)) return v.map(sortKeys);
+    if (v && typeof v === 'object') {
+      var out = {}, ks = Object.keys(v).sort();
+      for (var i = 0; i < ks.length; i++) out[ks[i]] = sortKeys(v[ks[i]]);
+      return out;
+    }
+    return v;
+  }
+  function canon(obj) { try { return JSON.stringify(sortKeys(obj)); } catch (_) { return '{}'; } }
+
+  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, style: 'D' };
+  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历']];
+  var STYLES = [['A', '简约'], ['B', '细线'], ['C', '卡片'], ['D', '柔底']];
+
+  // 「上次选择的显示设置」记忆：只作下一个【新建】日历的默认；不改动任何已存在日历（它们各存各的 opts）。
+  // 存本地（localStorage），属本机 UI 偏好，不进笔记数据、不参与同步/序列化。
+  var CAL_DEF_KEY = 'zhi-cal-default-opts';
+  function loadDefOpts() {
+    var o = {};
+    try { o = JSON.parse(localStorage.getItem(CAL_DEF_KEY) || '{}') || {}; } catch (_) { o = {}; }
+    var opts = {};
+    for (var k in DEFAULT_OPTS) {
+      var dv = DEFAULT_OPTS[k];
+      if (typeof dv === 'boolean') opts[k] = (typeof o[k] === 'boolean') ? o[k] : dv;
+      else opts[k] = (o[k] != null) ? o[k] : dv;
+    }
+    if (['A', 'B', 'C', 'D'].indexOf(opts.style) < 0) opts.style = DEFAULT_OPTS.style;
+    return opts;
+  }
+  function saveDefOpts(opts) {
+    try { localStorage.setItem(CAL_DEF_KEY, JSON.stringify(opts || {})); } catch (_) {}
+  }
+  var WK_MON = ['一', '二', '三', '四', '五', '六', '日'];
+  var WK_SUN = ['日', '一', '二', '三', '四', '五', '六'];
+
+  // 头部图标：与笔记侧栏底部一致的线性图标（stroke=currentColor，圆角）
+  var IC_TODAY = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><circle cx="12" cy="14.5" r="2" fill="currentColor" stroke="none"/></svg>';
+  // 任务勾选：白色对勾（放在填色圆内）；进度小勾用 currentColor。
+  var IC_CHECK = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  var IC_CHECK_S = '<svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  // 主题图标：复用主窗口左下角「主题」按钮的调色盘图标
+  var IC_SET = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.55 0 1-.45 1-1 0-.27-.11-.52-.29-.71-.18-.18-.29-.43-.29-.71 0-.55.45-1 1-1H15c3.31 0 6-2.69 6-6 0-4.96-4.04-9-9-9z"/></svg>';
+
+  // 记事颜色（与笔记标题颜色 COLOR_PRESETS 保持一致，见 tree.js）
+  var COLOR_PRESETS = [
+    { name: '无颜色', value: null },
+    { name: '红色', value: '#f53f3f' },
+    { name: '橙色', value: '#ff9500' },
+    { name: '黄色', value: '#f7ba1e' },
+    { name: '绿色', value: '#00b42a' },
+    { name: '青色', value: '#14c9c9' },
+    { name: '蓝色', value: '#3370ff' },
+    { name: '紫色', value: '#7928ca' },
+    { name: '粉色', value: '#e91e63' },
+    { name: '灰色', value: '#86909c' },
+  ];
+  // 记事条目：无色时存字符串，有色时存 { t, c }（既省体积又向后兼容旧纯字符串数据）。
+  function noteText(n) { return (typeof n === 'string') ? n : ((n && n.t) || ''); }
+  function noteColor(n) { return (typeof n === 'string') ? null : ((n && n.c) || null); }
+  function noteDone(n) { return !!(n && typeof n === 'object' && n.done === true); }
+  // 无色无完成 → 存字符串（省体积、向后兼容）；否则存对象 { t, c?, done? }。
+  function makeNote(t, c, done) {
+    if (!c && !done) return t;
+    var o = { t: t };
+    if (c) o.c = c;
+    if (done) o.done = true;
+    return o;
+  }
+
+  // 存盘对象：过滤空记事、规范化条目（无色→字符串），保证不写入空条目、跨端稳定。
+  function toObj(S) {
+    var notes = {};
+    Object.keys(S.notes || {}).forEach(function (k) {
+      var arr = (S.notes[k] || [])
+        .filter(function (n) { return noteText(n).trim(); })
+        .map(function (n) { return makeNote(noteText(n).trim(), noteColor(n), noteDone(n)); });
+      if (arr.length) notes[k] = arr;
+    });
+    return { v: 1, y: S.y, m: S.m, opts: S.opts, notes: notes };
+  }
+  function parse(str) {
+    var o = {};
+    try { o = JSON.parse(str || '{}') || {}; } catch (_) { o = {}; }
+    var n = new Date();
+    var opts = {};
+    for (var k in DEFAULT_OPTS) {
+      var dv = DEFAULT_OPTS[k];
+      if (typeof dv === 'boolean') opts[k] = (o.opts && typeof o.opts[k] === 'boolean') ? o.opts[k] : dv;
+      else opts[k] = (o.opts && o.opts[k] != null) ? o.opts[k] : dv;
+    }
+    // 向后兼容：旧数据存的是 startSun（周日起始），迁移成 startMon（周一起始）。
+    if (o.opts && typeof o.opts.startMon !== 'boolean' && typeof o.opts.startSun === 'boolean') opts.startMon = !o.opts.startSun;
+    if (['A', 'B', 'C', 'D'].indexOf(opts.style) < 0) opts.style = DEFAULT_OPTS.style;
+    return {
+      y: Number.isFinite(o.y) ? o.y : n.getFullYear(),
+      m: (o.m >= 0 && o.m <= 11) ? o.m : n.getMonth(),
+      opts: opts,
+      notes: (o.notes && typeof o.notes === 'object' && !Array.isArray(o.notes)) ? o.notes : {},
+    };
+  }
+  function defaultData() {
+    var n = new Date();
+    // 新建日历用「上次选择的设置」作默认（首次即全局默认）。
+    return canon({ v: 1, y: n.getFullYear(), m: n.getMonth(), opts: loadDefOpts(), notes: {} });
+  }
+
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function matrix(y, m, startSun) {
+    var di = new Date(y, m + 1, 0).getDate();
+    var lead = new Date(y, m, 1).getDay();
+    lead = startSun ? lead : (lead === 0 ? 6 : lead - 1);
+    var c = [], d, i;
+    for (i = 0; i < lead; i++) c.push(null);
+    for (d = 1; d <= di; d++) c.push(d);
+    while (c.length % 7) c.push(null);
+    var r = [];
+    for (i = 0; i < c.length; i += 7) r.push(c.slice(i, i + 7));
+    return r;
+  }
+
+  // ===== 挂载一个日历实例 =====
+  function mount(dom, dataStr, onChange) {
+    var S = parse(dataStr);
+    var _data = (typeof dataStr === 'string' && dataStr) ? dataStr : canon(toObj(S));
+    var now = new Date();
+    var TODAY = { y: now.getFullYear(), m: now.getMonth(), d: now.getDate() };
+    var card = null, cardDay = 0, cardDocDown = null;
+    var wheelLock = 0, popWheelLock = 0;
+    var py = S.y, pmode = 'm'; // 月历弹层：'m'=选月 / 'y'=选年
+    var openColorIdx = -1, softTimer = null, hoverTip = null;
+    function scheduleSoftCommit() { if (softTimer) clearTimeout(softTimer); softTimer = setTimeout(function () { softTimer = null; commit(); }, 350); }
+    function flushSoftCommit() { if (softTimer) { clearTimeout(softTimer); softTimer = null; } commit(); }
+
+    // 简约黄历一行：干支年 + 农历月日 + 生肖（+ 节气/节日）。
+    function almanacLine(d) {
+      var info = dayInfo(S.y, S.m, d);
+      if (!info.lunar.ok) return '';
+      var s = info.ganzhi + '年' + info.lunarMonth + info.lunarDay + ' · 属' + info.zodiac;
+      if (info.term) s += ' · ' + info.term;
+      var fe = info.solarFest || info.lunarFest;
+      if (fe) s += ' · ' + fe;
+      return s;
+    }
+
+    // 悬停预览：某天有记事（≥1 条）就 hover 显示全部、完整不省略（浮层，pointer-events:none 不挡操作）。
+    function showTip(d, td) {
+      var arr = (S.notes[noteKey(d)] || []).filter(function (n) { return noteText(n).trim(); });
+      if (arr.length < 1) { hideTip(); return; }
+      if (!hoverTip) { hoverTip = document.createElement('div'); hoverTip.className = 'cal-hovertip hidden'; document.body.appendChild(hoverTip); }
+      var alm = S.opts.almanac ? almanacLine(d) : '';
+      hoverTip.innerHTML = '<div class="cal-hovertip-h">' + (S.m + 1) + ' 月 ' + d + ' 日 · ' + arr.length + ' 条记事</div>'
+        + (alm ? '<div class="cal-hovertip-alm">' + esc(alm) + '</div>' : '')
+        + arr.map(function (n) {
+          var c = noteColor(n);
+          return '<div class="cal-hovertip-i' + (noteDone(n) ? ' done' : '') + '"><span class="cal-n-dot' + (c ? '' : ' cal-n-dot-empty') + '"' + (c ? ' style="background:' + c + '"' : '') + '></span><span class="cal-hovertip-t">' + esc(noteText(n)) + '</span></div>';
+        }).join('');
+      hoverTip.classList.remove('hidden');
+      var r = td.getBoundingClientRect();
+      var tw = hoverTip.offsetWidth, th = hoverTip.offsetHeight;
+      var left = r.left, top = r.bottom + 6;
+      if (left + tw > window.innerWidth - 8) left = window.innerWidth - 8 - tw;
+      if (left < 8) left = 8;
+      if (top + th > window.innerHeight - 8) top = Math.max(8, r.top - th - 6);
+      hoverTip.style.left = Math.round(left) + 'px';
+      hoverTip.style.top = Math.round(top) + 'px';
+    }
+    function hideTip() { if (hoverTip) hoverTip.classList.add('hidden'); }
+
+    function isToday(d) { return S.y === TODAY.y && S.m === TODAY.m && d === TODAY.d; }
+    function wendCol(ci) { var startSun = !S.opts.startMon; return S.opts.wend && (startSun ? (ci === 0 || ci === 6) : (ci === 5 || ci === 6)); }
+    function noteKey(d) { return S.y + '-' + (S.m + 1) + '-' + d; }
+    function cellSub(d) {
+      var info = dayInfo(S.y, S.m, d);
+      if (S.opts.fest) { var f = info.solarFest || info.lunarFest; if (f) return { text: f, cls: 'fest' }; }
+      if (S.opts.term && info.term) return { text: info.term, cls: 'term' };
+      if (S.opts.lunar) return { text: info.isFirst ? info.lunarMonth : info.lunarDay, cls: 'lunar' };
+      return null;
+    }
+    function commit() { _data = canon(toObj(S)); render(); if (onChange) onChange(_data); }
+
+    function render() {
+      dom.setAttribute('data-cal-style', S.opts.style || 'A');
+      var startSun = !S.opts.startMon;
+      var head = startSun ? WK_SUN : WK_MON;
+      var rows = matrix(S.y, S.m, startSun);
+      var h = '<div class="cal-head">'
+        + '<span class="cal-title" title="点击选择年月">' + S.y + ' 年 ' + (S.m + 1) + ' 月 <span class="cal-caret">▾</span></span>'
+        + '<button class="cal-today" type="button" title="回到今天">' + IC_TODAY + '</button>'
+        + '<button class="cal-setbtn" title="显示设置">' + IC_SET + '</button>'
+        + '<div class="cal-pop cal-pop-month hidden"><div class="cal-pop-h"><button class="cal-py" type="button">‹</button><span class="cal-y"></span><button class="cal-ny" type="button">›</button></div><div class="cal-ms"></div></div>'
+        + '<div class="cal-pop cal-pop-set hidden">'
+        + '<div class="cal-styrow">' + STYLES.map(function (s) {
+          return '<button type="button" class="cal-sty' + (S.opts.style === s[0] ? ' on' : '') + '" data-s="' + s[0] + '">' + s[1] + '</button>';
+        }).join('') + '</div>'
+        + '<div class="cal-pop-div"></div>'
+        + OPTS.map(function (o) {
+          return '<div class="cal-optrow' + (S.opts[o[0]] ? ' on' : '') + '" data-k="' + o[0] + '"><span>' + o[1] + '</span><span class="cal-sw"></span></div>';
+        }).join('') + '</div>'
+        + '</div>';
+      // CSS Grid（而非 table）：表头独立一行、天格独立一栅格 → 皮肤可自由控制圆角/间距/描线，
+      // 也彻底摆脱编辑器通用表格样式的干扰。
+      h += '<div class="cal-gridwrap"><div class="cal-headrow">';
+      head.forEach(function (x, ci) { h += '<div class="cal-wd' + (wendCol(ci) ? ' we' : '') + '">' + x + '</div>'; });
+      h += '</div><div class="cal-body">';
+      rows.forEach(function (row) {
+        row.forEach(function (d, ci) {
+          if (!d) { h += '<div class="cal-day cal-pad"></div>'; return; }
+          var cls = ['cal-day'];
+          if (wendCol(ci)) cls.push('wend');
+          if (S.opts.today && isToday(d)) cls.push('today');
+          var sub = cellSub(d);
+          var subHtml = sub ? '<div class="cal-sub cal-sub-' + sub.cls + '">' + esc(sub.text) + '</div>' : '';
+          var arr = (S.notes[noteKey(d)] || []).filter(function (n) { return noteText(n).trim(); });
+          var notesHtml = '';
+          if (arr.length) {
+            var fc = noteColor(arr[0]);
+            var dot = fc ? '<span class="cal-n-dot" style="background:' + fc + '"></span>' : '';
+            // 首条最多取 4 字（硬截断、无省略号）；下方一行进度「X/Y」（月格 B）。
+            var t4 = noteText(arr[0]).slice(0, 4);
+            var d0 = noteDone(arr[0]) ? ' done' : '';
+            var doneN = arr.filter(function (n) { return noteDone(n); }).length;
+            notesHtml = '<div class="cal-notes"><span class="cal-n-inline' + d0 + '">' + dot + '<span class="cal-n-txt">' + esc(t4) + '</span></span>'
+              + '<div class="cal-prog' + (doneN === arr.length ? ' all' : '') + '">' + IC_CHECK_S + doneN + '/' + arr.length + '</div></div>';
+          }
+          h += '<div class="' + cls.join(' ') + '" data-d="' + d + '"><div class="cal-drow"><span class="cal-dnum">' + d + '</span><span class="cal-addhint">＋</span></div>' + subHtml + notesHtml + '</div>';
+        });
+      });
+      h += '</div></div>';
+      dom.innerHTML = h;
+      bind();
+    }
+
+    function closePops() {
+      var mp = dom.querySelector('.cal-pop-month'), sp = dom.querySelector('.cal-pop-set');
+      if (mp) mp.classList.add('hidden');
+      if (sp) sp.classList.add('hidden');
+    }
+    function openMonth() {
+      var mp = dom.querySelector('.cal-pop-month'), sp = dom.querySelector('.cal-pop-set');
+      sp.classList.add('hidden');
+      mp.classList.remove('hidden');
+      py = S.y; pmode = 'm';
+      drawPop();
+    }
+    // 月历弹层：pmode='m' 选月，pmode='y' 选年（点年份文字切换）。弹窗尺寸固定。
+    function drawPop() {
+      var mp = dom.querySelector('.cal-pop-month');
+      if (!mp) return;
+      var ylabel = mp.querySelector('.cal-y');
+      var box = mp.querySelector('.cal-ms');
+      box.innerHTML = '';
+      if (pmode === 'm') {
+        ylabel.textContent = py + ' 年';
+        for (var i = 0; i < 12; i++) {
+          (function (i) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = (i + 1) + '月';
+            if (py === S.y && i === S.m) b.classList.add('cur');
+            b.addEventListener('click', function (e) { e.stopPropagation(); S.y = py; S.m = i; commit(); });
+            box.appendChild(b);
+          })(i);
+        }
+      } else {
+        var base = Math.floor(py / 12) * 12;
+        ylabel.textContent = base + ' - ' + (base + 11);
+        for (var j = 0; j < 12; j++) {
+          (function (y) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.textContent = y;
+            if (y === py) b.classList.add('cur');
+            b.addEventListener('click', function (e) { e.stopPropagation(); py = y; pmode = 'm'; drawPop(); });
+            box.appendChild(b);
+          })(base + j);
+        }
+      }
+    }
+
+    function bind() {
+      var head = dom.querySelector('.cal-head');
+      var mp = head.querySelector('.cal-pop-month'), sp = head.querySelector('.cal-pop-set');
+      head.querySelector('.cal-title').addEventListener('click', function (e) { e.stopPropagation(); if (mp.classList.contains('hidden')) openMonth(); else mp.classList.add('hidden'); });
+      head.querySelector('.cal-setbtn').addEventListener('click', function (e) { e.stopPropagation(); mp.classList.add('hidden'); sp.classList.toggle('hidden'); });
+      head.querySelector('.cal-today').addEventListener('click', function (e) { e.stopPropagation(); S.y = TODAY.y; S.m = TODAY.m; commit(); });
+      head.querySelector('.cal-py').addEventListener('click', function (e) { e.stopPropagation(); py += (pmode === 'm' ? -1 : -12); drawPop(); });
+      head.querySelector('.cal-ny').addEventListener('click', function (e) { e.stopPropagation(); py += (pmode === 'm' ? 1 : 12); drawPop(); });
+      head.querySelector('.cal-y').addEventListener('click', function (e) { e.stopPropagation(); pmode = (pmode === 'm' ? 'y' : 'm'); drawPop(); });
+      // 弹层内滚轮切年：仅在弹层范围内生效，stopPropagation 阻断到日历/笔记的滚动，弹窗大小不变。
+      mp.addEventListener('wheel', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        var t = Date.now(); if (t - popWheelLock < 160) return; popWheelLock = t;
+        py += (e.deltaY > 0 ? 1 : -1); drawPop();
+      }, { passive: false });
+      sp.querySelectorAll('.cal-optrow').forEach(function (r) {
+        r.addEventListener('click', function (e) { e.stopPropagation(); S.opts[r.dataset.k] = !S.opts[r.dataset.k]; commit(); saveDefOpts(S.opts); dom.querySelector('.cal-pop-set').classList.remove('hidden'); });
+      });
+      sp.querySelectorAll('.cal-sty').forEach(function (b) {
+        b.addEventListener('click', function (e) { e.stopPropagation(); S.opts.style = b.dataset.s; commit(); saveDefOpts(S.opts); dom.querySelector('.cal-pop-set').classList.remove('hidden'); });
+      });
+      dom.querySelectorAll('.cal-day[data-d]').forEach(function (el) {
+        el.addEventListener('click', function () { hideTip(); openDay(+el.dataset.d, el); });
+        el.addEventListener('mouseenter', function () { showTip(+el.dataset.d, el); });
+        el.addEventListener('mouseleave', hideTip);
+      });
+    }
+
+    function openDay(d, td) {
+      cardDay = d;
+      openColorIdx = -1;
+      hideTip();
+      if (!card) {
+        card = document.createElement('div');
+        card.className = 'cal-daycard hidden';
+        document.body.appendChild(card);
+        cardDocDown = function (ev) {
+          if (card && !card.contains(ev.target) && !(ev.target.closest && ev.target.closest('.cal-day[data-d]'))) card.classList.add('hidden');
+        };
+        document.addEventListener('mousedown', cardDocDown, true);
+      }
+      drawCard();
+      card.classList.remove('hidden');
+      var r = td.getBoundingClientRect();
+      var w = 252, left = r.right + 8, top = r.top;
+      if (left + w > window.innerWidth - 10) left = r.left - w - 6;
+      if (left < 10) left = 10;
+      var ch = card.offsetHeight || 200;
+      if (top + ch > window.innerHeight - 10) top = Math.max(10, window.innerHeight - ch - 10);
+      card.style.left = Math.round(left) + 'px';
+      card.style.top = Math.round(top) + 'px';
+    }
+
+    function drawCard(focusIdx) {
+      var d = cardDay;
+      var info = dayInfo(S.y, S.m, d);
+      var wd = new Date(S.y, S.m, d).getDay();
+      var meta = '';
+      if (S.opts.almanac && info.lunar.ok) {
+        meta = '<span class="k">农历</span> ' + info.ganzhi + '年 · 属' + info.zodiac + '<br>'
+          + info.lunarMonth + info.lunarDay;
+        if (info.term) meta += ' · <span class="g">' + info.term + '</span>';
+        var fe = info.solarFest || info.lunarFest;
+        if (fe) meta += ' · <span class="r">' + fe + '</span>';
+      }
+      var key = noteKey(d);
+      var arr = S.notes[key] || [];
+      var rows;
+      if (arr.length) {
+        rows = arr.map(function (n, i) {
+          var t = noteText(n), c = noteColor(n);
+          var sw = '<span class="cal-note-sw' + (c ? ' has' : '') + '" data-i="' + i + '"' + (c ? ' style="background:' + c + '"' : '') + ' title="颜色（长按记事可拖动排序）"></span>';
+          var pal = '';
+          if (openColorIdx === i) {
+            pal = '<div class="color-picker-row cal-pal" data-i="' + i + '">' + COLOR_PRESETS.map(function (cc) {
+              return '<div class="color-dot-choice' + (cc.value ? '' : ' none') + ((c || null) === cc.value ? ' selected' : '') + '" data-c="' + (cc.value || '') + '"' + (cc.value ? ' style="background:' + cc.value + '"' : '') + ' title="' + cc.name + '"></div>';
+            }).join('') + '</div>';
+          }
+          var dn = noteDone(n);
+          // 圆形勾选框，边框=记事颜色；勾选→整圆填色+白勾。点它=完成/取消。
+          var ck = '<span class="cal-note-ck' + (dn ? ' on' : '') + '" data-i="' + i + '"' + (c ? ' style="--ck:' + c + '"' : '') + ' title="完成/取消">' + IC_CHECK + '</span>';
+          return '<div class="cal-note-row' + (dn ? ' done' : '') + '" data-i="' + i + '">' + ck + '<input class="cal-edit" type="text" data-i="' + i + '" value="' + esc(t) + '">' + sw + '<span class="del" data-i="' + i + '">×</span></div>' + pal;
+        }).join('');
+      } else {
+        rows = '<div class="cal-empty">还没有记事</div>';
+      }
+      card.innerHTML = '<div class="dt">' + (S.m + 1) + ' 月 ' + d + ' 日 · 周' + '日一二三四五六'[wd] + '</div>'
+        + (meta ? '<div class="meta">' + meta + '</div>' : '')
+        + '<div class="cal-addrow"><button type="button" class="cal-addbtn">＋ 添加记事</button></div>'
+        + '<div class="cal-notelist">' + rows + '</div>';
+
+      // 「添加记事」：顶部插入一条空记事并聚焦（不再用底部输入框，避免抓错框的老 bug）
+      var addbtn = card.querySelector('.cal-addbtn');
+      addbtn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+      addbtn.addEventListener('click', function () {
+        flushSoftCommit();
+        (S.notes[key] = S.notes[key] || []).unshift('');
+        openColorIdx = -1;
+        drawCard(0);
+      });
+      // 记事可直接编辑：输入去抖落盘（不重绘卡片、不丢焦点）；失焦为空则删除。
+      card.querySelectorAll('.cal-edit').forEach(function (inp) {
+        inp.addEventListener('input', function () {
+          var i = +inp.dataset.i;
+          var a = S.notes[key] || [];
+          a[i] = makeNote(inp.value, noteColor(a[i]), noteDone(a[i]));
+          scheduleSoftCommit();
+        });
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+        inp.addEventListener('blur', function () {
+          var i = +inp.dataset.i;
+          var a = S.notes[key] || [];
+          if (a[i] !== undefined && !noteText(a[i]).trim()) { a.splice(i, 1); if (!a.length) delete S.notes[key]; commit(); drawCard(); }
+          else { flushSoftCommit(); }
+        });
+      });
+      // 删除、颜色开关、选色：用 mousedown/preventDefault，避免抢走输入框焦点导致重排错乱。
+      card.querySelectorAll('.del').forEach(function (x) {
+        x.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        x.addEventListener('click', function () {
+          var a = S.notes[key] || [];
+          a.splice(+x.dataset.i, 1);
+          if (!a.length) delete S.notes[key];
+          openColorIdx = -1;
+          commit(); drawCard();
+        });
+      });
+      card.querySelectorAll('.cal-note-sw').forEach(function (sw) {
+        sw.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        sw.addEventListener('click', function () {
+          var i = +sw.dataset.i;
+          openColorIdx = (openColorIdx === i ? -1 : i);
+          drawCard();
+        });
+      });
+      // 勾选框：切换完成，已完成沉底（稳定分区，保留各自相对顺序）。
+      card.querySelectorAll('.cal-note-ck').forEach(function (ck) {
+        ck.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        ck.addEventListener('click', function () {
+          var i = +ck.dataset.i;
+          var a = S.notes[key] || [];
+          if (a[i] === undefined) return;
+          a[i] = makeNote(noteText(a[i]), noteColor(a[i]), !noteDone(a[i]));
+          var u = a.filter(function (n) { return !noteDone(n); });
+          var dn2 = a.filter(function (n) { return noteDone(n); });
+          S.notes[key] = u.concat(dn2);
+          openColorIdx = -1;
+          commit(); drawCard();
+        });
+      });
+      card.querySelectorAll('.cal-pal .color-dot-choice').forEach(function (dot) {
+        dot.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        dot.addEventListener('click', function () {
+          var i = +dot.parentNode.dataset.i;
+          var a = S.notes[key] || [];
+          a[i] = makeNote(noteText(a[i]), dot.dataset.c || null, noteDone(a[i]));
+          openColorIdx = -1;
+          commit(); drawCard();
+        });
+      });
+
+      // 长按拖动排序：按住记事约 300ms 进入拖动；快速点/拖不触发（不影响点选文字与编辑）。
+      card.querySelectorAll('.cal-note-row').forEach(function (row) {
+        row.addEventListener('pointerdown', function (e) {
+          if (e.button !== undefined && e.button !== 0) return;
+          if (e.target.closest('.del') || e.target.closest('.cal-note-sw') || e.target.closest('.cal-note-ck') || e.target.closest('.color-dot-choice')) return;
+          var from = +row.dataset.i;
+          var sx = e.clientX, sy = e.clientY, pid = e.pointerId;
+          var dragging = false, curTo = from;
+          var timer = setTimeout(begin, 300);
+          function begin() {
+            dragging = true;
+            try { row.setPointerCapture(pid); } catch (_) {}
+            if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+            row.classList.add('cal-dragging');
+            document.body.style.userSelect = 'none';
+          }
+          function move(ev) {
+            if (!dragging) {
+              if (Math.abs(ev.clientX - sx) > 6 || Math.abs(ev.clientY - sy) > 6) { clearTimeout(timer); end(ev, false); }
+              return;
+            }
+            ev.preventDefault();
+            var rs = [].slice.call(card.querySelectorAll('.cal-note-row'));
+            var to = rs.length;
+            for (var i = 0; i < rs.length; i++) {
+              var r = rs[i].getBoundingClientRect();
+              if (ev.clientY < r.top + r.height / 2) { to = i; break; }
+            }
+            curTo = to;
+            rs.forEach(function (r, i) { r.classList.toggle('cal-drop', i === to); });
+          }
+          function end(ev, wasDragging) {
+            clearTimeout(timer);
+            document.removeEventListener('pointermove', move, true);
+            document.removeEventListener('pointerup', up, true);
+            if (!wasDragging) return;
+            document.body.style.userSelect = '';
+            var a = S.notes[key] || [];
+            var to = curTo, insertAt = (to > from) ? to - 1 : to;
+            if (insertAt !== from && from < a.length) {
+              var item = a.splice(from, 1)[0];
+              a.splice(insertAt, 0, item);
+              commit();
+            }
+            drawCard();
+          }
+          function up(ev) { end(ev, dragging); }
+          document.addEventListener('pointermove', move, true);
+          document.addEventListener('pointerup', up, true);
+        });
+      });
+
+      if (typeof focusIdx === 'number') {
+        var inps = card.querySelectorAll('.cal-edit');
+        if (inps[focusIdx]) inps[focusIdx].focus();
+      }
+    }
+
+    // 滚轮切月：鼠标在整个日历上滚动即切月；移开日历正常滚页面。节流：一次滚动一个月。
+    function onWheel(e) {
+      e.preventDefault();
+      var t = Date.now();
+      if (t - wheelLock < 200) return;
+      wheelLock = t;
+      S.m += (e.deltaY > 0 ? 1 : -1);
+      if (S.m < 0) { S.m = 11; S.y--; }
+      if (S.m > 11) { S.m = 0; S.y++; }
+      commit();
+    }
+    dom.addEventListener('wheel', onWheel, { passive: false });
+
+    // 点击任意「非弹层、非切换按钮」处都关闭弹层——含日历自身区域（之前只有点日历外部才关）。
+    var onDocDown = function (e) {
+      var mp = dom.querySelector('.cal-pop-month'), sp = dom.querySelector('.cal-pop-set');
+      var inPop = (mp && !mp.classList.contains('hidden') && mp.contains(e.target))
+        || (sp && !sp.classList.contains('hidden') && sp.contains(e.target));
+      var onToggle = e.target.closest && (e.target.closest('.cal-title') || e.target.closest('.cal-setbtn'));
+      if (!inPop && !onToggle) closePops();
+    };
+    document.addEventListener('mousedown', onDocDown, true);
+
+    render();
+    if (api._pendingAutoOpen) { api._pendingAutoOpen = false; setTimeout(function () { try { openMonth(); } catch (_) {} }, 0); }
+
+    return {
+      update: function (str) {
+        if (str === _data) return;
+        _data = str;
+        S = parse(str);
+        py = S.y;
+        render();
+      },
+      destroy: function () {
+        if (softTimer) { try { clearTimeout(softTimer); } catch (_) {} softTimer = null; }
+        if (hoverTip) { try { hoverTip.remove(); } catch (_) {} hoverTip = null; }
+        try { dom.removeEventListener('wheel', onWheel); } catch (_) {}
+        try { document.removeEventListener('mousedown', onDocDown, true); } catch (_) {}
+        if (card) {
+          try { document.removeEventListener('mousedown', cardDocDown, true); } catch (_) {}
+          try { card.remove(); } catch (_) {}
+          card = null;
+        }
+      },
+    };
+  }
+
+  var api = { mount: mount, defaultData: defaultData, canon: canon, dayInfo: dayInfo, _pendingAutoOpen: false };
+  window.ZhiCalendar = api;
+})();
+
+</script>
+  <script>
+/**
  * editor.js — Tiptap-based WYSIWYG Markdown editor (local bundle version)
  */
 (function() {
@@ -82713,6 +83637,70 @@ const MathBlock = Node.create({
         }
       });
       return { dom };
+    };
+  },
+});
+
+// 日历块：atom 节点，数据（规范 JSON 串）存 attrs.data，序列化为 ```calendar 围栏块。
+// 交互渲染全交给 window.ZhiCalendar（src/calendar.js）。数据只在用户操作时经 setNodeMarkup 回写，
+// 挂载/更新不写回，保证打开旧笔记不判脏、md 往返稳定（见 no-regression 规则）。
+const CalendarBlock = Node.create({
+  name: 'calendarBlock',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+  addAttributes() {
+    return { data: { default: '{}' } };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-calendar-block]', getAttrs: el => ({ data: el.getAttribute('data-cal') || '{}' }) }];
+  },
+  renderHTML({ node }) {
+    return ['div', { 'data-calendar-block': '', 'data-cal': (node.attrs && node.attrs.data) || '{}', class: 'calendar-block' }];
+  },
+  renderMarkdown(node) {
+    const data = (node.attrs && node.attrs.data) || '{}';
+    return '```calendar\n' + data + '\n```';
+  },
+  addNodeView() {
+    return ({ node, getPos, editor: ed }) => {
+      const dom = document.createElement('div');
+      dom.className = 'calendar-block';
+      dom.setAttribute('data-calendar-block', '');
+      dom.contentEditable = 'false';
+      dom.addEventListener('dragstart', (e) => e.preventDefault());
+      dom.addEventListener('mousedown', (e) => {
+        // 右键选中整块（便于删除/剪切），左键交给日历内部交互。
+        if (e.button === 2) {
+          const p = getPos();
+          if (typeof p === 'number') ed.commands.setNodeSelection(p);
+        }
+      });
+      let ctrl = null;
+      if (window.ZhiCalendar && typeof window.ZhiCalendar.mount === 'function') {
+        ctrl = window.ZhiCalendar.mount(dom, (node.attrs && node.attrs.data) || '{}', (newData) => {
+          const p = getPos();
+          if (typeof p !== 'number') return;
+          ed.chain().command(({ tr }) => {
+            tr.setNodeMarkup(p, undefined, { data: newData });
+            return true;
+          }).run();
+        });
+      } else {
+        dom.textContent = '[日历]';
+      }
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'calendarBlock') return false;
+          if (ctrl && ctrl.update) ctrl.update((updated.attrs && updated.attrs.data) || '{}');
+          return true;
+        },
+        destroy() { if (ctrl && ctrl.destroy) ctrl.destroy(); },
+        ignoreMutation() { return true; },
+        stopEvent() { return true; },
+      };
     };
   },
 });
@@ -83108,6 +84096,10 @@ const CustomCodeBlock = CodeBlock.extend({
       if (sp === -1) { language = info; }
       else { language = info.slice(0, sp); title = info.slice(sp + 1).trim() || null; }
       if (language === 'text' && title) language = null;  // text 仅是占位语言
+    }
+    // ```calendar 围栏 → 日历块节点（正文即规范 JSON 串），而非普通代码块。
+    if (language === 'calendar') {
+      return helpers.createNode('calendarBlock', { data: (token.text || '').trim() || '{}' });
     }
     return helpers.createNode(
       'codeBlock',
@@ -83840,6 +84832,7 @@ const editor = (() => {
         Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
         MathInline,
         MathBlock,
+        CalendarBlock,
         // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
         // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
         // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
@@ -85293,6 +86286,7 @@ const editor = (() => {
         _editor.chain().focus().insertTable({
           rows: opts?.rows || 3, cols: opts?.cols || 3, withHeaderRow: true
         }).run(); break;
+      case 'insertCalendar': insertCalendarBlock(); break;
       case 'addRowBefore': _editor.chain().focus().addRowBefore().run(); break;
       case 'addRowAfter': _editor.chain().focus().addRowAfter().run(); break;
       case 'addColumnBefore': _editor.chain().focus().addColumnBefore().run(); break;
@@ -85900,6 +86894,14 @@ const editor = (() => {
     _editor.chain().focus().insertContent(text, { contentType: 'markdown' }).run();
   }
 
+  // 插入日历块：默认当月，插入后自动弹出月历选择（一次性）。
+  function insertCalendarBlock() {
+    if (!_editor) return;
+    const data = (window.ZhiCalendar && window.ZhiCalendar.defaultData) ? window.ZhiCalendar.defaultData() : '{}';
+    if (window.ZhiCalendar) window.ZhiCalendar._pendingAutoOpen = true;
+    _editor.chain().focus().insertContent({ type: 'calendarBlock', attrs: { data } }).run();
+  }
+
   function refreshOutline() {
     const el = document.getElementById('outline-content');
     if (!el) return;
@@ -86146,7 +87148,7 @@ const editor = (() => {
   return {
     initEditor, open, close, reloadCurrent, refreshTitle,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
-    currentId, getValue, focus, insertAtCursor, instance, execCommand,
+    currentId, getValue, focus, insertAtCursor, insertCalendarBlock, instance, execCommand,
     isBusyTyping, flushSaveNow,
     applyRemoteUpdate, isCrdtBound,
     insertImageFromDataUrl,
@@ -86160,6 +87162,7 @@ const editor = (() => {
 })();
 
 window.editor = editor;
+window.insertCalendarBlock = () => editor.insertCalendarBlock();
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => editor.initEditor());
@@ -88344,22 +89347,37 @@ function setupMobileLayout() {
 
   if (window.matchMedia('(pointer: coarse)').matches) setupTouchGestures(mq);
 
-  if (!mq.matches) return;
-  // 进入即看编辑区（仅本次会话，不写入设置，避免影响桌面端）
-  document.body.classList.add('sidebar-collapsed');
-  // 从树里打开笔记后自动收起抽屉；刚新建的笔记除外——
-  // 新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作（用户反馈"侧栏容易自动收缩"）
+  // 从树里打开笔记后自动收起抽屉——**仅窄屏**生效；宽屏（含最大化）不收起。
+  // 刚新建的笔记除外（新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作）。
   const _origOpen = editor.open.bind(editor);
   editor.open = (...args) => {
     const r = _origOpen(...args);
-    const n = storage.get(args[0]);
-    const isNew = n && n.createdAt && (Date.now() - n.createdAt < 1500);
-    if (!isNew) document.body.classList.add('sidebar-collapsed');
+    if (mq.matches) {
+      const n = storage.get(args[0]);
+      const isNew = n && n.createdAt && (Date.now() - n.createdAt < 1500);
+      if (!isNew) document.body.classList.add('sidebar-collapsed');
+    }
     return r;
   };
 
+  // 按当前视口宽度套用侧栏模式：
+  //   窄屏(≤768) → 抽屉默认收起（仅本次会话，不写设置，避免污染桌面端）；
+  //   宽屏/最大化 → 停靠，且**不自动收起**，仅遵从用户手动持久化的折叠偏好。
+  function applySidebarMode() {
+    if (mq.matches) {
+      document.body.classList.add('sidebar-collapsed');
+    } else {
+      const persisted = storage.getSetting ? storage.getSetting('sidebarCollapsed') : false;
+      document.body.classList.toggle('sidebar-collapsed', !!persisted);
+      document.body.classList.remove('outline-drawer-open');
+    }
+  }
+  window.__applySidebarMode = applySidebarMode;
+  mq.addEventListener('change', applySidebarMode);
+  applySidebarMode();
+
   // 抽屉手势：屏幕左缘（24px 内）右滑拉出侧栏；抽屉打开时左滑收起。
-  // 只在 touchend 判定一次（水平位移 > 60px 且明显大于纵向位移），不干扰编辑区的滚动与选字。
+  // 始终注册，处理器内用 mq.matches 守门——**仅窄屏**生效。
   let _tsX = 0, _tsY = 0, _fromEdge = false;
   document.addEventListener('touchstart', (e) => {
     const t = e.touches[0];
@@ -88367,6 +89385,7 @@ function setupMobileLayout() {
     _fromEdge = t.clientX <= 24;
   }, { passive: true });
   document.addEventListener('touchend', (e) => {
+    if (!mq.matches) return;
     if (e.touches.length > 0) return; // 多指手势由 setupTouchGestures 接管
     const t = e.changedTouches[0];
     const dx = t.clientX - _tsX, dy = t.clientY - _tsY;
@@ -90104,6 +91123,8 @@ async function requestMaximize() {
   } finally {
     setTimeout(() => {
       document.body.classList.remove('is-resizing');
+      // 最大化/还原后重算侧栏模式：宽屏不再自动收起（WebView2 最大化未必触发视口 change）
+      if (window.__applySidebarMode) window.__applySidebarMode();
     }, 350);
   }
 }
@@ -90936,6 +91957,7 @@ async function requestExport() {
   const anchor = document.getElementById('btn-export');
   const result = await showActionMenu(anchor, [
     { id: 'current', icon: '📄', label: '导出当前笔记 (.md)' },
+    { id: 'notebook', icon: '📓', label: '导出笔记本 (.zip)' },
     { id: 'all', icon: '📦', label: '导出全部笔记 (.zip)' },
     { id: 'backup', icon: '💾', label: '完整备份 (.json)' },
     { id: 'sync-config', icon: '🔗', label: '导出同步配置' },
@@ -90954,6 +91976,30 @@ async function requestExport() {
       fileName = `${data.title}.md`;
       filter = 'Markdown 文件|*.md';
       makeContent = () => data.content;
+    } else if (choice === 'notebook') {
+      if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+      const workspaces = storage.getWorkspaces();
+      let ws;
+      if (workspaces.length <= 1) {
+        ws = workspaces[0];
+      } else {
+        const pick = await showActionMenu(anchor, workspaces.map(w => ({ id: w.id, icon: w.icon || '📓', label: w.name || '未命名' })));
+        if (!pick) return;
+        ws = workspaces.find(w => w.id === pick.id);
+      }
+      if (!ws) { toast('没有可导出的笔记本', 'warning'); return; }
+      fileName = `${(ws.name || '笔记本').replace(/[<>:"/\\|?*]/g, '_')}_${ts}.zip`;
+      filter = '笔记本压缩包|*.zip';
+      isBinary = true;
+      makeContent = async () => {
+        const files = storage.exportAllAsTree({ workspaceId: ws.id, imagesAsFiles: true });
+        if (!files.length) throw new Error('该笔记本没有可导出的笔记');
+        const zip = new JSZip();
+        for (const f of files) zip.file(f.path, f.content, f.base64 ? { base64: true } : undefined);
+        // 标记为「单个笔记本」导出：导入时据此新建一个笔记本，并沿用名称/图标。
+        zip.file('.zhinote-meta.json', JSON.stringify({ version: 1, notebook: { name: ws.name, icon: ws.icon } }));
+        return await zip.generateAsync({ type: 'base64' });
+      };
     } else if (choice === 'all') {
       if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
       fileName = `notes_${ts}.zip`;
@@ -91024,6 +92070,7 @@ async function requestImport() {
   const anchor = document.getElementById('btn-import');
   const result = await showActionMenu(anchor, [
     { id: 'md', icon: '📄', label: '导入 Markdown 文件 (.md)' },
+    { id: 'notebook', icon: '📓', label: '导入笔记本 (.zip)' },
     { id: 'zip', icon: '📦', label: '导入 ZIP 压缩包 (.zip)' },
     { id: 'backup', icon: '💾', label: '恢复备份 (.json / .zhinote)' },
     { id: 'sync-config', icon: '🔗', label: '导入同步配置' },
@@ -91032,6 +92079,7 @@ async function requestImport() {
   const choice = result.id;
 
   try {
+    if (choice === 'notebook') { await new Promise(r => setTimeout(r, 350)); return await importNotebookFromZip(); }
     if (choice === 'sync-config') {
       const text = (await navigator.clipboard.readText() || '').trim();
       if (!text.startsWith('ZHINOTE_SYNC:')) {
@@ -91225,12 +92273,13 @@ async function requestImport() {
   }
 }
 
-async function _parseZipToNotes(zip) {
+async function _parseZipToNotes(zip, opts = {}) {
   const notes = [];
   let wsMap = null;
+  const forceWsId = opts.forceWorkspaceId || null; // 「导入笔记本」：全部归入这个新建笔记本，忽略包内多本子映射
 
   const metaFile = zip.file('.zhinote-meta.json');
-  if (metaFile) {
+  if (!forceWsId && metaFile) {
     try {
       const metaText = await metaFile.async('string');
       const meta = JSON.parse(metaText);
@@ -91292,8 +92341,8 @@ async function _parseZipToNotes(zip) {
     const fileName = parts.pop();
     const title = fileName.replace(/\.(md|txt)$/i, '') || '无标题';
 
-    let workspaceId = null;
-    if (wsMap && parts.length > 0) {
+    let workspaceId = forceWsId;
+    if (!forceWsId && wsMap && parts.length > 0) {
       const topFolder = parts[0];
       if (wsMap[topFolder]) {
         workspaceId = wsMap[topFolder];
@@ -91304,6 +92353,89 @@ async function _parseZipToNotes(zip) {
   }
   return notes;
 }
+
+/** 笔记本重名 → 自动加后缀「名字 (2)」「名字 (3)」…，绝不合并进现有本子、绝不覆盖。 */
+function _dedupeWorkspaceName(base) {
+  const name = (base || '').trim() || '导入的笔记本';
+  const names = new Set(storage.getWorkspaces().map(w => (w.name || '').trim()));
+  if (!names.has(name)) return name;
+  let i = 2;
+  while (names.has(`${name} (${i})`)) i++;
+  return `${name} (${i})`;
+}
+
+/** 导入单个「笔记本」：始终**新建**一个笔记本，全部笔记用新 id 归入其中——只新增、不覆盖、不合并同名，
+ *  走日常增量同步那条安全路（即时同步会把新本子+新笔记推给其它设备），不碰覆盖/世代/墓碑等危险操作。 */
+async function importNotebookFromZip() {
+  if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+  try {
+    let zip, fallbackName = '导入的笔记本';
+    if (storage.isQuicker()) {
+      const spResult = await window.host.file.op({ mode: 'openDialog', filter: '笔记本压缩包|*.zip', isBinary: 'true', multiSelect: 'false' });
+      const raw = spResult?.result || '';
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const fileData = Array.isArray(parsed) ? parsed[0] : parsed;
+      fallbackName = (fileData.name || '').replace(/\.zip$/i, '') || fallbackName;
+      const bytes = Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0));
+      zip = await JSZip.loadAsync(bytes);
+    } else {
+      const selected = await fileOpen({ extensions: ['.zip'], multiple: false });
+      if (!selected) return;
+      fallbackName = (selected.name || '').replace(/\.zip$/i, '') || fallbackName;
+      zip = await JSZip.loadAsync(await selected.arrayBuffer());
+    }
+
+    // 读元数据取笔记本名/图标（导出笔记本时写入）；没有就用文件名兜底。
+    let nbName = fallbackName, nbIcon = '📓';
+    const metaFile = zip.file('.zhinote-meta.json');
+    if (metaFile) {
+      try {
+        const m = JSON.parse(await metaFile.async('string'));
+        if (m && m.notebook) { nbName = m.notebook.name || nbName; nbIcon = m.notebook.icon || nbIcon; }
+      } catch (_) {}
+    }
+
+    const finalName = _dedupeWorkspaceName(nbName);
+    const ws = storage.createWorkspace(finalName, nbIcon);
+    const notes = await _parseZipToNotes(zip, { forceWorkspaceId: ws.id });
+    if (!notes.length) {
+      // 空包：撤掉刚建的空本子，避免留下垃圾
+      try { if (storage.deleteWorkspace) storage.deleteWorkspace(ws.id, 'purge'); } catch (_) {}
+      toast('压缩包里没有可导入的笔记', 'warning');
+      return;
+    }
+
+    const pathMap = {};
+    let imported = 0;
+    for (const item of notes) {
+      let parentId = null;
+      let pathAccum = ws.id + '|';
+      for (const dir of item.parentPath) {
+        pathAccum += dir + '/';
+        if (pathMap[pathAccum]) {
+          parentId = pathMap[pathAccum];
+        } else {
+          const folder = storage.create({ parentId, title: dir, workspaceId: ws.id });
+          pathMap[pathAccum] = folder.id;
+          parentId = folder.id;
+        }
+      }
+      storage.create({ parentId, title: item.title, content: item.content, workspaceId: ws.id });
+      imported++;
+    }
+
+    try { storage.setActiveWorkspace(ws.id); } catch (_) {}
+    tree.render();
+    try { refreshWorkspaceSwitcher(); } catch (_) {}
+    try { renderWelcomeRecent(); } catch (_) {}
+    toast(`已导入笔记本「${finalName}」，共 ${imported} 篇`, 'success');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    toast('导入笔记本失败：' + (err?.message || err), 'error');
+  }
+}
+window.importNotebookFromZip = importNotebookFromZip;
 
 async function _doBackupImport(text, anchor) {
   const modeResult = await showActionMenu(anchor, [
@@ -93695,6 +94827,7 @@ function initEditorContextMenu() {
         { label: '链接', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18.36 15.54L16.95 14.12 18.36 12.71C20.32 10.75 20.32 7.59 18.36 5.64 16.41 3.68 13.25 3.68 11.29 5.64L9.88 7.05 8.46 5.64 9.88 4.22C12.61 1.49 17.04 1.49 19.78 4.22 22.51 6.96 22.51 11.39 19.78 14.12L18.36 15.54ZM15.54 18.36L14.12 19.78C11.39 22.51 6.96 22.51 4.22 19.78 1.49 17.04 1.49 12.61 4.22 9.88L5.64 8.46 7.05 9.88 5.64 11.29C3.68 13.25 3.68 16.41 5.64 18.36 7.59 20.32 10.75 20.32 12.71 18.36L14.12 16.95 15.54 18.36ZM14.83 7.76L16.24 9.17 9.17 16.24 7.76 14.83 14.83 7.76Z"/></svg>', action: () => editor.execCommand('toggleLink') },
         { label: '分割线', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M2 11H22V13H2V11Z"/></svg>', action: () => editor.execCommand('setHorizontalRule') },
         { label: '公式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 11.5L5 17H3L6.5 10 3 3H5L8 8.5 11 3H13L9.5 10 13 17H11L8 11.5ZM18 7H20V17H18V7ZM14 10H22V12H14V10Z"/></svg>', action: () => insertMathFormula() },
+        { label: '简易日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><path d="M9 14.5l2 2 4-4"/></svg>', action: () => editor.execCommand('insertCalendar') },
       ]},
       { sep: true },
       { label: '表情符号', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2 22 6.48 22 12 17.52 22 12 22ZM12 20C16.42 20 20 16.42 20 12S16.42 4 12 4 4 7.58 4 12 7.58 20 12 20ZM8 14H16C16 16.21 14.21 18 12 18S8 16.21 8 14ZM8 10C7.17 10 6.5 9.33 6.5 8.5S7.17 7 8 7 9.5 7.67 9.5 8.5 8.83 10 8 10ZM16 10C15.17 10 14.5 9.33 14.5 8.5S15.17 7 16 7 17.5 7.67 17.5 8.5 16.83 10 16 10Z"/></svg>', action: () => {

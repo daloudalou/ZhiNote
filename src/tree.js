@@ -1696,6 +1696,7 @@ const tree = (() => {
         editor.open(note.id);
       }},
       { label: '打开文件', icon: '📂', onClick: () => openFileAsNote(null) },
+      { label: '导入笔记本', icon: '📓', onClick: () => { if (window.importNotebookFromZip) window.importNotebookFromZip(); } },
       { type: 'divider' },
       ...(hasSel || _selectMode
         ? [{ label: '取消选择', icon: '↩️', onClick: () => clearSelection() }]

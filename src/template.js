@@ -13,6 +13,12 @@ const template = (() => {
   let _currentFilter = '';
   let _slashInserted = false;
 
+  // 内置「简易日历」：不落库（不进模板 CRUD/同步），选中即插入日历块。始终出现在快选列表首位。
+  const BUILTIN_CALENDAR = { id: 'tpl-calendar', name: '简易日历', builtin: true, action: 'calendar' };
+  // 日历图标（线性·日历带勾），与右键「插入 → 简易日历」保持一致。
+  const CAL_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><path d="M9 14.5l2 2 4-4"/></svg>';
+  function withBuiltins(list) { return [BUILTIN_CALENDAR].concat(list || []); }
+
   /** 模板模糊匹配：直接子串 / 拼音全拼 / 拼音首字母 / 字符子序列。空查询返回全部 */
   function matchTemplates(list, query) {
     if (!query) return list.slice();
@@ -161,7 +167,7 @@ const template = (() => {
   }
 
   function showPopup(range) {
-    const templates = storage.getTemplates();
+    const templates = withBuiltins(storage.getTemplates());
     const filtered = matchTemplates(templates, _currentFilter);
 
     if (!_popupEl) {
@@ -187,7 +193,7 @@ const template = (() => {
       filtered.forEach((tpl, i) => {
         const it = document.createElement('div');
         it.className = 'context-menu-item tpl-item' + (i === 0 ? ' active' : '');
-        it.innerHTML = `<span style="width:14px;color:var(--accent);">⌗</span><span>${escapeHtml(tpl.name)}</span>`;
+        it.innerHTML = `<span style="width:14px;color:var(--accent);display:inline-flex;">${tpl.action === 'calendar' ? CAL_ICON : '⌗'}</span><span>${escapeHtml(tpl.name)}</span>`;
         it.addEventListener('click', () => {
           insertTemplate(tpl);
           hidePopup();
@@ -276,8 +282,8 @@ const template = (() => {
     const id = editor.currentId();
     if (!id) return;
     const note = storage.get(id);
-    const content = applyVariables(tpl.content || '', { title: note?.title });
 
+    // 先清掉触发用的 "/xxx" 文本（无论哪种模板都要）。
     const sel = window.getSelection();
     if (sel && sel.rangeCount) {
       const range = sel.getRangeAt(0);
@@ -296,6 +302,14 @@ const template = (() => {
         }
       }
     }
+
+    // 内置「简易日历」：插入日历块节点（默认当月 + 自动弹月历），而非 Markdown 文本。
+    if (tpl && tpl.action === 'calendar') {
+      if (typeof window.insertCalendarBlock === 'function') window.insertCalendarBlock();
+      return;
+    }
+
+    const content = applyVariables(tpl.content || '', { title: note?.title });
     editor.insertAtCursor(content);
   }
 
@@ -397,19 +411,14 @@ const template = (() => {
       if (window.toast) toast('请先打开一条笔记再插入模板', 'warning');
       return;
     }
-    const list = storage.getTemplates();
+    const list = withBuiltins(storage.getTemplates());
     const pop = document.createElement('div');
     pop.className = 'context-menu tpl-quickpick';
     pop.style.minWidth = '220px';
     pop.style.maxHeight = '400px';
     pop.style.overflowY = 'auto';
 
-    if (!list.length) {
-      const empty = document.createElement('div');
-      empty.style.cssText = 'padding:18px;color:var(--text-tertiary);font-size:12px;text-align:center;';
-      empty.textContent = '暂无模板，点击下方"管理"创建';
-      pop.appendChild(empty);
-    } else {
+    {
       const header = document.createElement('div');
       header.style.cssText = 'padding:6px 12px;font-size:11px;color:var(--text-tertiary);background:var(--bg-tertiary);';
       header.textContent = '点击插入到当前光标位置';
@@ -417,7 +426,7 @@ const template = (() => {
       list.forEach(tpl => {
         const it = document.createElement('div');
         it.className = 'context-menu-item';
-        it.innerHTML = `<span style="width:16px;color:var(--accent);">⌗</span><span style="flex:1;">${escapeHtml(tpl.name)}</span><span style="color:var(--text-tertiary);font-size:11px;">↵</span>`;
+        it.innerHTML = `<span style="width:16px;color:var(--accent);display:inline-flex;">${tpl.action === 'calendar' ? CAL_ICON : '⌗'}</span><span style="flex:1;">${escapeHtml(tpl.name)}</span><span style="color:var(--text-tertiary);font-size:11px;">↵</span>`;
         it.addEventListener('click', () => {
           insertTemplate(tpl);
           remove();

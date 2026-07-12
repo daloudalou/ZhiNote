@@ -170,6 +170,70 @@ const MathBlock = Node.create({
   },
 });
 
+// 日历块：atom 节点，数据（规范 JSON 串）存 attrs.data，序列化为 ```calendar 围栏块。
+// 交互渲染全交给 window.ZhiCalendar（src/calendar.js）。数据只在用户操作时经 setNodeMarkup 回写，
+// 挂载/更新不写回，保证打开旧笔记不判脏、md 往返稳定（见 no-regression 规则）。
+const CalendarBlock = Node.create({
+  name: 'calendarBlock',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+  addAttributes() {
+    return { data: { default: '{}' } };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-calendar-block]', getAttrs: el => ({ data: el.getAttribute('data-cal') || '{}' }) }];
+  },
+  renderHTML({ node }) {
+    return ['div', { 'data-calendar-block': '', 'data-cal': (node.attrs && node.attrs.data) || '{}', class: 'calendar-block' }];
+  },
+  renderMarkdown(node) {
+    const data = (node.attrs && node.attrs.data) || '{}';
+    return '```calendar\n' + data + '\n```';
+  },
+  addNodeView() {
+    return ({ node, getPos, editor: ed }) => {
+      const dom = document.createElement('div');
+      dom.className = 'calendar-block';
+      dom.setAttribute('data-calendar-block', '');
+      dom.contentEditable = 'false';
+      dom.addEventListener('dragstart', (e) => e.preventDefault());
+      dom.addEventListener('mousedown', (e) => {
+        // 右键选中整块（便于删除/剪切），左键交给日历内部交互。
+        if (e.button === 2) {
+          const p = getPos();
+          if (typeof p === 'number') ed.commands.setNodeSelection(p);
+        }
+      });
+      let ctrl = null;
+      if (window.ZhiCalendar && typeof window.ZhiCalendar.mount === 'function') {
+        ctrl = window.ZhiCalendar.mount(dom, (node.attrs && node.attrs.data) || '{}', (newData) => {
+          const p = getPos();
+          if (typeof p !== 'number') return;
+          ed.chain().command(({ tr }) => {
+            tr.setNodeMarkup(p, undefined, { data: newData });
+            return true;
+          }).run();
+        });
+      } else {
+        dom.textContent = '[日历]';
+      }
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'calendarBlock') return false;
+          if (ctrl && ctrl.update) ctrl.update((updated.attrs && updated.attrs.data) || '{}');
+          return true;
+        },
+        destroy() { if (ctrl && ctrl.destroy) ctrl.destroy(); },
+        ignoreMutation() { return true; },
+        stopEvent() { return true; },
+      };
+    };
+  },
+});
+
 /**
  * CustomTable — 表格序列化为 HTML（而非有损的 GFM 管道表格）
  *
@@ -561,6 +625,10 @@ const CustomCodeBlock = CodeBlock.extend({
       if (sp === -1) { language = info; }
       else { language = info.slice(0, sp); title = info.slice(sp + 1).trim() || null; }
       if (language === 'text' && title) language = null;  // text 仅是占位语言
+    }
+    // ```calendar 围栏 → 日历块节点（正文即规范 JSON 串），而非普通代码块。
+    if (language === 'calendar') {
+      return helpers.createNode('calendarBlock', { data: (token.text || '').trim() || '{}' });
     }
     return helpers.createNode(
       'codeBlock',
@@ -1293,6 +1361,7 @@ const editor = (() => {
         Markdown.configure({ markedOptions: { gfm: true, breaks: true } }),
         MathInline,
         MathBlock,
+        CalendarBlock,
         // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
         // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
         // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
@@ -2746,6 +2815,7 @@ const editor = (() => {
         _editor.chain().focus().insertTable({
           rows: opts?.rows || 3, cols: opts?.cols || 3, withHeaderRow: true
         }).run(); break;
+      case 'insertCalendar': insertCalendarBlock(); break;
       case 'addRowBefore': _editor.chain().focus().addRowBefore().run(); break;
       case 'addRowAfter': _editor.chain().focus().addRowAfter().run(); break;
       case 'addColumnBefore': _editor.chain().focus().addColumnBefore().run(); break;
@@ -3353,6 +3423,14 @@ const editor = (() => {
     _editor.chain().focus().insertContent(text, { contentType: 'markdown' }).run();
   }
 
+  // 插入日历块：默认当月，插入后自动弹出月历选择（一次性）。
+  function insertCalendarBlock() {
+    if (!_editor) return;
+    const data = (window.ZhiCalendar && window.ZhiCalendar.defaultData) ? window.ZhiCalendar.defaultData() : '{}';
+    if (window.ZhiCalendar) window.ZhiCalendar._pendingAutoOpen = true;
+    _editor.chain().focus().insertContent({ type: 'calendarBlock', attrs: { data } }).run();
+  }
+
   function refreshOutline() {
     const el = document.getElementById('outline-content');
     if (!el) return;
@@ -3599,7 +3677,7 @@ const editor = (() => {
   return {
     initEditor, open, close, reloadCurrent, refreshTitle,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
-    currentId, getValue, focus, insertAtCursor, instance, execCommand,
+    currentId, getValue, focus, insertAtCursor, insertCalendarBlock, instance, execCommand,
     isBusyTyping, flushSaveNow,
     applyRemoteUpdate, isCrdtBound,
     insertImageFromDataUrl,
@@ -3613,6 +3691,7 @@ const editor = (() => {
 })();
 
 window.editor = editor;
+window.insertCalendarBlock = () => editor.insertCalendarBlock();
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => editor.initEditor());

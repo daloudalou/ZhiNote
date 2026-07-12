@@ -2170,22 +2170,37 @@ function setupMobileLayout() {
 
   if (window.matchMedia('(pointer: coarse)').matches) setupTouchGestures(mq);
 
-  if (!mq.matches) return;
-  // 进入即看编辑区（仅本次会话，不写入设置，避免影响桌面端）
-  document.body.classList.add('sidebar-collapsed');
-  // 从树里打开笔记后自动收起抽屉；刚新建的笔记除外——
-  // 新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作（用户反馈"侧栏容易自动收缩"）
+  // 从树里打开笔记后自动收起抽屉——**仅窄屏**生效；宽屏（含最大化）不收起。
+  // 刚新建的笔记除外（新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作）。
   const _origOpen = editor.open.bind(editor);
   editor.open = (...args) => {
     const r = _origOpen(...args);
-    const n = storage.get(args[0]);
-    const isNew = n && n.createdAt && (Date.now() - n.createdAt < 1500);
-    if (!isNew) document.body.classList.add('sidebar-collapsed');
+    if (mq.matches) {
+      const n = storage.get(args[0]);
+      const isNew = n && n.createdAt && (Date.now() - n.createdAt < 1500);
+      if (!isNew) document.body.classList.add('sidebar-collapsed');
+    }
     return r;
   };
 
+  // 按当前视口宽度套用侧栏模式：
+  //   窄屏(≤768) → 抽屉默认收起（仅本次会话，不写设置，避免污染桌面端）；
+  //   宽屏/最大化 → 停靠，且**不自动收起**，仅遵从用户手动持久化的折叠偏好。
+  function applySidebarMode() {
+    if (mq.matches) {
+      document.body.classList.add('sidebar-collapsed');
+    } else {
+      const persisted = storage.getSetting ? storage.getSetting('sidebarCollapsed') : false;
+      document.body.classList.toggle('sidebar-collapsed', !!persisted);
+      document.body.classList.remove('outline-drawer-open');
+    }
+  }
+  window.__applySidebarMode = applySidebarMode;
+  mq.addEventListener('change', applySidebarMode);
+  applySidebarMode();
+
   // 抽屉手势：屏幕左缘（24px 内）右滑拉出侧栏；抽屉打开时左滑收起。
-  // 只在 touchend 判定一次（水平位移 > 60px 且明显大于纵向位移），不干扰编辑区的滚动与选字。
+  // 始终注册，处理器内用 mq.matches 守门——**仅窄屏**生效。
   let _tsX = 0, _tsY = 0, _fromEdge = false;
   document.addEventListener('touchstart', (e) => {
     const t = e.touches[0];
@@ -2193,6 +2208,7 @@ function setupMobileLayout() {
     _fromEdge = t.clientX <= 24;
   }, { passive: true });
   document.addEventListener('touchend', (e) => {
+    if (!mq.matches) return;
     if (e.touches.length > 0) return; // 多指手势由 setupTouchGestures 接管
     const t = e.changedTouches[0];
     const dx = t.clientX - _tsX, dy = t.clientY - _tsY;
@@ -3930,6 +3946,8 @@ async function requestMaximize() {
   } finally {
     setTimeout(() => {
       document.body.classList.remove('is-resizing');
+      // 最大化/还原后重算侧栏模式：宽屏不再自动收起（WebView2 最大化未必触发视口 change）
+      if (window.__applySidebarMode) window.__applySidebarMode();
     }, 350);
   }
 }
@@ -4762,6 +4780,7 @@ async function requestExport() {
   const anchor = document.getElementById('btn-export');
   const result = await showActionMenu(anchor, [
     { id: 'current', icon: '📄', label: '导出当前笔记 (.md)' },
+    { id: 'notebook', icon: '📓', label: '导出笔记本 (.zip)' },
     { id: 'all', icon: '📦', label: '导出全部笔记 (.zip)' },
     { id: 'backup', icon: '💾', label: '完整备份 (.json)' },
     { id: 'sync-config', icon: '🔗', label: '导出同步配置' },
@@ -4780,6 +4799,30 @@ async function requestExport() {
       fileName = `${data.title}.md`;
       filter = 'Markdown 文件|*.md';
       makeContent = () => data.content;
+    } else if (choice === 'notebook') {
+      if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+      const workspaces = storage.getWorkspaces();
+      let ws;
+      if (workspaces.length <= 1) {
+        ws = workspaces[0];
+      } else {
+        const pick = await showActionMenu(anchor, workspaces.map(w => ({ id: w.id, icon: w.icon || '📓', label: w.name || '未命名' })));
+        if (!pick) return;
+        ws = workspaces.find(w => w.id === pick.id);
+      }
+      if (!ws) { toast('没有可导出的笔记本', 'warning'); return; }
+      fileName = `${(ws.name || '笔记本').replace(/[<>:"/\\|?*]/g, '_')}_${ts}.zip`;
+      filter = '笔记本压缩包|*.zip';
+      isBinary = true;
+      makeContent = async () => {
+        const files = storage.exportAllAsTree({ workspaceId: ws.id, imagesAsFiles: true });
+        if (!files.length) throw new Error('该笔记本没有可导出的笔记');
+        const zip = new JSZip();
+        for (const f of files) zip.file(f.path, f.content, f.base64 ? { base64: true } : undefined);
+        // 标记为「单个笔记本」导出：导入时据此新建一个笔记本，并沿用名称/图标。
+        zip.file('.zhinote-meta.json', JSON.stringify({ version: 1, notebook: { name: ws.name, icon: ws.icon } }));
+        return await zip.generateAsync({ type: 'base64' });
+      };
     } else if (choice === 'all') {
       if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
       fileName = `notes_${ts}.zip`;
@@ -4850,6 +4893,7 @@ async function requestImport() {
   const anchor = document.getElementById('btn-import');
   const result = await showActionMenu(anchor, [
     { id: 'md', icon: '📄', label: '导入 Markdown 文件 (.md)' },
+    { id: 'notebook', icon: '📓', label: '导入笔记本 (.zip)' },
     { id: 'zip', icon: '📦', label: '导入 ZIP 压缩包 (.zip)' },
     { id: 'backup', icon: '💾', label: '恢复备份 (.json / .zhinote)' },
     { id: 'sync-config', icon: '🔗', label: '导入同步配置' },
@@ -4858,6 +4902,7 @@ async function requestImport() {
   const choice = result.id;
 
   try {
+    if (choice === 'notebook') { await new Promise(r => setTimeout(r, 350)); return await importNotebookFromZip(); }
     if (choice === 'sync-config') {
       const text = (await navigator.clipboard.readText() || '').trim();
       if (!text.startsWith('ZHINOTE_SYNC:')) {
@@ -5051,12 +5096,13 @@ async function requestImport() {
   }
 }
 
-async function _parseZipToNotes(zip) {
+async function _parseZipToNotes(zip, opts = {}) {
   const notes = [];
   let wsMap = null;
+  const forceWsId = opts.forceWorkspaceId || null; // 「导入笔记本」：全部归入这个新建笔记本，忽略包内多本子映射
 
   const metaFile = zip.file('.zhinote-meta.json');
-  if (metaFile) {
+  if (!forceWsId && metaFile) {
     try {
       const metaText = await metaFile.async('string');
       const meta = JSON.parse(metaText);
@@ -5118,8 +5164,8 @@ async function _parseZipToNotes(zip) {
     const fileName = parts.pop();
     const title = fileName.replace(/\.(md|txt)$/i, '') || '无标题';
 
-    let workspaceId = null;
-    if (wsMap && parts.length > 0) {
+    let workspaceId = forceWsId;
+    if (!forceWsId && wsMap && parts.length > 0) {
       const topFolder = parts[0];
       if (wsMap[topFolder]) {
         workspaceId = wsMap[topFolder];
@@ -5130,6 +5176,89 @@ async function _parseZipToNotes(zip) {
   }
   return notes;
 }
+
+/** 笔记本重名 → 自动加后缀「名字 (2)」「名字 (3)」…，绝不合并进现有本子、绝不覆盖。 */
+function _dedupeWorkspaceName(base) {
+  const name = (base || '').trim() || '导入的笔记本';
+  const names = new Set(storage.getWorkspaces().map(w => (w.name || '').trim()));
+  if (!names.has(name)) return name;
+  let i = 2;
+  while (names.has(`${name} (${i})`)) i++;
+  return `${name} (${i})`;
+}
+
+/** 导入单个「笔记本」：始终**新建**一个笔记本，全部笔记用新 id 归入其中——只新增、不覆盖、不合并同名，
+ *  走日常增量同步那条安全路（即时同步会把新本子+新笔记推给其它设备），不碰覆盖/世代/墓碑等危险操作。 */
+async function importNotebookFromZip() {
+  if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+  try {
+    let zip, fallbackName = '导入的笔记本';
+    if (storage.isQuicker()) {
+      const spResult = await window.host.file.op({ mode: 'openDialog', filter: '笔记本压缩包|*.zip', isBinary: 'true', multiSelect: 'false' });
+      const raw = spResult?.result || '';
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const fileData = Array.isArray(parsed) ? parsed[0] : parsed;
+      fallbackName = (fileData.name || '').replace(/\.zip$/i, '') || fallbackName;
+      const bytes = Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0));
+      zip = await JSZip.loadAsync(bytes);
+    } else {
+      const selected = await fileOpen({ extensions: ['.zip'], multiple: false });
+      if (!selected) return;
+      fallbackName = (selected.name || '').replace(/\.zip$/i, '') || fallbackName;
+      zip = await JSZip.loadAsync(await selected.arrayBuffer());
+    }
+
+    // 读元数据取笔记本名/图标（导出笔记本时写入）；没有就用文件名兜底。
+    let nbName = fallbackName, nbIcon = '📓';
+    const metaFile = zip.file('.zhinote-meta.json');
+    if (metaFile) {
+      try {
+        const m = JSON.parse(await metaFile.async('string'));
+        if (m && m.notebook) { nbName = m.notebook.name || nbName; nbIcon = m.notebook.icon || nbIcon; }
+      } catch (_) {}
+    }
+
+    const finalName = _dedupeWorkspaceName(nbName);
+    const ws = storage.createWorkspace(finalName, nbIcon);
+    const notes = await _parseZipToNotes(zip, { forceWorkspaceId: ws.id });
+    if (!notes.length) {
+      // 空包：撤掉刚建的空本子，避免留下垃圾
+      try { if (storage.deleteWorkspace) storage.deleteWorkspace(ws.id, 'purge'); } catch (_) {}
+      toast('压缩包里没有可导入的笔记', 'warning');
+      return;
+    }
+
+    const pathMap = {};
+    let imported = 0;
+    for (const item of notes) {
+      let parentId = null;
+      let pathAccum = ws.id + '|';
+      for (const dir of item.parentPath) {
+        pathAccum += dir + '/';
+        if (pathMap[pathAccum]) {
+          parentId = pathMap[pathAccum];
+        } else {
+          const folder = storage.create({ parentId, title: dir, workspaceId: ws.id });
+          pathMap[pathAccum] = folder.id;
+          parentId = folder.id;
+        }
+      }
+      storage.create({ parentId, title: item.title, content: item.content, workspaceId: ws.id });
+      imported++;
+    }
+
+    try { storage.setActiveWorkspace(ws.id); } catch (_) {}
+    tree.render();
+    try { refreshWorkspaceSwitcher(); } catch (_) {}
+    try { renderWelcomeRecent(); } catch (_) {}
+    toast(`已导入笔记本「${finalName}」，共 ${imported} 篇`, 'success');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    toast('导入笔记本失败：' + (err?.message || err), 'error');
+  }
+}
+window.importNotebookFromZip = importNotebookFromZip;
 
 async function _doBackupImport(text, anchor) {
   const modeResult = await showActionMenu(anchor, [
@@ -7521,6 +7650,7 @@ function initEditorContextMenu() {
         { label: '链接', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18.36 15.54L16.95 14.12 18.36 12.71C20.32 10.75 20.32 7.59 18.36 5.64 16.41 3.68 13.25 3.68 11.29 5.64L9.88 7.05 8.46 5.64 9.88 4.22C12.61 1.49 17.04 1.49 19.78 4.22 22.51 6.96 22.51 11.39 19.78 14.12L18.36 15.54ZM15.54 18.36L14.12 19.78C11.39 22.51 6.96 22.51 4.22 19.78 1.49 17.04 1.49 12.61 4.22 9.88L5.64 8.46 7.05 9.88 5.64 11.29C3.68 13.25 3.68 16.41 5.64 18.36 7.59 20.32 10.75 20.32 12.71 18.36L14.12 16.95 15.54 18.36ZM14.83 7.76L16.24 9.17 9.17 16.24 7.76 14.83 14.83 7.76Z"/></svg>', action: () => editor.execCommand('toggleLink') },
         { label: '分割线', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M2 11H22V13H2V11Z"/></svg>', action: () => editor.execCommand('setHorizontalRule') },
         { label: '公式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 11.5L5 17H3L6.5 10 3 3H5L8 8.5 11 3H13L9.5 10 13 17H11L8 11.5ZM18 7H20V17H18V7ZM14 10H22V12H14V10Z"/></svg>', action: () => insertMathFormula() },
+        { label: '简易日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><path d="M9 14.5l2 2 4-4"/></svg>', action: () => editor.execCommand('insertCalendar') },
       ]},
       { sep: true },
       { label: '表情符号', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2 22 6.48 22 12 17.52 22 12 22ZM12 20C16.42 20 20 16.42 20 12S16.42 4 12 4 4 7.58 4 12 7.58 20 12 20ZM8 14H16C16 16.21 14.21 18 12 18S8 16.21 8 14ZM8 10C7.17 10 6.5 9.33 6.5 8.5S7.17 7 8 7 9.5 7.67 9.5 8.5 8.83 10 8 10ZM16 10C15.17 10 14.5 9.33 14.5 8.5S15.17 7 16 7 17.5 7.67 17.5 8.5 16.83 10 16 10Z"/></svg>', action: () => {

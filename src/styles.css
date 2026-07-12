@@ -1894,13 +1894,15 @@ body.theme-dark .code-lang-picker { background: var(--bg-elevated, #2a2a2a); bor
 body.theme-dark .code-lang-item:hover { background: var(--bg-hover, #3a3a3a); }
 
 /* Table */
-#editor .ProseMirror table {
+/* 用户表格：排除日历网格（.cal-grid），否则这些 ID 特指度更高的规则会覆盖日历的
+   table-layout:fixed / width:100%，使 min-width:60px、width:auto 生效 → 长记事撑宽列、日历溢出。 */
+#editor .ProseMirror table:not(.cal-grid) {
   border-collapse: collapse;
   width: auto;
   margin: 0.4em 0;
 }
-#editor .ProseMirror table th,
-#editor .ProseMirror table td {
+#editor .ProseMirror table:not(.cal-grid) th,
+#editor .ProseMirror table:not(.cal-grid) td {
   border: 1px solid var(--border, #e8e8e8);
   padding: 5px 10px;
   text-align: left;
@@ -4404,4 +4406,189 @@ body.theme-gruvbox .md-ctx-sep {
   .sidebar-actions .icon-btn, .sidebar-footer .icon-btn, .topbar-right .icon-btn, #btn-toggle-sidebar { width: 38px; height: 38px; }
   /* 选中文字的浮动格式条不超屏，放不下时条内横滑 */
   .md-float-bar { max-width: calc(100vw - 16px); overflow-x: auto; }
+}
+
+/* ============================================================
+ * 日历块（calendarBlock / ZhiCalendar）
+ * 网格锁死不可编辑，点某天弹卡片记事；今日样式固定「整格淡底」。
+ * ============================================================ */
+.calendar-block {
+  position: relative;
+  margin: 12px 0;
+  padding: 14px 16px 12px;
+  /* 等宽 7 列的固定观感：块宽自适应到正文，但不超过 600px；列等宽、记事截断、悬停看全文 */
+  width: 100%;
+  max-width: 600px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.calendar-block .cal-title {
+  font-weight: 700; font-size: 15px; cursor: pointer; padding: 3px 9px; border-radius: 7px;
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+  transition: background .12s, color .12s, box-shadow .12s;
+}
+.calendar-block .cal-title:hover { background: var(--bg-tertiary); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.calendar-block .cal-caret { font-size: 10px; opacity: .55; }
+.calendar-block .cal-today, .calendar-block .cal-setbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 7px;
+  background: transparent; cursor: pointer; color: var(--text-secondary);
+  transition: background .12s, color .12s;
+}
+.calendar-block .cal-today { margin-left: auto; }
+.calendar-block .cal-today:hover, .calendar-block .cal-setbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
+
+.calendar-block .cal-pop {
+  position: absolute; z-index: 40; background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg, 0 10px 30px rgba(0,0,0,.18));
+}
+.calendar-block .cal-pop.hidden { display: none; }
+.calendar-block .cal-pop-month { top: 36px; left: 0; width: 236px; padding: 10px; }
+.calendar-block .cal-pop-set { top: 36px; right: 0; width: 224px; padding: 6px; }
+.calendar-block .cal-styrow { display: flex; gap: 4px; padding: 2px 2px 6px; }
+.calendar-block .cal-sty { flex: 1; border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: var(--text-secondary); cursor: pointer; font-size: 12px; padding: 6px 0; border-radius: 6px; transition: background .12s, color .12s, border-color .12s; }
+.calendar-block .cal-sty:hover { border-color: var(--accent); color: var(--text); }
+.calendar-block .cal-sty.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.calendar-block .cal-pop-div { height: 1px; background: var(--border); margin: 2px 4px 5px; }
+.calendar-block .cal-pop-h { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.calendar-block .cal-pop-h .cal-y { font-weight: 600; font-size: 13px; cursor: pointer; padding: 2px 8px; border-radius: 5px; transition: background .12s, color .12s; }
+.calendar-block .cal-pop-h .cal-y:hover { background: var(--bg-tertiary); color: var(--accent); }
+.calendar-block .cal-ms { min-height: 108px; }   /* 选月/选年两态高度一致，弹窗尺寸不跳 */
+.calendar-block .cal-pop-h button { border: none; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 15px; padding: 2px 8px; border-radius: 4px; }
+.calendar-block .cal-pop-h button:hover { background: var(--bg-tertiary); color: var(--text); }
+.calendar-block .cal-ms { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.calendar-block .cal-ms button { border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text); cursor: pointer; padding: 7px 0; border-radius: 6px; font-size: 12.5px; }
+.calendar-block .cal-ms button:hover { border-color: var(--accent); }
+.calendar-block .cal-ms button.cur { background: var(--accent); color: #fff; }
+.calendar-block .cal-optrow { display: flex; align-items: center; justify-content: space-between; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.calendar-block .cal-optrow:hover { background: var(--bg-tertiary); }
+.calendar-block .cal-sw { position: relative; width: 34px; height: 19px; border-radius: 19px; background: var(--border-strong); transition: background .15s; flex: none; }
+.calendar-block .cal-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.calendar-block .cal-optrow.on .cal-sw { background: var(--accent); }
+.calendar-block .cal-optrow.on .cal-sw::after { left: 17px; }
+
+/* 网格基座：CSS Grid（表头行 + 天格），彻底摆脱表格样式干扰。配色/圆角/描线交给 A/B/C/D 皮肤。 */
+.calendar-block .cal-gridwrap { }
+.calendar-block .cal-headrow { display: grid; grid-template-columns: repeat(7, 1fr); }
+.calendar-block .cal-wd { text-align: center; font-size: 11px; letter-spacing: .5px; font-weight: 600; color: var(--text-secondary); padding: 8px 0; }
+.calendar-block .cal-wd.we { color: var(--danger); }
+.calendar-block .cal-body { display: grid; grid-template-columns: repeat(7, 1fr); }
+.calendar-block .cal-day { color: var(--text); padding: 5px 7px 6px; min-height: 56px; cursor: pointer; position: relative; transition: background .12s, transform .12s, box-shadow .12s, border-color .12s; }
+.calendar-block .cal-day.cal-pad { cursor: default; }
+.calendar-block .cal-day.wend .cal-dnum { color: var(--danger); }
+.calendar-block .cal-drow { display: flex; align-items: center; justify-content: space-between; gap: 3px; min-height: 20px; }
+.calendar-block .cal-dnum { font-weight: 600; font-size: 13px; line-height: 1.3; }
+.calendar-block .cal-addhint { opacity: 0; color: var(--accent); font-size: 12px; font-weight: 700; }
+.calendar-block .cal-day:hover .cal-addhint { opacity: .5; }
+.calendar-block .cal-sub { font-size: 10px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calendar-block .cal-sub-lunar { color: var(--text-tertiary); }
+.calendar-block .cal-sub-term { color: var(--warning); }
+.calendar-block .cal-sub-fest { color: var(--danger); }
+/* 记事：首条最多 4 字（JS 硬截断），药丸按内容宽——颜色点 + 文字 + 「+N」都完整不遮挡；全文看 hover 浮层。 */
+.calendar-block .cal-notes { margin-top: 3px; }
+.calendar-block .cal-n-inline { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; box-sizing: border-box; font-size: 10px; color: var(--text-secondary); background: var(--accent-bg); border-radius: 4px; padding: 1px 5px; }
+.calendar-block .cal-n-txt { white-space: nowrap; }
+.calendar-block .cal-n-inline.done .cal-n-txt { text-decoration: line-through; color: var(--text-tertiary); }
+.calendar-block .cal-more { flex: none; color: var(--accent); }
+/* 月格 B · 当天任务完成进度「✓ X/Y」 */
+.calendar-block .cal-prog { display: flex; align-items: center; gap: 3px; font-size: 9.5px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.2; }
+.calendar-block .cal-prog.all { color: var(--success); }
+.cal-n-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; vertical-align: middle; flex: none; }
+.cal-n-dot.cal-n-dot-empty { background: var(--border-strong); }
+
+/* ===== 皮肤 A · 净白（无线、留白、今日圆点；Notion / Cron 风）===== */
+.calendar-block[data-cal-style="A"] .cal-headrow { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.calendar-block[data-cal-style="A"] .cal-wd { color: var(--text-tertiary); }
+.calendar-block[data-cal-style="A"] .cal-day { border-radius: 9px; }
+.calendar-block[data-cal-style="A"] .cal-day:not(.cal-pad):hover { background: var(--bg-hover); }
+.calendar-block[data-cal-style="A"] .cal-day.today .cal-dnum { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 11px; background: var(--accent); color: #fff; }
+
+/* ===== 皮肤 B · 细线（gap 描线 + 圆角裁切，不缺角；今日整格淡底，无圆形）===== */
+.calendar-block[data-cal-style="B"] .cal-gridwrap { border: 1px solid var(--border-strong); border-radius: 12px; overflow: hidden; }
+.calendar-block[data-cal-style="B"] .cal-headrow { background: var(--bg-tertiary); border-bottom: 1px solid var(--border-strong); }
+.calendar-block[data-cal-style="B"] .cal-wd { background: var(--bg-tertiary); }
+.calendar-block[data-cal-style="B"] .cal-body { gap: 1px; background: var(--border); }
+.calendar-block[data-cal-style="B"] .cal-day { background: var(--bg-elevated); }
+.calendar-block[data-cal-style="B"] .cal-day:not(.cal-pad):hover { background: var(--bg-hover); }
+.calendar-block[data-cal-style="B"] .cal-day.today { background: var(--accent-bg); }
+.calendar-block[data-cal-style="B"] .cal-day.today .cal-dnum { color: var(--accent); }
+
+/* ===== 皮肤 C · 卡片（每天一张圆角小卡，表头连续不隔开）===== */
+.calendar-block[data-cal-style="C"] .cal-headrow { margin-bottom: 6px; }
+.calendar-block[data-cal-style="C"] .cal-wd { color: var(--text-secondary); }
+.calendar-block[data-cal-style="C"] .cal-body { gap: 6px; }
+.calendar-block[data-cal-style="C"] .cal-day { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 11px; }
+.calendar-block[data-cal-style="C"] .cal-day.cal-pad { background: transparent; border-color: transparent; }
+.calendar-block[data-cal-style="C"] .cal-day:not(.cal-pad):hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0,0,0,.14); border-color: var(--border-strong); }
+.calendar-block[data-cal-style="C"] .cal-day.today { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.calendar-block[data-cal-style="C"] .cal-day.today .cal-dnum { color: var(--accent); }
+
+/* ===== 皮肤 D · 柔底（极简无线，今日整格淡底）===== */
+.calendar-block[data-cal-style="D"] .cal-headrow { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.calendar-block[data-cal-style="D"] .cal-day { border-radius: 9px; }
+.calendar-block[data-cal-style="D"] .cal-day:not(.cal-pad):hover { background: var(--bg-hover); }
+.calendar-block[data-cal-style="D"] .cal-day.today { background: var(--accent-bg); }
+.calendar-block[data-cal-style="D"] .cal-day.today .cal-dnum { color: var(--accent); }
+
+/* 天卡片（挂 body，浮层） */
+.cal-daycard {
+  position: fixed; z-index: 3000; width: 252px; background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg, 0 14px 36px rgba(0,0,0,.22));
+  padding: 13px; font-size: 12.5px;
+}
+.cal-daycard.hidden { display: none; }
+.cal-daycard .dt { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
+.cal-daycard .meta { font-size: 11px; color: var(--text-secondary); margin-bottom: 9px; line-height: 1.6; }
+.cal-daycard .meta .k { color: var(--text-tertiary); }
+.cal-daycard .meta .r { color: var(--danger); }
+.cal-daycard .meta .g { color: var(--warning); }
+.cal-daycard .cal-addrow { margin: 9px 0 6px; }
+.cal-daycard .cal-addbtn { width: 100%; border: 1px dashed var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 12px; padding: 6px 10px; border-radius: 7px; cursor: pointer; font-family: inherit; transition: color .12s, border-color .12s, background .12s; }
+.cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+.cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 4px; }
+.cal-daycard .cal-note-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; background: var(--bg-tertiary); touch-action: none; }
+.cal-daycard .cal-note-row.cal-dragging { opacity: .5; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
+.cal-daycard .cal-note-row.cal-drop { box-shadow: inset 0 2px 0 var(--accent); }
+/* 颜色选择：卡片内收窄成一行（小一点的色球 + 紧凑间距） */
+.cal-daycard .cal-pal.color-picker-row { padding: 6px 2px 2px; gap: 5px; flex-wrap: nowrap; }
+.cal-daycard .cal-pal .color-dot-choice { width: 15px; height: 15px; border-width: 1.5px; }
+.cal-daycard .cal-note-sw { width: 12px; height: 12px; border-radius: 50%; flex: none; cursor: pointer; border: 1.5px solid var(--border-strong); background: transparent; box-sizing: border-box; transition: transform .12s; }
+.cal-daycard .cal-note-sw:hover { transform: scale(1.2); }
+.cal-daycard .cal-note-sw.has { border-color: transparent; }
+/* 任务勾选框：圆形，边框=记事颜色(--ck)；勾选(.on)→整圆填色+白勾。 */
+.cal-daycard .cal-note-ck { width: 18px; height: 18px; flex: none; box-sizing: border-box; border: 1.7px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-daycard .cal-note-ck svg { opacity: 0; transition: opacity .12s; }
+.cal-daycard .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
+.cal-daycard .cal-note-ck.on svg { opacity: 1; }
+.cal-daycard .cal-note-row.done .cal-edit { text-decoration: line-through; color: var(--text-tertiary); }
+.cal-daycard .cal-edit { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; padding: 2px 3px; border-radius: 4px; outline: none; font-family: inherit; }
+.cal-daycard .cal-edit:focus { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-daycard .del { color: var(--text-tertiary); cursor: pointer; font-size: 13px; flex: none; padding: 0 2px; }
+.cal-daycard .del:hover { color: var(--danger); }
+.cal-daycard .cal-pal { padding: 6px 2px 2px; }
+.cal-daycard .cal-empty { color: var(--text-tertiary); font-size: 11.5px; padding: 4px 0; }
+
+/* 悬停预览：某天多条记事时列出全部（浮层，不挡操作） */
+.cal-hovertip {
+  position: fixed; z-index: 3100; pointer-events: none;
+  max-width: 260px; background: var(--bg-elevated);
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: var(--shadow-lg, 0 10px 28px rgba(0,0,0,.2));
+  padding: 8px 10px; font-size: 12px; color: var(--text);
+}
+.cal-hovertip.hidden { display: none; }
+.cal-hovertip-h { font-size: 10.5px; color: var(--text-tertiary); margin-bottom: 4px; }
+.cal-hovertip-alm { font-size: 10px; color: var(--text-tertiary); line-height: 1.5; margin: 0 0 6px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
+.cal-hovertip-i { display: flex; align-items: flex-start; gap: 5px; padding: 2px 0; }
+.cal-hovertip-i .cal-n-dot { margin-top: 5px; }
+.cal-hovertip-t { flex: 1; min-width: 0; white-space: normal; word-break: break-word; overflow-wrap: anywhere; line-height: 1.5; }
+.cal-hovertip-i.done .cal-hovertip-t { text-decoration: line-through; color: var(--text-tertiary); }
+
+@media (max-width: 480px) {
+  .calendar-block { padding: 12px 10px 10px; }
+  .calendar-block .cal-grid td { height: 42px; }
 }

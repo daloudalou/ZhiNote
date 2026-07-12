@@ -1925,7 +1925,7 @@ const storage = (() => {
     return { title: note.title || '无标题', content };
   }
 
-  function exportAllAsTree({ allWorkspaces = false, imagesAsFiles = false } = {}) {
+  function exportAllAsTree({ allWorkspaces = false, imagesAsFiles = false, workspaceId = null } = {}) {
     const results = [];
     const sanitize = (name) => (name || '').replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, ' ').trim() || '无标题';
 
@@ -1950,7 +1950,7 @@ const storage = (() => {
 
     const workspaces = allWorkspaces
       ? (_data.workspaces || [{ id: 'ws-default', name: '默认笔记本' }])
-      : [{ id: _data.settings?.activeWorkspace || 'ws-default', name: '' }];
+      : [{ id: workspaceId || _data.settings?.activeWorkspace || 'ws-default', name: '' }];
     const multiWs = allWorkspaces && workspaces.length > 1;
     const notesRoot = imagesAsFiles ? NOTES_DIR : ''; // 整包：所有 .md 收进「笔记/」
 
