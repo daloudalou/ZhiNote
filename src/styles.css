@@ -3342,6 +3342,9 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 .about-title { font-size: 18px; font-weight: 600; color: var(--text); }
 .about-subtitle { font-size: 12px; color: var(--text-tertiary); margin-top: 5px; }
 .about-version { font-size: 11px; color: var(--text-tertiary); opacity: .7; margin-top: 3px; user-select: text; -webkit-user-select: text; }
+.about-refresh-btn { margin-left: 8px; padding: 1px 8px; font-size: 11px; line-height: 1.5; color: var(--accent); background: none; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease; vertical-align: middle; }
+.about-refresh-btn:hover { background: var(--accent-bg); border-color: var(--accent); }
+.about-refresh-btn:disabled { opacity: .55; cursor: default; }
 /* 网页版扫码卡片：二维码居左、信息居右 */
 .about-web-card { margin-top: 16px; display: flex; align-items: center; gap: 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
 .about-web-qr { width: 112px; height: 112px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 7px; box-sizing: border-box; color: #888; font-size: 11px; text-align: center; overflow: hidden; }

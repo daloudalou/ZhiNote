@@ -83,6 +83,18 @@ async function bootstrap() {
           // UI 可能还没初始化完，稍等再弹
           if (document.readyState === 'complete') setTimeout(show, 1500); else window.addEventListener('load', () => setTimeout(show, 1500));
         });
+        // 主动感应更新：常驻页面「隐藏而非关闭」，仅靠导航很难及时发现新版。
+        // 回到前台时（可见/聚焦）检查一次新 SW，节流 ≥ 10 分钟；发现新版会走上面的 controllerchange 提示。
+        let _lastUpdChk = Date.now();
+        const _chkUpd = () => {
+          if (document.visibilityState !== 'visible') return;
+          const now = Date.now();
+          if (now - _lastUpdChk < 10 * 60 * 1000) return;
+          _lastUpdChk = now;
+          reg.update().catch(() => {});
+        };
+        document.addEventListener('visibilitychange', _chkUpd);
+        window.addEventListener('focus', _chkUpd);
       }).catch(() => {});
     }
     // Cloudflare Web Analytics：匿名聚合统计（无 Cookie、不收集个人信息），仅网页宿主 + 正式域名注入。
@@ -4421,6 +4433,40 @@ function _webAppUrl() {
   return WEB_APP_URL;
 }
 
+// 关于页「检查更新」：绕过缓存拉线上入口页读版本号，与当前运行版本比对。
+// 不同 → 主动更新 SW + 清旧缓存后重载（拿到最新资源）；相同 → 提示已是最新。
+async function checkAppUpdate(btn) {
+  const cur = window.__MD_VER__ || '';
+  const restore = () => { if (btn) { btn.disabled = false; btn.textContent = '检查更新'; } };
+  if (btn) { btn.disabled = true; btn.textContent = '检查中…'; }
+  try {
+    const resp = await fetch('./?_ck=' + Date.now(), { cache: 'no-store' });
+    const html = await resp.text();
+    const m = html.match(/__MD_VER__\s*=\s*['"]([^'"]+)['"]/);
+    const latest = m ? m[1] : null;
+    if (latest && latest !== cur) {
+      toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
+      try {
+        const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+        if (reg) await reg.update();
+      } catch (_) {}
+      try {
+        if (window.caches && caches.keys) {
+          const ks = await caches.keys();
+          await Promise.all(ks.filter((k) => k.indexOf('zhinote-') === 0).map((k) => caches.delete(k)));
+        }
+      } catch (_) {}
+      setTimeout(() => location.reload(), 500);
+      return;
+    }
+    toast('已是最新版本（' + (cur || '未知') + '）', 'success', { id: 'app-update' });
+    restore();
+  } catch (_) {
+    toast('检查失败，请检查网络后重试', 'error', { id: 'app-update' });
+    restore();
+  }
+}
+
 // 二维码生成库按需加载（约 10KB，仅打开设置时才拉取）
 let _qrLibLoading = null;
 function _loadQrLib() {
@@ -6038,7 +6084,7 @@ function openSettingsModal(initialTab) {
         <div class="about-logo">📖</div>
         <div class="about-title">枝记 ZhiNote</div>
         <div class="about-subtitle">轻量 Markdown 笔记工具</div>
-        <div class="about-version" title="运行版本标记">版本 ${escapeHtml(window.__MD_VER__ || '未知')}</div>
+        <div class="about-version" title="运行版本标记">版本 ${escapeHtml(window.__MD_VER__ || '未知')}${!window.host.caps.quicker ? '<button type="button" class="about-refresh-btn" id="about-refresh" title="检查并刷新到最新版">检查更新</button>' : ''}</div>
       </div>
       <div class="about-web-card">
         <div class="about-web-qr" id="about-web-qr">生成中…</div>
@@ -6350,6 +6396,7 @@ function openSettingsModal(initialTab) {
     try { await navigator.clipboard.writeText(_webAppUrl()); toast('已复制网页版链接', 'success'); }
     catch (_) { toast('复制失败', 'error'); }
   });
+  body.querySelector('#about-refresh')?.addEventListener('click', (e) => checkAppUpdate(e.currentTarget));
 
   // PWA 安装按钮：仅当浏览器给出 beforeinstallprompt（网页宿主 + 未安装过）时显示
   const _pwaBtn = body.querySelector('#about-pwa-install');
