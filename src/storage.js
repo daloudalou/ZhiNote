@@ -1164,6 +1164,26 @@ const storage = (() => {
     return doc;
   }
 
+  // ── 正文「是否真的变了」判据：与 webdav-sync 的 _noteHash/_canonJson 同一把尺子 ──────────
+  //   只做**语义无损**整理（JSON 键排序、丢弃空 content/marks 数组），绝不动文字/属性。
+  //   统一「保存(updateDoc) / 实时落地(_realtimeApply) / 网盘比对(_noteHash)」三处判据 →
+  //   杜绝「字节不同但内容相同 → 假变更/假脏/updatedAt 乱跳」污染同步（幻影编辑根治）。
+  function _canonJson(v) {
+    if (Array.isArray(v)) return v.map(_canonJson);
+    if (v && typeof v === 'object') {
+      const out = {};
+      const keys = Object.keys(v).sort();
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i]; const val = v[k];
+        if ((k === 'content' || k === 'marks') && Array.isArray(val) && val.length === 0) continue;
+        out[k] = _canonJson(val);
+      }
+      return out;
+    }
+    return v;
+  }
+  function _canonDocStr(doc) { try { return JSON.stringify(_canonJson(doc)); } catch (_) { return ''; } }
+
   /** 维护一篇笔记的「合并账本」(note.ydoc)，与正文 doc 同步演进。
    *  - 首次建账本：用「改之前的正文」(oldDoc) 作确定化创世根——它最接近上次同步的共同版本，
    *    两端从同一共同版本各自独立建出的创世账本逐字节相同（同根），故能正确合并、不重复。
@@ -1490,8 +1510,9 @@ const storage = (() => {
     const n = _data.notes[id];
     if (!n || !doc) return;
     ingestDocImages(doc);  // data: → zhinote://，base64 收进本地仓库
-    const str = JSON.stringify(doc);
-    if (n.doc && JSON.stringify(n.doc) === str) return;  // 无变化，避免空顶 updatedAt
+    // 规范化比较：内容语义没变（仅字段顺序/空数组等字节差异）就当没改——
+    //   不顶 updatedAt、不标脏、不动账本，正文字节也保持稳定，杜绝幻影编辑污染同步。
+    if (n.doc && _canonDocStr(n.doc) === _canonDocStr(doc)) return;
     const oldDoc = n.doc;  // 改之前的正文，作首次建账本的创世根
     n.doc = doc;
     n.updatedAt = now();
@@ -1675,6 +1696,105 @@ const storage = (() => {
     if (ids.length) _globalDirty = true;
     save();
     emit('change', { type: 'emptyTrash' });
+  }
+
+  /** 一次性清理历史遗留的「（本地冲突副本 …）」笔记（含回收站里的）。写墓碑 + 标脏 →
+   *  经「总账墓碑(即时同步)」与「网盘 deleted 清单」双通道传播删除，清后不会再被任何设备弹回复活。
+   *  返回清理条数。新代码任何路径都不会再生成这种副本，故只需清一次。 */
+  function purgeConflictCopies() {
+    const re = /（本地冲突副本[^）]*）/;
+    const ids = [];
+    for (const id in _data.notes) { const t = _data.notes[id] && _data.notes[id].title; if (t && re.test(t)) ids.push(id); }
+    for (const id in (_data.trash || {})) { const t = _data.trash[id] && _data.trash[id].title; if (t && re.test(t)) ids.push(id); }
+    if (!ids.length) return 0;
+    const nt = (_data.noteTombstones || (_data.noteTombstones = {}));
+    for (const id of ids) {
+      // 把可能挂在副本下的子笔记提到顶层，避免误删真内容（副本通常是顶层叶子，防御性处理）
+      for (const cid in _data.notes) { const c = _data.notes[cid]; if (c && c.parentId === id) { c.parentId = null; if (!_data.rootOrder.includes(cid)) _data.rootOrder.push(cid); _dirtyNoteIds.add(cid); } }
+      delete _data.notes[id];
+      if (_data.trash) delete _data.trash[id];
+      _data.rootOrder = (_data.rootOrder || []).filter(x => x !== id);
+      _data.trashOrder = (_data.trashOrder || []).filter(x => x !== id);
+      nt[id] = now();
+      _dirtyNoteIds.add(id);
+    }
+    _globalDirty = true;
+    save({ immediate: true });
+    emit('change', { type: 'purge-conflict-copies', count: ids.length });
+    return ids.length;
+  }
+
+  /** 一键同步自检（开发/维护用，不改任何真实数据）：控制台调 `window.storage.syncSelfCheck()`。
+   *  验四件事，全绿才算过：
+   *   ① 规范化判据对不对（字节不同但内容相同→相等；内容不同→不等）——这次同步加固的核心；
+   *   ② 合并账本「创世确定 + 合并不重复不丢」——「多出重复内容」永不发生的根保证；
+   *   ③ 每篇笔记 doc↔账本 往返不动点——揪出会被误判脏 / 有合并重复隐患的篇；
+   *   ④ 当前打开笔记的 Markdown 往返不动点（没开/正在打字则跳过；跑完自动复原视图）。 */
+  function syncSelfCheck() {
+    const R = [];
+    const ok = (name, pass, detail) => R.push({ name: name, pass: !!pass, detail: detail || '' });
+    const plain = (doc) => { let s = ''; (function w(n) { if (!n || typeof n !== 'object') return; if (n.type === 'text' && typeof n.text === 'string') s += n.text; if (Array.isArray(n.content)) n.content.forEach(w); })(doc); return s; };
+
+    // ① 规范化判据
+    try {
+      const A = { type: 'doc', content: [{ type: 'paragraph', attrs: {}, content: [{ type: 'text', text: '同一段', marks: [] }] }] };
+      const B = { content: [{ content: [{ text: '同一段', type: 'text' }], type: 'paragraph' }], type: 'doc' }; // 键序不同 + 去掉空数组
+      const C = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '不一样' }] }] };
+      ok('规范化：等价内容判为相等', _canonDocStr(A) === _canonDocStr(B));
+      ok('规范化：不同内容判为不等', _canonDocStr(A) !== _canonDocStr(C));
+    } catch (e) { ok('规范化判据', false, String(e)); }
+
+    // ② 账本：创世确定 + 合并不重复不丢
+    try {
+      const Y = window.__ydoc;
+      if (Y && Y.ready()) {
+        const base = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '底稿' }] }] };
+        const g1 = Y.build(base), g2 = Y.build(base);
+        ok('账本创世确定（两端同根）', g1 === g2);
+        const dA = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '底稿甲改' }] }] };
+        const dB = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '底稿乙改' }] }] };
+        const merged = Y.toDoc(Y.merge(Y.update(g1, dA), Y.update(g2, dB)));
+        const txt = plain(merged);
+        const cnt = (s) => txt.split(s).length - 1;
+        ok('账本合并不重复不丢', cnt('甲改') === 1 && cnt('乙改') === 1 && cnt('底稿') === 1, '合并结果=' + JSON.stringify(txt));
+      } else { ok('账本引擎', false, '未就绪（②③账本项跳过）'); }
+    } catch (e) { ok('账本合并', false, String(e)); }
+
+    // ③ 每篇 doc↔账本 往返不动点
+    try {
+      const Y = window.__ydoc;
+      if (Y && Y.ready()) {
+        const bad = []; let n = 0;
+        for (const id in _data.notes) {
+          const d = _data.notes[id] && _data.notes[id].doc;
+          if (!d) continue;
+          n++;
+          try { if (_canonDocStr(d) !== _canonDocStr(Y.toDoc(Y.build(d)))) bad.push(_data.notes[id].title || id); }
+          catch (e) { bad.push((_data.notes[id].title || id) + '(异常)'); }
+        }
+        ok('全部笔记 doc↔账本 不动点（共 ' + n + ' 篇）', bad.length === 0, bad.length ? ('隐患篇：' + bad.slice(0, 10).join('、') + (bad.length > 10 ? ' 等' : '')) : '');
+      }
+    } catch (e) { ok('doc↔账本 不动点', false, String(e)); }
+
+    // ④ 当前打开笔记 Markdown 往返不动点（跑完复原视图）
+    try {
+      const ed = window.editor;
+      const busy = !!(ed && ed.isBusyTyping && ed.isBusyTyping());
+      const inst = ed && ed.instance && ed.instance();
+      if (inst && ed.currentId && ed.currentId() && !busy) {
+        const a = ed.getValue();
+        inst.commands.setContent(a, { emitUpdate: false, contentType: 'markdown' }); const b = ed.getValue();
+        inst.commands.setContent(b, { emitUpdate: false, contentType: 'markdown' }); const c = ed.getValue();
+        ok('当前笔记 Markdown 往返不动点', a === b && b === c);
+        try { if (ed.reloadCurrent) ed.reloadCurrent(); } catch (_) {}
+      } else { ok('Markdown 往返（当前笔记）', true, busy ? '正在打字，跳过' : '无打开的笔记，跳过'); }
+    } catch (e) { ok('Markdown 往返', false, String(e)); }
+
+    const passed = R.filter((r) => r.pass).length;
+    const allOk = R.every((r) => r.pass);
+    console.log('%c枝记同步自检 ' + (allOk ? '✅ 全部通过' : '❌ 有未通过') + ' (' + passed + '/' + R.length + ')', 'font-weight:bold;font-size:13px;color:' + (allOk ? '#16a34a' : '#dc2626'));
+    R.forEach((r) => console.log((r.pass ? '  ✅ ' : '  ❌ ') + r.name + (r.detail ? ('  — ' + r.detail) : '')));
+    return { allOk: allOk, passed: passed, total: R.length, results: R };
   }
 
   function move(id, newParentId, newIndex) {
@@ -2243,10 +2363,15 @@ const storage = (() => {
   function _realtimeApply(id, mergedDoc, mergedYdocB64) {
     const n = _data.notes[id];
     if (!n || !mergedDoc) return false;
-    const str = JSON.stringify(mergedDoc);
-    const sameDoc = n.doc && JSON.stringify(n.doc) === str;
-    const sameYdoc = n.ydoc === mergedYdocB64;
-    if (sameDoc && sameYdoc) return false;
+    // 规范化比较：对端合并结果与本地内容语义一致 → **不算内容变化**。
+    //   关键：不顶 updatedAt、不标脏、不发 content 事件——否则实时那条线会把「谁更新」
+    //   的时间戳污染给网盘线（实时干扰网盘的根因）。但仍**悄悄采纳对端账本**作同源基线，
+    //   让两端账本逐字节同根，今后合并不会合出重复内容。
+    const sameDoc = n.doc && _canonDocStr(n.doc) === _canonDocStr(mergedDoc);
+    if (sameDoc) {
+      if (mergedYdocB64 && n.ydoc !== mergedYdocB64) { n.ydoc = mergedYdocB64; save(); }
+      return false;
+    }
     ingestDocImages(mergedDoc);
     n.doc = mergedDoc;
     if (mergedYdocB64) n.ydoc = mergedYdocB64;
@@ -2551,7 +2676,7 @@ const storage = (() => {
     getImagesBackendInfo: () => ({ backend: _imgBackend, dir: _imgDir }),
     setImagesDir,
     create, rename, updateDoc, setColor, setIcon, setPinned, isPinned, getPinnedNotes, setExpanded, collapseAll, expandAll, hasExpandedNodes,
-    remove, restoreFromTrash, purgeFromTrash, emptyTrash,
+    remove, restoreFromTrash, purgeFromTrash, emptyTrash, purgeConflictCopies, syncSelfCheck,
     move, moveToWorkspace,
     getSetting, setSetting,
     getTemplates, saveTemplate, deleteTemplate,

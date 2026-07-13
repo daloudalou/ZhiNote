@@ -1251,6 +1251,44 @@ const editor = (() => {
     }).join('');
   }
 
+  /**
+   * 以「Markdown + 数学 + 行内感知」的方式把纯文本插入到当前光标处。
+   * 与 Ctrl+V 纯文本粘贴共用同一套逻辑：单段纯行内内容剥掉外层 <p> 行内插入，
+   * 避免在已有文字中间粘贴时被拆成新段落（右键菜单「粘贴」另起一行的根因）。
+   */
+  function pasteText(text) {
+    if (!_editor || !text) return;
+    const processed = preprocessMathMarkdown(text);
+    const marked = _editor.storage?.markdown?.manager?.markedInstance;
+    let parsedHtml = '';
+    if (marked) { try { parsedHtml = String(marked.parse(processed) || '').trim(); } catch (_) {} }
+    if (parsedHtml) {
+      const pCount = (parsedHtml.match(/<p>/g) || []).length;
+      const hasBlock = /<(ul|ol|h[1-6]|blockquote|pre|table|hr)\b/i.test(parsedHtml);
+      const singlePara = pCount === 1 && !hasBlock && /^<p>[\s\S]*<\/p>$/.test(parsedHtml);
+      const payload = singlePara
+        ? parsedHtml.replace(/^<p>/, '').replace(/<\/p>$/, '')
+        : parsedHtml;
+      _editor.chain().focus().insertContent(payload, {
+        contentType: 'html',
+        parseOptions: { preserveWhitespace: false },
+      }).run();
+    } else {
+      const paragraphs = text.split(/\n{2,}/);
+      const nodes = [];
+      for (const p of paragraphs) {
+        const lines = p.split('\n');
+        const content = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (i > 0) content.push({ type: 'hardBreak' });
+          if (lines[i]) content.push({ type: 'text', text: lines[i] });
+        }
+        nodes.push(content.length ? { type: 'paragraph', content } : { type: 'paragraph' });
+      }
+      _editor.chain().focus().insertContent(nodes).run();
+    }
+  }
+
   function initEditor() {
     if (_editor) return _editor;
 
@@ -1828,39 +1866,8 @@ const editor = (() => {
       e.stopImmediatePropagation();
       // 纯文本粘贴：按 Markdown 解析，让 **加粗**、*斜体*、`代码`、列表、标题等源码
       // 直接变成对应格式，避免把 Markdown 源码原样当作字面文本插入（出现 **文字**）。
-      // 先跑数学预处理保留 $...$；再用 marked 转 HTML。
-      // 若整段只是「单个段落」（纯行内内容），剥掉外层 <p> 以行内方式插入，
-      // 这样在已有文字中间粘贴 **重点** 不会把当前段落拆成多段。
-      const processed = preprocessMathMarkdown(text);
-      const marked = _editor.storage?.markdown?.manager?.markedInstance;
-      let parsedHtml = '';
-      if (marked) { try { parsedHtml = String(marked.parse(processed) || '').trim(); } catch (_) {} }
-      if (parsedHtml) {
-        const pCount = (parsedHtml.match(/<p>/g) || []).length;
-        const hasBlock = /<(ul|ol|h[1-6]|blockquote|pre|table|hr)\b/i.test(parsedHtml);
-        const singlePara = pCount === 1 && !hasBlock && /^<p>[\s\S]*<\/p>$/.test(parsedHtml);
-        const payload = singlePara
-          ? parsedHtml.replace(/^<p>/, '').replace(/<\/p>$/, '')
-          : parsedHtml;
-        _editor.commands.insertContent(payload, {
-          contentType: 'html',
-          parseOptions: { preserveWhitespace: false },
-        });
-      } else {
-        // 兜底：拿不到 markdown 解析器时，退回按行插入纯文本
-        const paragraphs = text.split(/\n{2,}/);
-        const nodes = [];
-        for (const p of paragraphs) {
-          const lines = p.split('\n');
-          const content = [];
-          for (let i = 0; i < lines.length; i++) {
-            if (i > 0) content.push({ type: 'hardBreak' });
-            if (lines[i]) content.push({ type: 'text', text: lines[i] });
-          }
-          nodes.push(content.length ? { type: 'paragraph', content } : { type: 'paragraph' });
-        }
-        _editor.commands.insertContent(nodes);
-      }
+      // 单段纯行内内容会行内插入、不另起段落。右键菜单「粘贴」复用同一函数，行为一致。
+      pasteText(text);
     }, true);
     const handleCopyEvent = (e) => {
       if (!_editor || !e.clipboardData) return;
@@ -2714,12 +2721,10 @@ const editor = (() => {
       case 'toggleHighlight': _editor.chain().focus().toggleHighlight().run(); break;
       case 'setHighlight': {
         const color = opts;
-        // 用 setHighlight（设置而非切换）：选不同色块就换色，不会因为已高亮而被切掉
-        if (color) {
-          _editor.chain().focus().setHighlight({ color }).run();
-        } else {
-          _editor.chain().focus().setHighlight().run();
-        }
+        // 统一走「显式设色」：黄色（无色值）传 color:null，其余传具体色值。
+        // 关键——即便已存在其它颜色的标注，显式 attrs 也会覆盖旧色；
+        // 旧实现里黄色走 setHighlight()（无参）不会覆盖已有颜色，导致"改成黄色无效"。
+        _editor.chain().focus().setHighlight({ color: color || null }).run();
         break;
       }
       case 'unsetHighlight': _editor.chain().focus().unsetHighlight().run(); break;
@@ -3623,8 +3628,10 @@ const editor = (() => {
       const t = node.type;
       if (t === 'text') { parts.push(node.text || ''); return; }
       if (t === 'hardBreak') { parts.push('\n'); return; }
-      if (t === 'mathInline') { parts.push((node.attrs && node.attrs.latex) || ''); return; }
-      if (t === 'mathBlock') { parts.push((node.attrs && node.attrs.latex) || ''); parts.push('\n'); return; }
+      // 公式带上 $ / $$ 定界符：这样"看得到就搜得到"——既能搜里面的 latex（key=），
+      // 也能搜源码形态（$$key=$$）。旧的无 doc 笔记走 content(markdown) 本就含 $$，此举与之对齐。
+      if (t === 'mathInline') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$' + lx + '$'); return; }
+      if (t === 'mathBlock') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$$' + lx + '$$'); parts.push('\n'); return; }
       if (t === 'image') return; // 跳过图片
       if (Array.isArray(node.content)) node.content.forEach(visit);
       if (_BLOCK_TYPES.has(t)) parts.push('\n');
@@ -3677,7 +3684,7 @@ const editor = (() => {
   return {
     initEditor, open, close, reloadCurrent, refreshTitle,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
-    currentId, getValue, focus, insertAtCursor, insertCalendarBlock, instance, execCommand,
+    currentId, getValue, focus, insertAtCursor, pasteText, insertCalendarBlock, instance, execCommand,
     isBusyTyping, flushSaveNow,
     applyRemoteUpdate, isCrdtBound,
     insertImageFromDataUrl,

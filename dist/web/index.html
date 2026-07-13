@@ -4496,11 +4496,13 @@ body.theme-gruvbox .md-ctx-sep {
 
 /* 网格基座：CSS Grid（表头行 + 天格），彻底摆脱表格样式干扰。配色/圆角/描线交给 A/B/C/D 皮肤。 */
 .calendar-block .cal-gridwrap { }
-.calendar-block .cal-headrow { display: grid; grid-template-columns: repeat(7, 1fr); }
+.calendar-block .cal-headrow { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .calendar-block .cal-wd { text-align: center; font-size: 11px; letter-spacing: .5px; font-weight: 600; color: var(--text-secondary); padding: 8px 0; }
 .calendar-block .cal-wd.we { color: var(--danger); }
-.calendar-block .cal-body { display: grid; grid-template-columns: repeat(7, 1fr); }
-.calendar-block .cal-day { color: var(--text); padding: 5px 7px 6px; min-height: 56px; cursor: pointer; position: relative; transition: background .12s, transform .12s, box-shadow .12s, border-color .12s; }
+.calendar-block .cal-body { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+/* min-width:0 + overflow:hidden：窄屏(手机)下让 7 列能压缩到容器内、单元格内容自截断，
+   不再被记事药丸(白space:nowrap)的最小宽度撑破网格、溢出到日历圆角背景外。 */
+.calendar-block .cal-day { color: var(--text); padding: 5px 7px 6px; min-height: 56px; cursor: pointer; position: relative; min-width: 0; overflow: hidden; transition: background .12s, transform .12s, box-shadow .12s, border-color .12s; }
 .calendar-block .cal-day.cal-pad { cursor: default; }
 .calendar-block .cal-day.wend .cal-dnum { color: var(--danger); }
 .calendar-block .cal-drow { display: flex; align-items: center; justify-content: space-between; gap: 3px; min-height: 20px; }
@@ -4514,12 +4516,33 @@ body.theme-gruvbox .md-ctx-sep {
 /* 记事：首条最多 4 字（JS 硬截断），药丸按内容宽——颜色点 + 文字 + 「+N」都完整不遮挡；全文看 hover 浮层。 */
 .calendar-block .cal-notes { margin-top: 3px; }
 .calendar-block .cal-n-inline { display: inline-flex; align-items: center; gap: 3px; max-width: 100%; box-sizing: border-box; font-size: 10px; color: var(--text-secondary); background: var(--accent-bg); border-radius: 4px; padding: 1px 5px; }
-.calendar-block .cal-n-txt { white-space: nowrap; }
+.calendar-block .cal-n-txt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .calendar-block .cal-n-inline.done .cal-n-txt { text-decoration: line-through; color: var(--text-tertiary); }
 .calendar-block .cal-more { flex: none; color: var(--accent); }
 /* 月格 B · 当天任务完成进度「✓ X/Y」 */
 .calendar-block .cal-prog { display: flex; align-items: center; gap: 3px; font-size: 9.5px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.2; }
 .calendar-block .cal-prog.all { color: var(--success); }
+/* 展开记事·丙(按内容撑宽)：每列按自己的内容定宽——没长记事/没记事的列保持窄，只有含长记事的列才变宽，列宽不均等。
+   整块用 width:fit-content 收缩到网格实际宽度 → 背景、边框、右上角图标都紧贴日历右边缘，不再铺满整个编辑区；
+   网格自然宽度超出编辑区时（内容过多）块被 max-width:100% 收住、列在 96px~内容宽之间自动压缩换行，不溢出。
+   表头与日期列用 subgrid 共享同一套列轨道保证对齐。单条记事文本宽度设上限(下方 340px)，防一条超长记事把列撑到离谱。 */
+.calendar-block[data-cal-fit="1"] { width: fit-content; max-width: 100%; }
+.calendar-block[data-cal-fit="1"] .cal-gridwrap { overflow-x: visible; }
+.calendar-block[data-cal-fit="1"] .cal-gridinner { display: grid; grid-template-columns: repeat(7, minmax(96px, max-content)); }
+.calendar-block[data-cal-fit="1"] .cal-headrow,
+.calendar-block[data-cal-fit="1"] .cal-body { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+.calendar-block[data-cal-fit="1"] .cal-day { min-height: 56px; min-width: 0; overflow: visible; }
+.calendar-block[data-cal-fit="1"] .cal-notes-fit { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+.calendar-block[data-cal-fit="1"] .cal-n-line { display: flex; align-items: flex-start; gap: 4px; font-size: 10px; line-height: 1.4; color: var(--text-secondary); }
+.calendar-block[data-cal-fit="1"] .cal-n-line .cal-n-dot { margin-top: 4px; }
+.calendar-block[data-cal-fit="1"] .cal-n-line .cal-n-txt { min-width: 0; max-width: 340px; white-space: pre-wrap; overflow: visible; word-break: break-word; overflow-wrap: anywhere; }
+.calendar-block[data-cal-fit="1"] .cal-n-line.done .cal-n-txt { text-decoration: line-through; color: var(--text-tertiary); }
+/* 窄屏(手机/窄编辑区≤768)：7 列最小宽 96px 合计已超出屏幕，收缩块会溢出卡片。改为块占满可用宽、
+   网格在卡片内部横向滚动（overflow-x:auto），既不溢出圆角背景、图标也仍贴卡片右缘。 */
+@media (max-width: 768px) {
+  .calendar-block[data-cal-fit="1"] { width: 100%; }
+  .calendar-block[data-cal-fit="1"] .cal-gridwrap { overflow-x: auto; overscroll-behavior-x: contain; }
+}
 .cal-n-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; vertical-align: middle; flex: none; }
 .cal-n-dot.cal-n-dot-empty { background: var(--border-strong); }
 
@@ -4559,9 +4582,10 @@ body.theme-gruvbox .md-ctx-sep {
 
 /* 天卡片（挂 body，浮层） */
 .cal-daycard {
-  position: fixed; z-index: 3000; width: 252px; background: var(--bg-elevated);
+  position: fixed; z-index: 3000; width: 268px; background: var(--bg-elevated);
   border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg, 0 14px 36px rgba(0,0,0,.22));
   padding: 13px; font-size: 12.5px;
+  max-height: 82vh; overflow-y: auto; overscroll-behavior: contain;
 }
 .cal-daycard.hidden { display: none; }
 .cal-daycard .dt { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
@@ -4572,25 +4596,30 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-daycard .cal-addrow { margin: 9px 0 6px; }
 .cal-daycard .cal-addbtn { width: 100%; border: 1px dashed var(--border-strong); background: transparent; color: var(--text-secondary); font-size: 12px; padding: 6px 10px; border-radius: 7px; cursor: pointer; font-family: inherit; transition: color .12s, border-color .12s, background .12s; }
 .cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
-.cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 4px; }
-.cal-daycard .cal-note-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 6px; background: var(--bg-tertiary); touch-action: none; }
+.cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 2px; }
+/* 方案甲·克制风：记事平时像纯文本、无边框；hover 才淡淡浮起，颜色/删除按需出现。 */
+.cal-daycard .cal-note-row { display: flex; align-items: flex-start; gap: 7px; padding: 4px 6px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
+.cal-daycard .cal-note-row:hover { background: var(--bg-tertiary); }
 .cal-daycard .cal-note-row.cal-dragging { opacity: .5; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
 .cal-daycard .cal-note-row.cal-drop { box-shadow: inset 0 2px 0 var(--accent); }
 /* 颜色选择：卡片内收窄成一行（小一点的色球 + 紧凑间距） */
 .cal-daycard .cal-pal.color-picker-row { padding: 6px 2px 2px; gap: 5px; flex-wrap: nowrap; }
 .cal-daycard .cal-pal .color-dot-choice { width: 15px; height: 15px; border-width: 1.5px; }
-.cal-daycard .cal-note-sw { width: 12px; height: 12px; border-radius: 50%; flex: none; cursor: pointer; border: 1.5px solid var(--border-strong); background: transparent; box-sizing: border-box; transition: transform .12s; }
+.cal-daycard .cal-note-sw { width: 12px; height: 12px; margin-top: 4px; border-radius: 50%; flex: none; cursor: pointer; border: 1.5px solid var(--border-strong); background: transparent; box-sizing: border-box; opacity: 0; transition: transform .12s, opacity .12s; }
 .cal-daycard .cal-note-sw:hover { transform: scale(1.2); }
-.cal-daycard .cal-note-sw.has { border-color: transparent; }
+.cal-daycard .cal-note-sw.has { border-color: transparent; opacity: .92; }
+.cal-daycard .cal-note-row:hover .cal-note-sw { opacity: 1; }
 /* 任务勾选框：圆形，边框=记事颜色(--ck)；勾选(.on)→整圆填色+白勾。 */
-.cal-daycard .cal-note-ck { width: 18px; height: 18px; flex: none; box-sizing: border-box; border: 1.7px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-daycard .cal-note-ck { width: 18px; height: 18px; margin-top: 1px; flex: none; box-sizing: border-box; border: 1.7px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
 .cal-daycard .cal-note-ck svg { opacity: 0; transition: opacity .12s; }
 .cal-daycard .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
 .cal-daycard .cal-note-ck.on svg { opacity: 1; }
 .cal-daycard .cal-note-row.done .cal-edit { text-decoration: line-through; color: var(--text-tertiary); }
-.cal-daycard .cal-edit { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; padding: 2px 3px; border-radius: 4px; outline: none; font-family: inherit; }
-.cal-daycard .cal-edit:focus { background: var(--bg); box-shadow: inset 0 0 0 1px var(--accent); }
-.cal-daycard .del { color: var(--text-tertiary); cursor: pointer; font-size: 13px; flex: none; padding: 0 2px; }
+.cal-daycard .cal-edit { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; line-height: 1.5; padding: 3px 5px; border-radius: 5px; outline: none; font-family: inherit; resize: none; overflow: hidden; white-space: pre-wrap; word-break: break-word; transition: background .12s; }
+.cal-daycard .cal-edit::placeholder { color: var(--text-tertiary); }
+.cal-daycard .cal-edit:focus { background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+.cal-daycard .del { color: var(--text-tertiary); cursor: pointer; font-size: 14px; line-height: 1; margin-top: 3px; flex: none; padding: 0 2px; opacity: 0; transition: color .12s, opacity .12s; }
+.cal-daycard .cal-note-row:hover .del { opacity: 1; }
 .cal-daycard .del:hover { color: var(--danger); }
 .cal-daycard .cal-pal { padding: 6px 2px 2px; }
 .cal-daycard .cal-empty { color: var(--text-tertiary); font-size: 11.5px; padding: 4px 0; }
@@ -4907,7 +4936,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.1.2';
+    window.__MD_VER__ = 'v1.1.3';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -72444,6 +72473,26 @@ const storage = (() => {
     return doc;
   }
 
+  // ── 正文「是否真的变了」判据：与 webdav-sync 的 _noteHash/_canonJson 同一把尺子 ──────────
+  //   只做**语义无损**整理（JSON 键排序、丢弃空 content/marks 数组），绝不动文字/属性。
+  //   统一「保存(updateDoc) / 实时落地(_realtimeApply) / 网盘比对(_noteHash)」三处判据 →
+  //   杜绝「字节不同但内容相同 → 假变更/假脏/updatedAt 乱跳」污染同步（幻影编辑根治）。
+  function _canonJson(v) {
+    if (Array.isArray(v)) return v.map(_canonJson);
+    if (v && typeof v === 'object') {
+      const out = {};
+      const keys = Object.keys(v).sort();
+      for (let i = 0; i < keys.length; i++) {
+        const k = keys[i]; const val = v[k];
+        if ((k === 'content' || k === 'marks') && Array.isArray(val) && val.length === 0) continue;
+        out[k] = _canonJson(val);
+      }
+      return out;
+    }
+    return v;
+  }
+  function _canonDocStr(doc) { try { return JSON.stringify(_canonJson(doc)); } catch (_) { return ''; } }
+
   /** 维护一篇笔记的「合并账本」(note.ydoc)，与正文 doc 同步演进。
    *  - 首次建账本：用「改之前的正文」(oldDoc) 作确定化创世根——它最接近上次同步的共同版本，
    *    两端从同一共同版本各自独立建出的创世账本逐字节相同（同根），故能正确合并、不重复。
@@ -72770,8 +72819,9 @@ const storage = (() => {
     const n = _data.notes[id];
     if (!n || !doc) return;
     ingestDocImages(doc);  // data: → zhinote://，base64 收进本地仓库
-    const str = JSON.stringify(doc);
-    if (n.doc && JSON.stringify(n.doc) === str) return;  // 无变化，避免空顶 updatedAt
+    // 规范化比较：内容语义没变（仅字段顺序/空数组等字节差异）就当没改——
+    //   不顶 updatedAt、不标脏、不动账本，正文字节也保持稳定，杜绝幻影编辑污染同步。
+    if (n.doc && _canonDocStr(n.doc) === _canonDocStr(doc)) return;
     const oldDoc = n.doc;  // 改之前的正文，作首次建账本的创世根
     n.doc = doc;
     n.updatedAt = now();
@@ -72955,6 +73005,105 @@ const storage = (() => {
     if (ids.length) _globalDirty = true;
     save();
     emit('change', { type: 'emptyTrash' });
+  }
+
+  /** 一次性清理历史遗留的「（本地冲突副本 …）」笔记（含回收站里的）。写墓碑 + 标脏 →
+   *  经「总账墓碑(即时同步)」与「网盘 deleted 清单」双通道传播删除，清后不会再被任何设备弹回复活。
+   *  返回清理条数。新代码任何路径都不会再生成这种副本，故只需清一次。 */
+  function purgeConflictCopies() {
+    const re = /（本地冲突副本[^）]*）/;
+    const ids = [];
+    for (const id in _data.notes) { const t = _data.notes[id] && _data.notes[id].title; if (t && re.test(t)) ids.push(id); }
+    for (const id in (_data.trash || {})) { const t = _data.trash[id] && _data.trash[id].title; if (t && re.test(t)) ids.push(id); }
+    if (!ids.length) return 0;
+    const nt = (_data.noteTombstones || (_data.noteTombstones = {}));
+    for (const id of ids) {
+      // 把可能挂在副本下的子笔记提到顶层，避免误删真内容（副本通常是顶层叶子，防御性处理）
+      for (const cid in _data.notes) { const c = _data.notes[cid]; if (c && c.parentId === id) { c.parentId = null; if (!_data.rootOrder.includes(cid)) _data.rootOrder.push(cid); _dirtyNoteIds.add(cid); } }
+      delete _data.notes[id];
+      if (_data.trash) delete _data.trash[id];
+      _data.rootOrder = (_data.rootOrder || []).filter(x => x !== id);
+      _data.trashOrder = (_data.trashOrder || []).filter(x => x !== id);
+      nt[id] = now();
+      _dirtyNoteIds.add(id);
+    }
+    _globalDirty = true;
+    save({ immediate: true });
+    emit('change', { type: 'purge-conflict-copies', count: ids.length });
+    return ids.length;
+  }
+
+  /** 一键同步自检（开发/维护用，不改任何真实数据）：控制台调 `window.storage.syncSelfCheck()`。
+   *  验四件事，全绿才算过：
+   *   ① 规范化判据对不对（字节不同但内容相同→相等；内容不同→不等）——这次同步加固的核心；
+   *   ② 合并账本「创世确定 + 合并不重复不丢」——「多出重复内容」永不发生的根保证；
+   *   ③ 每篇笔记 doc↔账本 往返不动点——揪出会被误判脏 / 有合并重复隐患的篇；
+   *   ④ 当前打开笔记的 Markdown 往返不动点（没开/正在打字则跳过；跑完自动复原视图）。 */
+  function syncSelfCheck() {
+    const R = [];
+    const ok = (name, pass, detail) => R.push({ name: name, pass: !!pass, detail: detail || '' });
+    const plain = (doc) => { let s = ''; (function w(n) { if (!n || typeof n !== 'object') return; if (n.type === 'text' && typeof n.text === 'string') s += n.text; if (Array.isArray(n.content)) n.content.forEach(w); })(doc); return s; };
+
+    // ① 规范化判据
+    try {
+      const A = { type: 'doc', content: [{ type: 'paragraph', attrs: {}, content: [{ type: 'text', text: '同一段', marks: [] }] }] };
+      const B = { content: [{ content: [{ text: '同一段', type: 'text' }], type: 'paragraph' }], type: 'doc' }; // 键序不同 + 去掉空数组
+      const C = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '不一样' }] }] };
+      ok('规范化：等价内容判为相等', _canonDocStr(A) === _canonDocStr(B));
+      ok('规范化：不同内容判为不等', _canonDocStr(A) !== _canonDocStr(C));
+    } catch (e) { ok('规范化判据', false, String(e)); }
+
+    // ② 账本：创世确定 + 合并不重复不丢
+    try {
+      const Y = window.__ydoc;
+      if (Y && Y.ready()) {
+        const base = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '底稿' }] }] };
+        const g1 = Y.build(base), g2 = Y.build(base);
+        ok('账本创世确定（两端同根）', g1 === g2);
+        const dA = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '底稿甲改' }] }] };
+        const dB = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: '底稿乙改' }] }] };
+        const merged = Y.toDoc(Y.merge(Y.update(g1, dA), Y.update(g2, dB)));
+        const txt = plain(merged);
+        const cnt = (s) => txt.split(s).length - 1;
+        ok('账本合并不重复不丢', cnt('甲改') === 1 && cnt('乙改') === 1 && cnt('底稿') === 1, '合并结果=' + JSON.stringify(txt));
+      } else { ok('账本引擎', false, '未就绪（②③账本项跳过）'); }
+    } catch (e) { ok('账本合并', false, String(e)); }
+
+    // ③ 每篇 doc↔账本 往返不动点
+    try {
+      const Y = window.__ydoc;
+      if (Y && Y.ready()) {
+        const bad = []; let n = 0;
+        for (const id in _data.notes) {
+          const d = _data.notes[id] && _data.notes[id].doc;
+          if (!d) continue;
+          n++;
+          try { if (_canonDocStr(d) !== _canonDocStr(Y.toDoc(Y.build(d)))) bad.push(_data.notes[id].title || id); }
+          catch (e) { bad.push((_data.notes[id].title || id) + '(异常)'); }
+        }
+        ok('全部笔记 doc↔账本 不动点（共 ' + n + ' 篇）', bad.length === 0, bad.length ? ('隐患篇：' + bad.slice(0, 10).join('、') + (bad.length > 10 ? ' 等' : '')) : '');
+      }
+    } catch (e) { ok('doc↔账本 不动点', false, String(e)); }
+
+    // ④ 当前打开笔记 Markdown 往返不动点（跑完复原视图）
+    try {
+      const ed = window.editor;
+      const busy = !!(ed && ed.isBusyTyping && ed.isBusyTyping());
+      const inst = ed && ed.instance && ed.instance();
+      if (inst && ed.currentId && ed.currentId() && !busy) {
+        const a = ed.getValue();
+        inst.commands.setContent(a, { emitUpdate: false, contentType: 'markdown' }); const b = ed.getValue();
+        inst.commands.setContent(b, { emitUpdate: false, contentType: 'markdown' }); const c = ed.getValue();
+        ok('当前笔记 Markdown 往返不动点', a === b && b === c);
+        try { if (ed.reloadCurrent) ed.reloadCurrent(); } catch (_) {}
+      } else { ok('Markdown 往返（当前笔记）', true, busy ? '正在打字，跳过' : '无打开的笔记，跳过'); }
+    } catch (e) { ok('Markdown 往返', false, String(e)); }
+
+    const passed = R.filter((r) => r.pass).length;
+    const allOk = R.every((r) => r.pass);
+    console.log('%c枝记同步自检 ' + (allOk ? '✅ 全部通过' : '❌ 有未通过') + ' (' + passed + '/' + R.length + ')', 'font-weight:bold;font-size:13px;color:' + (allOk ? '#16a34a' : '#dc2626'));
+    R.forEach((r) => console.log((r.pass ? '  ✅ ' : '  ❌ ') + r.name + (r.detail ? ('  — ' + r.detail) : '')));
+    return { allOk: allOk, passed: passed, total: R.length, results: R };
   }
 
   function move(id, newParentId, newIndex) {
@@ -73523,10 +73672,15 @@ const storage = (() => {
   function _realtimeApply(id, mergedDoc, mergedYdocB64) {
     const n = _data.notes[id];
     if (!n || !mergedDoc) return false;
-    const str = JSON.stringify(mergedDoc);
-    const sameDoc = n.doc && JSON.stringify(n.doc) === str;
-    const sameYdoc = n.ydoc === mergedYdocB64;
-    if (sameDoc && sameYdoc) return false;
+    // 规范化比较：对端合并结果与本地内容语义一致 → **不算内容变化**。
+    //   关键：不顶 updatedAt、不标脏、不发 content 事件——否则实时那条线会把「谁更新」
+    //   的时间戳污染给网盘线（实时干扰网盘的根因）。但仍**悄悄采纳对端账本**作同源基线，
+    //   让两端账本逐字节同根，今后合并不会合出重复内容。
+    const sameDoc = n.doc && _canonDocStr(n.doc) === _canonDocStr(mergedDoc);
+    if (sameDoc) {
+      if (mergedYdocB64 && n.ydoc !== mergedYdocB64) { n.ydoc = mergedYdocB64; save(); }
+      return false;
+    }
     ingestDocImages(mergedDoc);
     n.doc = mergedDoc;
     if (mergedYdocB64) n.ydoc = mergedYdocB64;
@@ -73831,7 +73985,7 @@ const storage = (() => {
     getImagesBackendInfo: () => ({ backend: _imgBackend, dir: _imgDir }),
     setImagesDir,
     create, rename, updateDoc, setColor, setIcon, setPinned, isPinned, getPinnedNotes, setExpanded, collapseAll, expandAll, hasExpandedNodes,
-    remove, restoreFromTrash, purgeFromTrash, emptyTrash,
+    remove, restoreFromTrash, purgeFromTrash, emptyTrash, purgeConflictCopies, syncSelfCheck,
     move, moveToWorkspace,
     getSetting, setSetting,
     getTemplates, saveTemplate, deleteTemplate,
@@ -75100,12 +75254,18 @@ window.storage = storage;
       const remoteTs = manifest.notes[id].updatedAt || 0;
       const localNote = data.notes[id];
       const localTs = localNote ? new Date(localNote.updatedAt || 0).getTime() : 0;
-      if (remoteTs > localTs + 1000) {
+      const base = _getBase(id);
+      const dn0 = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
+      // 【双保险·下载侧】不只看墙钟：本地内容相对上次同步基准「没真改过」，而云端相对基准「变过」
+      //   → 云端才是权威，无条件下载。杜绝「本地 updatedAt 被顶新(幻影保存/改元数据/时钟偏差)
+      //   → 时间戳虚高 → 跳过下载云端较新版本」这条 B 顶掉 A 的根路径。
+      const localUnchanged = localNote && base && !dn0.includes(id) && _noteHash(localNote) === base.h;
+      const remoteChangedVsBase = base && remoteTs !== base.t;
+      if (remoteTs > localTs + 1000 || (localUnchanged && remoteChangedVsBase)) {
         if (_isKnownBadNote(id, remoteTs)) continue; // 已确认拉不下来的僵尸笔记：不再重试
         toDownload.push(id);
-      } else if (localNote && !_getBase(id)) {
-        const dn = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
-        if (!dn.includes(id)) _setBase(id, _noteHash(localNote), remoteTs);
+      } else if (localNote && !base) {
+        if (!dn0.includes(id)) _setBase(id, _noteHash(localNote), remoteTs);
       }
     }
 
@@ -75400,30 +75560,10 @@ window.storage = storage;
     } catch (e) { console.warn('[webdav] 账本合并失败，退回冲突副本', e); return null; }
   }
 
-  /** 把本地未上传的版本另存为一篇独立的"本地冲突副本"笔记，确保它不被远端覆盖丢失。
-   *  副本被标脏 → 下次 PUT 会上传，让其它设备也能看到这份副本。返回新 id 或 null。 */
-  function _saveConflictCopy(baseId, sourceNote) {
-    try {
-      if (!sourceNote) return null;
-      const newId = baseId + '__cf-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-      const copy = { ...sourceNote };
-      copy.id = newId;
-      copy.parentId = null; // 提到顶层，避免挂到可能不存在的父节点
-      copy.workspaceId = sourceNote.workspaceId || undefined;
-      const baseTitle = (sourceNote.title || '无标题').replace(/（本地冲突副本[^）]*）\s*$/, '');
-      const when = new Date().toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      copy.title = `${baseTitle}（本地冲突副本 ${when}）`;
-      copy.updatedAt = new Date().toISOString();
-      window.storage._webdavApplyNote(newId, copy);
-      const d = window.storage.getAll();
-      if (d.rootOrder && !d.rootOrder.includes(newId)) d.rootOrder.push(newId);
-      if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([newId]);
-      return newId;
-    } catch (e) {
-      console.warn('[webdav] 生成冲突副本失败', e);
-      return null;
-    }
-  }
+  // 说明：历史上的「本地冲突副本」生成器(_saveConflictCopy)已彻底移除。
+  //   v3 起真冲突一律走账本自动合并(_tryLedgerMerge)或静默留底(_resolveUnmergeableSilently)，
+  //   任何路径都不再在笔记树里冒出带「（本地冲突副本）」后缀的可见副本、也不再弹提示。
+  //   现存的历史副本可用 window.storage.purgeConflictCopies() 一次性清理，清后不会再生。
 
   /** 真冲突且无法自动合并（极罕见：某端确实没账本）→ **静默**处理，不再另存可见的"本地冲突副本"、不弹提示。
    *  按 updatedAt 保留较新的一份为正本，较旧的一份存入「同步留底」（可在留底里找回，零丢失）。
@@ -75551,7 +75691,12 @@ window.storage = storage;
         const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
         const remoteTs = remoteEntry.updatedAt || 0;
         if (localTs > remoteTs + 1000) {
-          needUpload.push(id);
+          // 【双保险·上传侧】仅当本地内容相对基准**确实变过**才当"本地更新"重传。
+          //   内容==基准、只是 updatedAt 被顶新（幻影保存/改元数据/时钟偏差）→ 绝不上传，
+          //   免得"停在旧状态、内容没真改"的设备把较新的云端版本覆盖掉（B 顶掉 A）。
+          //   无基准时（极少见）维持原行为放行，避免回归"重启丢脏后真编辑漏传"。
+          const b = base[id];
+          if (!b || _noteHash(data.notes[id]) !== b.h) needUpload.push(id);
         }
       }
     }
@@ -82930,8 +83075,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   }
   function canon(obj) { try { return JSON.stringify(sortKeys(obj)); } catch (_) { return '{}'; } }
 
-  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, style: 'D' };
-  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历']];
+  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, compact: true, style: 'D' };
+  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历'], ['compact', '精简记事']];
   var STYLES = [['A', '简约'], ['B', '细线'], ['C', '卡片'], ['D', '柔底']];
 
   // 「上次选择的显示设置」记忆：只作下一个【新建】日历的默认；不改动任何已存在日历（它们各存各的 opts）。
@@ -83012,6 +83157,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     }
     // 向后兼容：旧数据存的是 startSun（周日起始），迁移成 startMon（周一起始）。
     if (o.opts && typeof o.opts.startMon !== 'boolean' && typeof o.opts.startSun === 'boolean') opts.startMon = !o.opts.startSun;
+    // 向后兼容：t22 早期用过 fit(=展开)，语义反转为 compact(=精简)：compact = !fit。
+    if (o.opts && typeof o.opts.compact !== 'boolean' && typeof o.opts.fit === 'boolean') opts.compact = !o.opts.fit;
     if (['A', 'B', 'C', 'D'].indexOf(opts.style) < 0) opts.style = DEFAULT_OPTS.style;
     return {
       y: Number.isFinite(o.y) ? o.y : n.getFullYear(),
@@ -83098,10 +83245,12 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       if (S.opts.lunar) return { text: info.isFirst ? info.lunarMonth : info.lunarDay, cls: 'lunar' };
       return null;
     }
-    function commit() { _data = canon(toObj(S)); render(); if (onChange) onChange(_data); }
+    // 幂等：数据没真变就只重绘、不回写节点，避免"点开日子又离开(临时空记事增删)"触发幻影编辑判脏。
+    function commit() { var next = canon(toObj(S)); render(); if (next !== _data) { _data = next; if (onChange) onChange(_data); } }
 
     function render() {
       dom.setAttribute('data-cal-style', S.opts.style || 'A');
+      dom.setAttribute('data-cal-fit', S.opts.compact ? '0' : '1');
       var startSun = !S.opts.startMon;
       var head = startSun ? WK_SUN : WK_MON;
       var rows = matrix(S.y, S.m, startSun);
@@ -83121,7 +83270,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         + '</div>';
       // CSS Grid（而非 table）：表头独立一行、天格独立一栅格 → 皮肤可自由控制圆角/间距/描线，
       // 也彻底摆脱编辑器通用表格样式的干扰。
-      h += '<div class="cal-gridwrap"><div class="cal-headrow">';
+      h += '<div class="cal-gridwrap"><div class="cal-gridinner"><div class="cal-headrow">';
       head.forEach(function (x, ci) { h += '<div class="cal-wd' + (wendCol(ci) ? ' we' : '') + '">' + x + '</div>'; });
       h += '</div><div class="cal-body">';
       rows.forEach(function (row) {
@@ -83135,19 +83284,28 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
           var arr = (S.notes[noteKey(d)] || []).filter(function (n) { return noteText(n).trim(); });
           var notesHtml = '';
           if (arr.length) {
-            var fc = noteColor(arr[0]);
-            var dot = fc ? '<span class="cal-n-dot" style="background:' + fc + '"></span>' : '';
-            // 首条最多取 4 字（硬截断、无省略号）；下方一行进度「X/Y」（月格 B）。
-            var t4 = noteText(arr[0]).slice(0, 4);
-            var d0 = noteDone(arr[0]) ? ' done' : '';
-            var doneN = arr.filter(function (n) { return noteDone(n); }).length;
-            notesHtml = '<div class="cal-notes"><span class="cal-n-inline' + d0 + '">' + dot + '<span class="cal-n-txt">' + esc(t4) + '</span></span>'
-              + '<div class="cal-prog' + (doneN === arr.length ? ' all' : '') + '">' + IC_CHECK_S + doneN + '/' + arr.length + '</div></div>';
+            if (!S.opts.compact) {
+              // 展开模式（关闭精简）：列出全部记事、整段换行，格子按内容自动增高（不截断、无 +N）。
+              notesHtml = '<div class="cal-notes cal-notes-fit">' + arr.map(function (n) {
+                var c = noteColor(n), dn = noteDone(n);
+                var dt = c ? '<span class="cal-n-dot" style="background:' + c + '"></span>' : '';
+                return '<div class="cal-n-line' + (dn ? ' done' : '') + '">' + dt + '<span class="cal-n-txt">' + esc(noteText(n)) + '</span></div>';
+              }).join('') + '</div>';
+            } else {
+              var fc = noteColor(arr[0]);
+              var dot = fc ? '<span class="cal-n-dot" style="background:' + fc + '"></span>' : '';
+              // 首条最多取 4 字（硬截断、无省略号）；下方一行进度「X/Y」（月格 B）。
+              var t4 = noteText(arr[0]).slice(0, 4);
+              var d0 = noteDone(arr[0]) ? ' done' : '';
+              var doneN = arr.filter(function (n) { return noteDone(n); }).length;
+              notesHtml = '<div class="cal-notes"><span class="cal-n-inline' + d0 + '">' + dot + '<span class="cal-n-txt">' + esc(t4) + '</span></span>'
+                + '<div class="cal-prog' + (doneN === arr.length ? ' all' : '') + '">' + IC_CHECK_S + doneN + '/' + arr.length + '</div></div>';
+            }
           }
           h += '<div class="' + cls.join(' ') + '" data-d="' + d + '"><div class="cal-drow"><span class="cal-dnum">' + d + '</span><span class="cal-addhint">＋</span></div>' + subHtml + notesHtml + '</div>';
         });
       });
-      h += '</div></div>';
+      h += '</div></div></div>';
       dom.innerHTML = h;
       bind();
     }
@@ -83221,13 +83379,13 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         b.addEventListener('click', function (e) { e.stopPropagation(); S.opts.style = b.dataset.s; commit(); saveDefOpts(S.opts); dom.querySelector('.cal-pop-set').classList.remove('hidden'); });
       });
       dom.querySelectorAll('.cal-day[data-d]').forEach(function (el) {
-        el.addEventListener('click', function () { hideTip(); openDay(+el.dataset.d, el); });
+        el.addEventListener('click', function () { hideTip(); openDay(+el.dataset.d, el, true); });
         el.addEventListener('mouseenter', function () { showTip(+el.dataset.d, el); });
         el.addEventListener('mouseleave', hideTip);
       });
     }
 
-    function openDay(d, td) {
+    function openDay(d, td, addNew) {
       cardDay = d;
       openColorIdx = -1;
       hideTip();
@@ -83240,10 +83398,17 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         };
         document.addEventListener('mousedown', cardDocDown, true);
       }
-      drawCard();
+      // 点日子即在最上方新建一条空记事并聚焦；空的失焦自动删除，不留垃圾。
+      // 注意：这里不能调用会触发 render() 的提交——render 会重建网格、把传进来的 td 变成游离节点，
+      // 之后 getBoundingClientRect() 归零、卡片会错位到左上角。上一条的编辑已由其 blur 提交，无需再 flush。
+      if (addNew) { var k0 = noteKey(d); (S.notes[k0] = S.notes[k0] || []).unshift(''); }
+      // 必须先显示再 drawCard：textarea 自动增高靠 scrollHeight，display:none 时测得 0 会塌成一条线。
       card.classList.remove('hidden');
-      var r = td.getBoundingClientRect();
-      var w = 252, left = r.right + 8, top = r.top;
+      drawCard(addNew ? 0 : undefined);
+      // 用 DOM 里当前活着的同一天格子测量，避免拿到被 render 重建后游离的旧节点（归零→错位）。
+      var live = dom.querySelector('.cal-day[data-d="' + d + '"]');
+      var r = (live || td).getBoundingClientRect();
+      var w = 268, left = r.right + 8, top = r.top;
       if (left + w > window.innerWidth - 10) left = r.left - w - 6;
       if (left < 10) left = 10;
       var ch = card.offsetHeight || 200;
@@ -83280,7 +83445,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
           var dn = noteDone(n);
           // 圆形勾选框，边框=记事颜色；勾选→整圆填色+白勾。点它=完成/取消。
           var ck = '<span class="cal-note-ck' + (dn ? ' on' : '') + '" data-i="' + i + '"' + (c ? ' style="--ck:' + c + '"' : '') + ' title="完成/取消">' + IC_CHECK + '</span>';
-          return '<div class="cal-note-row' + (dn ? ' done' : '') + '" data-i="' + i + '">' + ck + '<input class="cal-edit" type="text" data-i="' + i + '" value="' + esc(t) + '">' + sw + '<span class="del" data-i="' + i + '">×</span></div>' + pal;
+          return '<div class="cal-note-row' + (dn ? ' done' : '') + '" data-i="' + i + '">' + ck + '<textarea class="cal-edit" rows="1" data-i="' + i + '" placeholder="写点什么…">' + esc(t) + '</textarea>' + sw + '<span class="del" data-i="' + i + '">×</span></div>' + pal;
         }).join('');
       } else {
         rows = '<div class="cal-empty">还没有记事</div>';
@@ -83299,15 +83464,18 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         openColorIdx = -1;
         drawCard(0);
       });
-      // 记事可直接编辑：输入去抖落盘（不重绘卡片、不丢焦点）；失焦为空则删除。
+      // 记事可直接编辑：多行、自动增高；Enter 换行，点别处/Esc 收尾并落盘；空的失焦自动删除。
+      function autoGrow(el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }
       card.querySelectorAll('.cal-edit').forEach(function (inp) {
+        autoGrow(inp);
         inp.addEventListener('input', function () {
           var i = +inp.dataset.i;
           var a = S.notes[key] || [];
           a[i] = makeNote(inp.value, noteColor(a[i]), noteDone(a[i]));
+          autoGrow(inp);
           scheduleSoftCommit();
         });
-        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); inp.blur(); } });
         inp.addEventListener('blur', function () {
           var i = +inp.dataset.i;
           var a = S.notes[key] || [];
@@ -83414,12 +83582,15 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 
       if (typeof focusIdx === 'number') {
         var inps = card.querySelectorAll('.cal-edit');
-        if (inps[focusIdx]) inps[focusIdx].focus();
+        var fel = inps[focusIdx];
+        if (fel) { fel.focus(); try { var L = fel.value.length; fel.setSelectionRange(L, L); } catch (_) {} }
       }
     }
 
-    // 滚轮切月：鼠标在整个日历上滚动即切月；移开日历正常滚页面。节流：一次滚动一个月。
+    // 滚轮切月：仅当鼠标悬在左上角「年月按钮」(.cal-title)上滚动才切月——避免在日历正文上滚动误改月份
+    // （之前整块都能滚切月，很容易误操作月份变来变去）。不在按钮上时不拦截，滚轮正常滚动页面。节流：一次滚动一个月。
     function onWheel(e) {
+      if (!(e.target.closest && e.target.closest('.cal-title'))) return;
       e.preventDefault();
       var t = Date.now();
       if (t - wheelLock < 200) return;
@@ -84725,6 +84896,44 @@ const editor = (() => {
     }).join('');
   }
 
+  /**
+   * 以「Markdown + 数学 + 行内感知」的方式把纯文本插入到当前光标处。
+   * 与 Ctrl+V 纯文本粘贴共用同一套逻辑：单段纯行内内容剥掉外层 <p> 行内插入，
+   * 避免在已有文字中间粘贴时被拆成新段落（右键菜单「粘贴」另起一行的根因）。
+   */
+  function pasteText(text) {
+    if (!_editor || !text) return;
+    const processed = preprocessMathMarkdown(text);
+    const marked = _editor.storage?.markdown?.manager?.markedInstance;
+    let parsedHtml = '';
+    if (marked) { try { parsedHtml = String(marked.parse(processed) || '').trim(); } catch (_) {} }
+    if (parsedHtml) {
+      const pCount = (parsedHtml.match(/<p>/g) || []).length;
+      const hasBlock = /<(ul|ol|h[1-6]|blockquote|pre|table|hr)\b/i.test(parsedHtml);
+      const singlePara = pCount === 1 && !hasBlock && /^<p>[\s\S]*<\/p>$/.test(parsedHtml);
+      const payload = singlePara
+        ? parsedHtml.replace(/^<p>/, '').replace(/<\/p>$/, '')
+        : parsedHtml;
+      _editor.chain().focus().insertContent(payload, {
+        contentType: 'html',
+        parseOptions: { preserveWhitespace: false },
+      }).run();
+    } else {
+      const paragraphs = text.split(/\n{2,}/);
+      const nodes = [];
+      for (const p of paragraphs) {
+        const lines = p.split('\n');
+        const content = [];
+        for (let i = 0; i < lines.length; i++) {
+          if (i > 0) content.push({ type: 'hardBreak' });
+          if (lines[i]) content.push({ type: 'text', text: lines[i] });
+        }
+        nodes.push(content.length ? { type: 'paragraph', content } : { type: 'paragraph' });
+      }
+      _editor.chain().focus().insertContent(nodes).run();
+    }
+  }
+
   function initEditor() {
     if (_editor) return _editor;
 
@@ -85302,39 +85511,8 @@ const editor = (() => {
       e.stopImmediatePropagation();
       // 纯文本粘贴：按 Markdown 解析，让 **加粗**、*斜体*、`代码`、列表、标题等源码
       // 直接变成对应格式，避免把 Markdown 源码原样当作字面文本插入（出现 **文字**）。
-      // 先跑数学预处理保留 $...$；再用 marked 转 HTML。
-      // 若整段只是「单个段落」（纯行内内容），剥掉外层 <p> 以行内方式插入，
-      // 这样在已有文字中间粘贴 **重点** 不会把当前段落拆成多段。
-      const processed = preprocessMathMarkdown(text);
-      const marked = _editor.storage?.markdown?.manager?.markedInstance;
-      let parsedHtml = '';
-      if (marked) { try { parsedHtml = String(marked.parse(processed) || '').trim(); } catch (_) {} }
-      if (parsedHtml) {
-        const pCount = (parsedHtml.match(/<p>/g) || []).length;
-        const hasBlock = /<(ul|ol|h[1-6]|blockquote|pre|table|hr)\b/i.test(parsedHtml);
-        const singlePara = pCount === 1 && !hasBlock && /^<p>[\s\S]*<\/p>$/.test(parsedHtml);
-        const payload = singlePara
-          ? parsedHtml.replace(/^<p>/, '').replace(/<\/p>$/, '')
-          : parsedHtml;
-        _editor.commands.insertContent(payload, {
-          contentType: 'html',
-          parseOptions: { preserveWhitespace: false },
-        });
-      } else {
-        // 兜底：拿不到 markdown 解析器时，退回按行插入纯文本
-        const paragraphs = text.split(/\n{2,}/);
-        const nodes = [];
-        for (const p of paragraphs) {
-          const lines = p.split('\n');
-          const content = [];
-          for (let i = 0; i < lines.length; i++) {
-            if (i > 0) content.push({ type: 'hardBreak' });
-            if (lines[i]) content.push({ type: 'text', text: lines[i] });
-          }
-          nodes.push(content.length ? { type: 'paragraph', content } : { type: 'paragraph' });
-        }
-        _editor.commands.insertContent(nodes);
-      }
+      // 单段纯行内内容会行内插入、不另起段落。右键菜单「粘贴」复用同一函数，行为一致。
+      pasteText(text);
     }, true);
     const handleCopyEvent = (e) => {
       if (!_editor || !e.clipboardData) return;
@@ -86188,12 +86366,10 @@ const editor = (() => {
       case 'toggleHighlight': _editor.chain().focus().toggleHighlight().run(); break;
       case 'setHighlight': {
         const color = opts;
-        // 用 setHighlight（设置而非切换）：选不同色块就换色，不会因为已高亮而被切掉
-        if (color) {
-          _editor.chain().focus().setHighlight({ color }).run();
-        } else {
-          _editor.chain().focus().setHighlight().run();
-        }
+        // 统一走「显式设色」：黄色（无色值）传 color:null，其余传具体色值。
+        // 关键——即便已存在其它颜色的标注，显式 attrs 也会覆盖旧色；
+        // 旧实现里黄色走 setHighlight()（无参）不会覆盖已有颜色，导致"改成黄色无效"。
+        _editor.chain().focus().setHighlight({ color: color || null }).run();
         break;
       }
       case 'unsetHighlight': _editor.chain().focus().unsetHighlight().run(); break;
@@ -87097,8 +87273,10 @@ const editor = (() => {
       const t = node.type;
       if (t === 'text') { parts.push(node.text || ''); return; }
       if (t === 'hardBreak') { parts.push('\n'); return; }
-      if (t === 'mathInline') { parts.push((node.attrs && node.attrs.latex) || ''); return; }
-      if (t === 'mathBlock') { parts.push((node.attrs && node.attrs.latex) || ''); parts.push('\n'); return; }
+      // 公式带上 $ / $$ 定界符：这样"看得到就搜得到"——既能搜里面的 latex（key=），
+      // 也能搜源码形态（$$key=$$）。旧的无 doc 笔记走 content(markdown) 本就含 $$，此举与之对齐。
+      if (t === 'mathInline') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$' + lx + '$'); return; }
+      if (t === 'mathBlock') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$$' + lx + '$$'); parts.push('\n'); return; }
       if (t === 'image') return; // 跳过图片
       if (Array.isArray(node.content)) node.content.forEach(visit);
       if (_BLOCK_TYPES.has(t)) parts.push('\n');
@@ -87151,7 +87329,7 @@ const editor = (() => {
   return {
     initEditor, open, close, reloadCurrent, refreshTitle,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
-    currentId, getValue, focus, insertAtCursor, insertCalendarBlock, instance, execCommand,
+    currentId, getValue, focus, insertAtCursor, pasteText, insertCalendarBlock, instance, execCommand,
     isBusyTyping, flushSaveNow,
     applyRemoteUpdate, isCrdtBound,
     insertImageFromDataUrl,
@@ -87294,9 +87472,6 @@ async function bootstrap() {
   // 窗口自愈放最前（在 storage.init() 等耗时操作之前），尽快复位，减少"一条线"残留时间。
   // isQuicker() 只看 $quicker / chrome.webview 是否注入，不依赖 storage，已可用。
   if (storage.isQuicker()) {
-    // 冷启动 / 预热即「正常态打开」：复位伪最大化标记 zhinote_is_max=0。
-    // 「显示已存在窗口」不重载页面、不会执行到这里，所以天然只在冷启动/预热复位（正是所需）。
-    try { await windowOp('复位'); } catch (_) {}
     // 锁定原生四边缩放的最小尺寸（子程序内 WM_GETMINMAXINFO 子类化，OS 级）。一次性挂钩，子程序侧按 hWnd 去重。
     const _dpr = window.devicePixelRatio || 1;
     try {
@@ -87310,7 +87485,7 @@ async function bootstrap() {
           await windowOp('复位窗口', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
         } catch (_) {
           // 子程序还没加「复位窗口」模式时的兜底：先最大化，至少让窗口可见可用
-          try { await windowOp('最大化', { isMax: false }); _isMaximized = true; } catch (_) {}
+          try { await windowOp('最大化'); _isMaximized = true; } catch (_) {}
         }
       }
     } catch (_) {}
@@ -87538,12 +87713,6 @@ async function bootstrap() {
     } else if (payload.type === 'webdav-rate-limited') {
       _setCloudSyncDot('pending');
       toast('同步请求频率受限，将自动恢复', 'warning', { id: 'webdav-rate', duration: 5000 });
-    } else if (payload.type === 'webdav-conflict') {
-      // v3 起真冲突由账本自动合并、不再冒副本；此事件只在「无账本的旧格式笔记」回退路径触发，已很少见。
-      const _msg = payload.copyMade
-        ? '这篇旧格式笔记云端也改过：已采用云端版本，你本地的版本另存为"（本地冲突副本）"，可对比后保留所需的一份'
-        : '云端也修改了该笔记，已保留本地版本';
-      toast(_msg, 'info', { id: 'webdav-conflict', duration: 8000 });
     } else if (payload.type === 'webdav-merged') {
       // v3 账本自动合并：默认静默（仅徽标转 synced 由 sync-ok 处理）；此处预留，不打扰用户。
     }
@@ -91025,7 +91194,7 @@ function toggleMarkOnSelection() {
 async function requestMinimize() {
   editor.flushSave();
   if (storage.isQuicker()) {
-    try { await windowOp('最小化', { isMax: _isMaximized }); }
+    try { await windowOp('最小化'); }
     catch (err) { toast('最小化失败，请检查 WindowOp 子程序', 'error'); }
   } else {
     toast('开发模式：无法最小化', 'warning');
@@ -91055,7 +91224,7 @@ function setupTopResizeGrip() {
     inflight = true;
     // 把全局最小高度一并传给子程序，让顶边的钳值与原生缩放/复位的最小尺寸一致，
     // 否则顶边用更小的内置钳值，到达"真实最小"后会把窗口整体往下推。
-    windowOp('顶边', { delta, isMax: false, minH: Math.round(WIN_MIN_H * dpr) })
+    windowOp('顶边', { delta, minH: Math.round(WIN_MIN_H * dpr) })
       .catch(() => {})
       .finally(() => {
         inflight = false;
@@ -91102,7 +91271,7 @@ async function requestToggleTopmost() {
     return;
   }
   try {
-    const r = await windowOp('置顶', { isMax: _isMaximized });
+    const r = await windowOp('置顶');
     const v = String((r && (r.isTopmost ?? r.result)) ?? '').toLowerCase();
     const on = (v === 'true' || v === '1');
     if (btn) {
@@ -91115,9 +91284,9 @@ async function requestToggleTopmost() {
 }
 
 /** 最大化 / 还原切换 → 子程序 WindowOp。
- *  最大化：mode=最大化（isMax=false）。子程序先把当前真实位置写进 zhinote_window_rect 作还原点，再设工作区全屏。
- *  还原：  mode=还原（isMax=true）。子程序读 zhinote_window_rect 设回；isMax 守门保证全屏不污染状态。
- *  还原点全程由子程序维护，前端不再用 screenX/outerWidth 自算（杜绝累积变大）。
+ *  最大化：mode=最大化。子程序先把当前真实位置写进 zhinote_window_rect 作还原点（几何守门判定"未铺满"才写），再设工作区全屏。
+ *  还原：  mode=还原。子程序读 zhinote_window_rect 设回；此时窗口已铺满，几何守门判定"已最大化"→跳过写状态，还原点不被污染。
+ *  还原点全程由子程序维护，前端不再用 screenX/outerWidth 自算（杜绝累积变大）；_isMaximized 仅本地用于按钮切换与置顶禁用，不再传给子程序。
  */
 let _isMaximized = false;
 
@@ -91126,10 +91295,10 @@ async function requestMaximize() {
   document.body.classList.add('is-resizing');
   try {
     if (!_isMaximized) {
-      await windowOp('最大化', { isMax: false });
+      await windowOp('最大化');
       _isMaximized = true;
     } else {
-      await windowOp('还原', { isMax: true });
+      await windowOp('还原');
       _isMaximized = false;
     }
   } catch (err) {
@@ -91371,7 +91540,8 @@ function handleQuickerMessage(msg) {
 }
 
 /** 统一窗口操作 → 子程序 WindowOp，用中文 mode 区分：隐藏/最小化/置顶/最大化/还原/顶边。
- *  - isMax：当前是否处于伪最大化态（前端 _isMaximized）。子程序据此守门，最大化态不写位置状态，避免全屏污染。
+ *  - 存位置改由子程序「几何守门」判定：操作前量窗口是否铺满所在屏工作区，未铺满(=普通窗口)才写 zhinote_window_rect，
+ *    铺满(=最大化)则跳过。前端不再传 isMax，拖小/挪位置都能被正确记住。
  *  - delta：仅 mode=顶边，本帧鼠标 Y 增量（物理像素）。子程序 newTop=当前真实 top + delta。
  *  真实矩形/工作区全屏/还原点全由子程序在物理像素空间处理；前端不读 screenX/outerWidth（WebView2 下不可靠）。
  *  运行期不轮询、不实时存：移动/缩放后的位置在隐藏/最大化等操作时由子程序统一落盘。
@@ -91728,7 +91898,7 @@ async function requestHideWindow() {
       storage.save({ immediate: true });
     }
     try {
-      await windowOp('隐藏', { isMax: _isMaximized });
+      await windowOp('隐藏');
     } catch (err) {
       console.error('[hide]', err);
       toast('隐藏窗口失败，请检查 WindowOp 子程序是否已配置', 'error');
@@ -93093,6 +93263,7 @@ function openSettingsModal(initialTab) {
     </div>
     <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
     </div>
+    <div id="sync-exp-block"${curSyncMethod==='none'?' class="settings-tab-hidden"':''}>
     <div class="settings-section">实验性</div>
     <div class="set-col">
       <label>正文实时绑定（逐字同步，光标不跳）</label>
@@ -93103,6 +93274,7 @@ function openSettingsModal(initialTab) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
         实验功能：多台设备同时编辑同一篇笔记时逐字实时合并，不再整篇刷新、光标不跳、不打断输入法。切换后会刷新页面生效。
       </div>
+    </div>
     </div>
     </div>
     <div id="settings-tab-backup" class="${lastTab!=='backup'?'settings-tab-hidden':''}">
@@ -93685,11 +93857,14 @@ function openSettingsModal(initialTab) {
   function _updateSyncPanels() {
     const v = syncMethodSelect.value;
     const wasWebdav = _lastSyncSelect !== 'none';
+    const expBlock = body.querySelector('#sync-exp-block'); // 实验性(正文实时绑定)：只在开着同步时才有意义
     if (v === 'none') {
       if (wasWebdav) _stashWebdavDraft();
       panelWebdav.classList.add('settings-tab-hidden');
+      if (expBlock) expBlock.classList.add('settings-tab-hidden');
     } else {
       panelWebdav.classList.remove('settings-tab-hidden');
+      if (expBlock) expBlock.classList.remove('settings-tab-hidden');
       _switchWebdavProvider(v).then(() => {
         if (!_initialPassCaptured) {
           _initialPassValue = passInput.value;
@@ -94701,7 +94876,7 @@ function showTableContextMenu(e) {
   const menu = document.createElement('div');
   menu.className = 'md-editor-ctx';
   const items = [
-    { label: '粘贴', action: async () => { try { const t = await navigator.clipboard.readText(); if (t && /\$\$[^$]+?\$\$|\$[^$\n]+?\$/.test(t)) { const inst = editor.instance?.(); if (inst) { const processed = t.replace(/\$\$([^$]+?)\$\$/gs, (_,l) => `<div data-math-block data-latex="${l.trim().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></div>`).replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_,l) => `<span data-math-inline data-latex="${l.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></span>`); inst.commands.insertContent(processed, { parseOptions: { preserveWhitespace: false } }); return; } } if (t) editor.insertAtCursor(t); } catch(_) { document.execCommand('paste'); } } },
+    { label: '粘贴', action: async () => { try { const t = await navigator.clipboard.readText(); if (t) editor.pasteText(t); } catch(_) { document.execCommand('paste'); } } },
     { sep: true },
     { label: '上方插入行', action: () => editor.execCommand('addRowBefore') },
     { label: '下方插入行', action: () => editor.execCommand('addRowAfter') },
@@ -94821,16 +94996,9 @@ function initEditorContextMenu() {
     const _pasteAction = async () => {
       try {
         const t = await navigator.clipboard.readText();
-        if (t && /\$\$[^$]+?\$\$|\$[^$\n]+?\$/.test(t)) {
-          const inst = editor.instance?.();
-          if (inst) {
-            const processed = t.replace(/\$\$([^$]+?)\$\$/gs, (_, latex) => `<div data-math-block data-latex="${latex.trim().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></div>`)
-              .replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_, latex) => `<span data-math-inline data-latex="${latex.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></span>`);
-            inst.commands.insertContent(processed, { parseOptions: { preserveWhitespace: false } });
-            return;
-          }
-        }
-        if (t) editor.insertAtCursor(t);
+        // 复用编辑器与 Ctrl+V 同一套粘贴逻辑：数学/Markdown 解析 + 单段行内插入，
+        // 不会像旧实现那样把内容顶到下一行。
+        if (t) editor.pasteText(t);
       } catch(_) { document.execCommand('paste'); }
     };
     let _hasClip = true;

@@ -114,9 +114,6 @@ async function bootstrap() {
   // 窗口自愈放最前（在 storage.init() 等耗时操作之前），尽快复位，减少"一条线"残留时间。
   // isQuicker() 只看 $quicker / chrome.webview 是否注入，不依赖 storage，已可用。
   if (storage.isQuicker()) {
-    // 冷启动 / 预热即「正常态打开」：复位伪最大化标记 zhinote_is_max=0。
-    // 「显示已存在窗口」不重载页面、不会执行到这里，所以天然只在冷启动/预热复位（正是所需）。
-    try { await windowOp('复位'); } catch (_) {}
     // 锁定原生四边缩放的最小尺寸（子程序内 WM_GETMINMAXINFO 子类化，OS 级）。一次性挂钩，子程序侧按 hWnd 去重。
     const _dpr = window.devicePixelRatio || 1;
     try {
@@ -130,7 +127,7 @@ async function bootstrap() {
           await windowOp('复位窗口', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
         } catch (_) {
           // 子程序还没加「复位窗口」模式时的兜底：先最大化，至少让窗口可见可用
-          try { await windowOp('最大化', { isMax: false }); _isMaximized = true; } catch (_) {}
+          try { await windowOp('最大化'); _isMaximized = true; } catch (_) {}
         }
       }
     } catch (_) {}
@@ -358,12 +355,6 @@ async function bootstrap() {
     } else if (payload.type === 'webdav-rate-limited') {
       _setCloudSyncDot('pending');
       toast('同步请求频率受限，将自动恢复', 'warning', { id: 'webdav-rate', duration: 5000 });
-    } else if (payload.type === 'webdav-conflict') {
-      // v3 起真冲突由账本自动合并、不再冒副本；此事件只在「无账本的旧格式笔记」回退路径触发，已很少见。
-      const _msg = payload.copyMade
-        ? '这篇旧格式笔记云端也改过：已采用云端版本，你本地的版本另存为"（本地冲突副本）"，可对比后保留所需的一份'
-        : '云端也修改了该笔记，已保留本地版本';
-      toast(_msg, 'info', { id: 'webdav-conflict', duration: 8000 });
     } else if (payload.type === 'webdav-merged') {
       // v3 账本自动合并：默认静默（仅徽标转 synced 由 sync-ok 处理）；此处预留，不打扰用户。
     }
@@ -3845,7 +3836,7 @@ function toggleMarkOnSelection() {
 async function requestMinimize() {
   editor.flushSave();
   if (storage.isQuicker()) {
-    try { await windowOp('最小化', { isMax: _isMaximized }); }
+    try { await windowOp('最小化'); }
     catch (err) { toast('最小化失败，请检查 WindowOp 子程序', 'error'); }
   } else {
     toast('开发模式：无法最小化', 'warning');
@@ -3875,7 +3866,7 @@ function setupTopResizeGrip() {
     inflight = true;
     // 把全局最小高度一并传给子程序，让顶边的钳值与原生缩放/复位的最小尺寸一致，
     // 否则顶边用更小的内置钳值，到达"真实最小"后会把窗口整体往下推。
-    windowOp('顶边', { delta, isMax: false, minH: Math.round(WIN_MIN_H * dpr) })
+    windowOp('顶边', { delta, minH: Math.round(WIN_MIN_H * dpr) })
       .catch(() => {})
       .finally(() => {
         inflight = false;
@@ -3922,7 +3913,7 @@ async function requestToggleTopmost() {
     return;
   }
   try {
-    const r = await windowOp('置顶', { isMax: _isMaximized });
+    const r = await windowOp('置顶');
     const v = String((r && (r.isTopmost ?? r.result)) ?? '').toLowerCase();
     const on = (v === 'true' || v === '1');
     if (btn) {
@@ -3935,9 +3926,9 @@ async function requestToggleTopmost() {
 }
 
 /** 最大化 / 还原切换 → 子程序 WindowOp。
- *  最大化：mode=最大化（isMax=false）。子程序先把当前真实位置写进 zhinote_window_rect 作还原点，再设工作区全屏。
- *  还原：  mode=还原（isMax=true）。子程序读 zhinote_window_rect 设回；isMax 守门保证全屏不污染状态。
- *  还原点全程由子程序维护，前端不再用 screenX/outerWidth 自算（杜绝累积变大）。
+ *  最大化：mode=最大化。子程序先把当前真实位置写进 zhinote_window_rect 作还原点（几何守门判定"未铺满"才写），再设工作区全屏。
+ *  还原：  mode=还原。子程序读 zhinote_window_rect 设回；此时窗口已铺满，几何守门判定"已最大化"→跳过写状态，还原点不被污染。
+ *  还原点全程由子程序维护，前端不再用 screenX/outerWidth 自算（杜绝累积变大）；_isMaximized 仅本地用于按钮切换与置顶禁用，不再传给子程序。
  */
 let _isMaximized = false;
 
@@ -3946,10 +3937,10 @@ async function requestMaximize() {
   document.body.classList.add('is-resizing');
   try {
     if (!_isMaximized) {
-      await windowOp('最大化', { isMax: false });
+      await windowOp('最大化');
       _isMaximized = true;
     } else {
-      await windowOp('还原', { isMax: true });
+      await windowOp('还原');
       _isMaximized = false;
     }
   } catch (err) {
@@ -4191,7 +4182,8 @@ function handleQuickerMessage(msg) {
 }
 
 /** 统一窗口操作 → 子程序 WindowOp，用中文 mode 区分：隐藏/最小化/置顶/最大化/还原/顶边。
- *  - isMax：当前是否处于伪最大化态（前端 _isMaximized）。子程序据此守门，最大化态不写位置状态，避免全屏污染。
+ *  - 存位置改由子程序「几何守门」判定：操作前量窗口是否铺满所在屏工作区，未铺满(=普通窗口)才写 zhinote_window_rect，
+ *    铺满(=最大化)则跳过。前端不再传 isMax，拖小/挪位置都能被正确记住。
  *  - delta：仅 mode=顶边，本帧鼠标 Y 增量（物理像素）。子程序 newTop=当前真实 top + delta。
  *  真实矩形/工作区全屏/还原点全由子程序在物理像素空间处理；前端不读 screenX/outerWidth（WebView2 下不可靠）。
  *  运行期不轮询、不实时存：移动/缩放后的位置在隐藏/最大化等操作时由子程序统一落盘。
@@ -4548,7 +4540,7 @@ async function requestHideWindow() {
       storage.save({ immediate: true });
     }
     try {
-      await windowOp('隐藏', { isMax: _isMaximized });
+      await windowOp('隐藏');
     } catch (err) {
       console.error('[hide]', err);
       toast('隐藏窗口失败，请检查 WindowOp 子程序是否已配置', 'error');
@@ -5913,6 +5905,7 @@ function openSettingsModal(initialTab) {
     </div>
     <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
     </div>
+    <div id="sync-exp-block"${curSyncMethod==='none'?' class="settings-tab-hidden"':''}>
     <div class="settings-section">实验性</div>
     <div class="set-col">
       <label>正文实时绑定（逐字同步，光标不跳）</label>
@@ -5923,6 +5916,7 @@ function openSettingsModal(initialTab) {
       <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
         实验功能：多台设备同时编辑同一篇笔记时逐字实时合并，不再整篇刷新、光标不跳、不打断输入法。切换后会刷新页面生效。
       </div>
+    </div>
     </div>
     </div>
     <div id="settings-tab-backup" class="${lastTab!=='backup'?'settings-tab-hidden':''}">
@@ -6505,11 +6499,14 @@ function openSettingsModal(initialTab) {
   function _updateSyncPanels() {
     const v = syncMethodSelect.value;
     const wasWebdav = _lastSyncSelect !== 'none';
+    const expBlock = body.querySelector('#sync-exp-block'); // 实验性(正文实时绑定)：只在开着同步时才有意义
     if (v === 'none') {
       if (wasWebdav) _stashWebdavDraft();
       panelWebdav.classList.add('settings-tab-hidden');
+      if (expBlock) expBlock.classList.add('settings-tab-hidden');
     } else {
       panelWebdav.classList.remove('settings-tab-hidden');
+      if (expBlock) expBlock.classList.remove('settings-tab-hidden');
       _switchWebdavProvider(v).then(() => {
         if (!_initialPassCaptured) {
           _initialPassValue = passInput.value;
@@ -7521,7 +7518,7 @@ function showTableContextMenu(e) {
   const menu = document.createElement('div');
   menu.className = 'md-editor-ctx';
   const items = [
-    { label: '粘贴', action: async () => { try { const t = await navigator.clipboard.readText(); if (t && /\$\$[^$]+?\$\$|\$[^$\n]+?\$/.test(t)) { const inst = editor.instance?.(); if (inst) { const processed = t.replace(/\$\$([^$]+?)\$\$/gs, (_,l) => `<div data-math-block data-latex="${l.trim().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></div>`).replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_,l) => `<span data-math-inline data-latex="${l.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></span>`); inst.commands.insertContent(processed, { parseOptions: { preserveWhitespace: false } }); return; } } if (t) editor.insertAtCursor(t); } catch(_) { document.execCommand('paste'); } } },
+    { label: '粘贴', action: async () => { try { const t = await navigator.clipboard.readText(); if (t) editor.pasteText(t); } catch(_) { document.execCommand('paste'); } } },
     { sep: true },
     { label: '上方插入行', action: () => editor.execCommand('addRowBefore') },
     { label: '下方插入行', action: () => editor.execCommand('addRowAfter') },
@@ -7641,16 +7638,9 @@ function initEditorContextMenu() {
     const _pasteAction = async () => {
       try {
         const t = await navigator.clipboard.readText();
-        if (t && /\$\$[^$]+?\$\$|\$[^$\n]+?\$/.test(t)) {
-          const inst = editor.instance?.();
-          if (inst) {
-            const processed = t.replace(/\$\$([^$]+?)\$\$/gs, (_, latex) => `<div data-math-block data-latex="${latex.trim().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></div>`)
-              .replace(/(?<!\$)\$(?!\$)([^$\n]+?)(?<!\$)\$(?!\$)/g, (_, latex) => `<span data-math-inline data-latex="${latex.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"></span>`);
-            inst.commands.insertContent(processed, { parseOptions: { preserveWhitespace: false } });
-            return;
-          }
-        }
-        if (t) editor.insertAtCursor(t);
+        // 复用编辑器与 Ctrl+V 同一套粘贴逻辑：数学/Markdown 解析 + 单段行内插入，
+        // 不会像旧实现那样把内容顶到下一行。
+        if (t) editor.pasteText(t);
       } catch(_) { document.execCommand('paste'); }
     };
     let _hasClip = true;

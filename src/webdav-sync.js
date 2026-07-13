@@ -1237,12 +1237,18 @@
       const remoteTs = manifest.notes[id].updatedAt || 0;
       const localNote = data.notes[id];
       const localTs = localNote ? new Date(localNote.updatedAt || 0).getTime() : 0;
-      if (remoteTs > localTs + 1000) {
+      const base = _getBase(id);
+      const dn0 = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
+      // 【双保险·下载侧】不只看墙钟：本地内容相对上次同步基准「没真改过」，而云端相对基准「变过」
+      //   → 云端才是权威，无条件下载。杜绝「本地 updatedAt 被顶新(幻影保存/改元数据/时钟偏差)
+      //   → 时间戳虚高 → 跳过下载云端较新版本」这条 B 顶掉 A 的根路径。
+      const localUnchanged = localNote && base && !dn0.includes(id) && _noteHash(localNote) === base.h;
+      const remoteChangedVsBase = base && remoteTs !== base.t;
+      if (remoteTs > localTs + 1000 || (localUnchanged && remoteChangedVsBase)) {
         if (_isKnownBadNote(id, remoteTs)) continue; // 已确认拉不下来的僵尸笔记：不再重试
         toDownload.push(id);
-      } else if (localNote && !_getBase(id)) {
-        const dn = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
-        if (!dn.includes(id)) _setBase(id, _noteHash(localNote), remoteTs);
+      } else if (localNote && !base) {
+        if (!dn0.includes(id)) _setBase(id, _noteHash(localNote), remoteTs);
       }
     }
 
@@ -1537,30 +1543,10 @@
     } catch (e) { console.warn('[webdav] 账本合并失败，退回冲突副本', e); return null; }
   }
 
-  /** 把本地未上传的版本另存为一篇独立的"本地冲突副本"笔记，确保它不被远端覆盖丢失。
-   *  副本被标脏 → 下次 PUT 会上传，让其它设备也能看到这份副本。返回新 id 或 null。 */
-  function _saveConflictCopy(baseId, sourceNote) {
-    try {
-      if (!sourceNote) return null;
-      const newId = baseId + '__cf-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
-      const copy = { ...sourceNote };
-      copy.id = newId;
-      copy.parentId = null; // 提到顶层，避免挂到可能不存在的父节点
-      copy.workspaceId = sourceNote.workspaceId || undefined;
-      const baseTitle = (sourceNote.title || '无标题').replace(/（本地冲突副本[^）]*）\s*$/, '');
-      const when = new Date().toLocaleString([], { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      copy.title = `${baseTitle}（本地冲突副本 ${when}）`;
-      copy.updatedAt = new Date().toISOString();
-      window.storage._webdavApplyNote(newId, copy);
-      const d = window.storage.getAll();
-      if (d.rootOrder && !d.rootOrder.includes(newId)) d.rootOrder.push(newId);
-      if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([newId]);
-      return newId;
-    } catch (e) {
-      console.warn('[webdav] 生成冲突副本失败', e);
-      return null;
-    }
-  }
+  // 说明：历史上的「本地冲突副本」生成器(_saveConflictCopy)已彻底移除。
+  //   v3 起真冲突一律走账本自动合并(_tryLedgerMerge)或静默留底(_resolveUnmergeableSilently)，
+  //   任何路径都不再在笔记树里冒出带「（本地冲突副本）」后缀的可见副本、也不再弹提示。
+  //   现存的历史副本可用 window.storage.purgeConflictCopies() 一次性清理，清后不会再生。
 
   /** 真冲突且无法自动合并（极罕见：某端确实没账本）→ **静默**处理，不再另存可见的"本地冲突副本"、不弹提示。
    *  按 updatedAt 保留较新的一份为正本，较旧的一份存入「同步留底」（可在留底里找回，零丢失）。
@@ -1688,7 +1674,12 @@
         const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
         const remoteTs = remoteEntry.updatedAt || 0;
         if (localTs > remoteTs + 1000) {
-          needUpload.push(id);
+          // 【双保险·上传侧】仅当本地内容相对基准**确实变过**才当"本地更新"重传。
+          //   内容==基准、只是 updatedAt 被顶新（幻影保存/改元数据/时钟偏差）→ 绝不上传，
+          //   免得"停在旧状态、内容没真改"的设备把较新的云端版本覆盖掉（B 顶掉 A）。
+          //   无基准时（极少见）维持原行为放行，避免回归"重启丢脏后真编辑漏传"。
+          const b = base[id];
+          if (!b || _noteHash(data.notes[id]) !== b.h) needUpload.push(id);
         }
       }
     }

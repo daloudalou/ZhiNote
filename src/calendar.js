@@ -152,8 +152,8 @@
   }
   function canon(obj) { try { return JSON.stringify(sortKeys(obj)); } catch (_) { return '{}'; } }
 
-  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, style: 'D' };
-  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历']];
+  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, compact: true, style: 'D' };
+  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历'], ['compact', '精简记事']];
   var STYLES = [['A', '简约'], ['B', '细线'], ['C', '卡片'], ['D', '柔底']];
 
   // 「上次选择的显示设置」记忆：只作下一个【新建】日历的默认；不改动任何已存在日历（它们各存各的 opts）。
@@ -234,6 +234,8 @@
     }
     // 向后兼容：旧数据存的是 startSun（周日起始），迁移成 startMon（周一起始）。
     if (o.opts && typeof o.opts.startMon !== 'boolean' && typeof o.opts.startSun === 'boolean') opts.startMon = !o.opts.startSun;
+    // 向后兼容：t22 早期用过 fit(=展开)，语义反转为 compact(=精简)：compact = !fit。
+    if (o.opts && typeof o.opts.compact !== 'boolean' && typeof o.opts.fit === 'boolean') opts.compact = !o.opts.fit;
     if (['A', 'B', 'C', 'D'].indexOf(opts.style) < 0) opts.style = DEFAULT_OPTS.style;
     return {
       y: Number.isFinite(o.y) ? o.y : n.getFullYear(),
@@ -320,10 +322,12 @@
       if (S.opts.lunar) return { text: info.isFirst ? info.lunarMonth : info.lunarDay, cls: 'lunar' };
       return null;
     }
-    function commit() { _data = canon(toObj(S)); render(); if (onChange) onChange(_data); }
+    // 幂等：数据没真变就只重绘、不回写节点，避免"点开日子又离开(临时空记事增删)"触发幻影编辑判脏。
+    function commit() { var next = canon(toObj(S)); render(); if (next !== _data) { _data = next; if (onChange) onChange(_data); } }
 
     function render() {
       dom.setAttribute('data-cal-style', S.opts.style || 'A');
+      dom.setAttribute('data-cal-fit', S.opts.compact ? '0' : '1');
       var startSun = !S.opts.startMon;
       var head = startSun ? WK_SUN : WK_MON;
       var rows = matrix(S.y, S.m, startSun);
@@ -343,7 +347,7 @@
         + '</div>';
       // CSS Grid（而非 table）：表头独立一行、天格独立一栅格 → 皮肤可自由控制圆角/间距/描线，
       // 也彻底摆脱编辑器通用表格样式的干扰。
-      h += '<div class="cal-gridwrap"><div class="cal-headrow">';
+      h += '<div class="cal-gridwrap"><div class="cal-gridinner"><div class="cal-headrow">';
       head.forEach(function (x, ci) { h += '<div class="cal-wd' + (wendCol(ci) ? ' we' : '') + '">' + x + '</div>'; });
       h += '</div><div class="cal-body">';
       rows.forEach(function (row) {
@@ -357,19 +361,28 @@
           var arr = (S.notes[noteKey(d)] || []).filter(function (n) { return noteText(n).trim(); });
           var notesHtml = '';
           if (arr.length) {
-            var fc = noteColor(arr[0]);
-            var dot = fc ? '<span class="cal-n-dot" style="background:' + fc + '"></span>' : '';
-            // 首条最多取 4 字（硬截断、无省略号）；下方一行进度「X/Y」（月格 B）。
-            var t4 = noteText(arr[0]).slice(0, 4);
-            var d0 = noteDone(arr[0]) ? ' done' : '';
-            var doneN = arr.filter(function (n) { return noteDone(n); }).length;
-            notesHtml = '<div class="cal-notes"><span class="cal-n-inline' + d0 + '">' + dot + '<span class="cal-n-txt">' + esc(t4) + '</span></span>'
-              + '<div class="cal-prog' + (doneN === arr.length ? ' all' : '') + '">' + IC_CHECK_S + doneN + '/' + arr.length + '</div></div>';
+            if (!S.opts.compact) {
+              // 展开模式（关闭精简）：列出全部记事、整段换行，格子按内容自动增高（不截断、无 +N）。
+              notesHtml = '<div class="cal-notes cal-notes-fit">' + arr.map(function (n) {
+                var c = noteColor(n), dn = noteDone(n);
+                var dt = c ? '<span class="cal-n-dot" style="background:' + c + '"></span>' : '';
+                return '<div class="cal-n-line' + (dn ? ' done' : '') + '">' + dt + '<span class="cal-n-txt">' + esc(noteText(n)) + '</span></div>';
+              }).join('') + '</div>';
+            } else {
+              var fc = noteColor(arr[0]);
+              var dot = fc ? '<span class="cal-n-dot" style="background:' + fc + '"></span>' : '';
+              // 首条最多取 4 字（硬截断、无省略号）；下方一行进度「X/Y」（月格 B）。
+              var t4 = noteText(arr[0]).slice(0, 4);
+              var d0 = noteDone(arr[0]) ? ' done' : '';
+              var doneN = arr.filter(function (n) { return noteDone(n); }).length;
+              notesHtml = '<div class="cal-notes"><span class="cal-n-inline' + d0 + '">' + dot + '<span class="cal-n-txt">' + esc(t4) + '</span></span>'
+                + '<div class="cal-prog' + (doneN === arr.length ? ' all' : '') + '">' + IC_CHECK_S + doneN + '/' + arr.length + '</div></div>';
+            }
           }
           h += '<div class="' + cls.join(' ') + '" data-d="' + d + '"><div class="cal-drow"><span class="cal-dnum">' + d + '</span><span class="cal-addhint">＋</span></div>' + subHtml + notesHtml + '</div>';
         });
       });
-      h += '</div></div>';
+      h += '</div></div></div>';
       dom.innerHTML = h;
       bind();
     }
@@ -443,13 +456,13 @@
         b.addEventListener('click', function (e) { e.stopPropagation(); S.opts.style = b.dataset.s; commit(); saveDefOpts(S.opts); dom.querySelector('.cal-pop-set').classList.remove('hidden'); });
       });
       dom.querySelectorAll('.cal-day[data-d]').forEach(function (el) {
-        el.addEventListener('click', function () { hideTip(); openDay(+el.dataset.d, el); });
+        el.addEventListener('click', function () { hideTip(); openDay(+el.dataset.d, el, true); });
         el.addEventListener('mouseenter', function () { showTip(+el.dataset.d, el); });
         el.addEventListener('mouseleave', hideTip);
       });
     }
 
-    function openDay(d, td) {
+    function openDay(d, td, addNew) {
       cardDay = d;
       openColorIdx = -1;
       hideTip();
@@ -462,10 +475,17 @@
         };
         document.addEventListener('mousedown', cardDocDown, true);
       }
-      drawCard();
+      // 点日子即在最上方新建一条空记事并聚焦；空的失焦自动删除，不留垃圾。
+      // 注意：这里不能调用会触发 render() 的提交——render 会重建网格、把传进来的 td 变成游离节点，
+      // 之后 getBoundingClientRect() 归零、卡片会错位到左上角。上一条的编辑已由其 blur 提交，无需再 flush。
+      if (addNew) { var k0 = noteKey(d); (S.notes[k0] = S.notes[k0] || []).unshift(''); }
+      // 必须先显示再 drawCard：textarea 自动增高靠 scrollHeight，display:none 时测得 0 会塌成一条线。
       card.classList.remove('hidden');
-      var r = td.getBoundingClientRect();
-      var w = 252, left = r.right + 8, top = r.top;
+      drawCard(addNew ? 0 : undefined);
+      // 用 DOM 里当前活着的同一天格子测量，避免拿到被 render 重建后游离的旧节点（归零→错位）。
+      var live = dom.querySelector('.cal-day[data-d="' + d + '"]');
+      var r = (live || td).getBoundingClientRect();
+      var w = 268, left = r.right + 8, top = r.top;
       if (left + w > window.innerWidth - 10) left = r.left - w - 6;
       if (left < 10) left = 10;
       var ch = card.offsetHeight || 200;
@@ -502,7 +522,7 @@
           var dn = noteDone(n);
           // 圆形勾选框，边框=记事颜色；勾选→整圆填色+白勾。点它=完成/取消。
           var ck = '<span class="cal-note-ck' + (dn ? ' on' : '') + '" data-i="' + i + '"' + (c ? ' style="--ck:' + c + '"' : '') + ' title="完成/取消">' + IC_CHECK + '</span>';
-          return '<div class="cal-note-row' + (dn ? ' done' : '') + '" data-i="' + i + '">' + ck + '<input class="cal-edit" type="text" data-i="' + i + '" value="' + esc(t) + '">' + sw + '<span class="del" data-i="' + i + '">×</span></div>' + pal;
+          return '<div class="cal-note-row' + (dn ? ' done' : '') + '" data-i="' + i + '">' + ck + '<textarea class="cal-edit" rows="1" data-i="' + i + '" placeholder="写点什么…">' + esc(t) + '</textarea>' + sw + '<span class="del" data-i="' + i + '">×</span></div>' + pal;
         }).join('');
       } else {
         rows = '<div class="cal-empty">还没有记事</div>';
@@ -521,15 +541,18 @@
         openColorIdx = -1;
         drawCard(0);
       });
-      // 记事可直接编辑：输入去抖落盘（不重绘卡片、不丢焦点）；失焦为空则删除。
+      // 记事可直接编辑：多行、自动增高；Enter 换行，点别处/Esc 收尾并落盘；空的失焦自动删除。
+      function autoGrow(el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }
       card.querySelectorAll('.cal-edit').forEach(function (inp) {
+        autoGrow(inp);
         inp.addEventListener('input', function () {
           var i = +inp.dataset.i;
           var a = S.notes[key] || [];
           a[i] = makeNote(inp.value, noteColor(a[i]), noteDone(a[i]));
+          autoGrow(inp);
           scheduleSoftCommit();
         });
-        inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); inp.blur(); } });
         inp.addEventListener('blur', function () {
           var i = +inp.dataset.i;
           var a = S.notes[key] || [];
@@ -636,12 +659,15 @@
 
       if (typeof focusIdx === 'number') {
         var inps = card.querySelectorAll('.cal-edit');
-        if (inps[focusIdx]) inps[focusIdx].focus();
+        var fel = inps[focusIdx];
+        if (fel) { fel.focus(); try { var L = fel.value.length; fel.setSelectionRange(L, L); } catch (_) {} }
       }
     }
 
-    // 滚轮切月：鼠标在整个日历上滚动即切月；移开日历正常滚页面。节流：一次滚动一个月。
+    // 滚轮切月：仅当鼠标悬在左上角「年月按钮」(.cal-title)上滚动才切月——避免在日历正文上滚动误改月份
+    // （之前整块都能滚切月，很容易误操作月份变来变去）。不在按钮上时不拦截，滚轮正常滚动页面。节流：一次滚动一个月。
     function onWheel(e) {
+      if (!(e.target.closest && e.target.closest('.cal-title'))) return;
       e.preventDefault();
       var t = Date.now();
       if (t - wheelLock < 200) return;
