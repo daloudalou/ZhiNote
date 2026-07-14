@@ -692,6 +692,10 @@ function applySavedSettings() {
   document.documentElement.style.setProperty('--editor-font-size', fs + 'px');
   applyEditorFontSize(fs);
 
+  // 日历字体缩放比例（独立于编辑区，全局共用；默认 1）
+  const calScale = parseFloat(storage.getSetting('calFontScale'));
+  document.documentElement.style.setProperty('--cal-fs', (isFinite(calScale) && calScale > 0) ? String(calScale) : '1');
+
   // 大纲默认关闭
   const outlineOpen = storage.getSetting('outlineOpen');
   if (outlineOpen === true) {
@@ -760,11 +764,28 @@ function installEditorZoomShortcuts() {
   };
   const cur = () => parseInt(storage.getSetting('fontSize') || DEFAULT_SIZE, 10);
 
+  // 日历字体独立缩放（全局共用一个比例，记本机）：鼠标压在日历/汇总/天卡/浮层上 Ctrl+滚轮时，
+  // 只缩放日历字体，不动编辑区字号。
+  const CAL_MIN = 0.8, CAL_MAX = 2.2, CAL_STEP = 0.1, CAL_DEFAULT = 1;
+  const curCal = () => { const v = parseFloat(storage.getSetting('calFontScale')); return (isFinite(v) && v > 0) ? v : CAL_DEFAULT; };
+  const applyCal = (scale) => {
+    const v = Math.max(CAL_MIN, Math.min(CAL_MAX, Math.round(scale * 100) / 100));
+    storage.setSetting('calFontScale', v);
+    document.documentElement.style.setProperty('--cal-fs', String(v));
+    // 通知日历重排（字号变高 → 汇总在右侧时高度要跟随日历）
+    try { window.dispatchEvent(new CustomEvent('zhinote:calfont', { detail: v })); } catch (_) {}
+    if (window.toast) toast(`日历字号 ${Math.round(v * 100)}%`, 'info', { id: 'cal-zoom', duration: 1200 });
+    return v;
+  };
+  const isOverCal = (t) => !!(t && t.closest && t.closest('.cal-shell, .calendar-block, .cal-daycard, .cal-hovertip'));
+  window.__calFont = { get: curCal, set: applyCal, reset: () => applyCal(CAL_DEFAULT), DEFAULT: CAL_DEFAULT, MIN: CAL_MIN, MAX: CAL_MAX, STEP: CAL_STEP };
+
   // 1) 屏蔽浏览器默认 Ctrl+滚轮 / Ctrl+'+' / Ctrl+'-' / Ctrl+0 整页缩放
   window.addEventListener('wheel', (e) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      apply(cur() + (e.deltaY < 0 ? 1 : -1));
+      if (isOverCal(e.target)) applyCal(curCal() + (e.deltaY < 0 ? CAL_STEP : -CAL_STEP));
+      else apply(cur() + (e.deltaY < 0 ? 1 : -1));
     }
   }, { passive: false, capture: true });
 
@@ -3936,13 +3957,11 @@ async function requestMaximize() {
   if (!storage.isQuicker()) { toast('开发模式：无 OS 窗口可最大化', 'warning'); return; }
   document.body.classList.add('is-resizing');
   try {
-    if (!_isMaximized) {
-      await windowOp('最大化');
-      _isMaximized = true;
-    } else {
-      await windowOp('还原');
-      _isMaximized = false;
-    }
+    // 由子程序按窗口真实状态(IsZoomed)决定切换最大化/还原，并回传当前状态。
+    // 前端不再用本地 _isMaximized 猜——否则被系统最大化/双击标题栏改过状态后会失步（要点两下才生效）。
+    const r = await windowOp('最大化');
+    const v = String((r && (r.isMax ?? r.result)) ?? '').toLowerCase();
+    _isMaximized = (v === '1' || v === 'true');
   } catch (err) {
     toast('最大化失败：请确认已配置 WindowOp 子程序', 'error');
     console.error('[ZhiNote] WindowOp 最大化/还原 调用失败:', err);
@@ -6854,6 +6873,7 @@ function openSettingsModal(initialTab) {
       applyEditorFontSize(v, lh);
     });
   }
+
 
   // 字体刷新按钮：重新扫描本机已安装字体并重建下拉
   const btnFontRefresh = body.querySelector('#set-font-refresh');

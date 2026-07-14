@@ -152,7 +152,8 @@
   }
   function canon(obj) { try { return JSON.stringify(sortKeys(obj)); } catch (_) { return '{}'; } }
 
-  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, compact: true, style: 'D' };
+  // summary=右侧/下方「汇总事项」面板开关（头部图标切换，不在设置弹层里，默认开）。
+  var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, compact: true, summary: true, style: 'D' };
   var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历'], ['compact', '精简记事']];
   var STYLES = [['A', '简约'], ['B', '细线'], ['C', '卡片'], ['D', '柔底']];
 
@@ -184,6 +185,10 @@
   var IC_CHECK_S = '<svg viewBox="0 0 24 24" width="9" height="9" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
   // 主题图标：复用主窗口左下角「主题」按钮的调色盘图标
   var IC_SET = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.55 0 1-.45 1-1 0-.27-.11-.52-.29-.71-.18-.18-.29-.43-.29-.71 0-.55.45-1 1-1H15c3.31 0 6-2.69 6-6 0-4.96-4.04-9-9-9z"/></svg>';
+  // 汇总面板开关：右侧带列表线的面板图标（示意「侧栏汇总」）
+  var IC_SUM = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><line x1="13.5" y1="4.5" x2="13.5" y2="19.5"/><line x1="16" y1="9" x2="18" y2="9"/><line x1="16" y1="12.2" x2="18" y2="12.2"/><line x1="16" y1="15.4" x2="18" y2="15.4"/></svg>';
+  // 复制图标
+  var IC_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
 
   // 记事颜色（与笔记标题颜色 COLOR_PRESETS 保持一致，见 tree.js）
   var COLOR_PRESETS = [
@@ -274,8 +279,28 @@
     var wheelLock = 0, popWheelLock = 0;
     var py = S.y, pmode = 'm'; // 月历弹层：'m'=选月 / 'y'=选年
     var openColorIdx = -1, softTimer = null, hoverTip = null;
+    var openSumColorKey = null;               // 汇总里正在展开选色的条目 'day-idx'（如 '13-0'）
+    var sumAddOpen = false;                    // 底部添加行是否已展开（点＋后显示日期+内容输入）
+    var pendingNewMove = null;                 // 拖到"新日期投放区"后待填日期的搬移 { fromD, fromI }
+    var editHlDay = null;                       // 正在编辑的汇总记事所属日期：借用「今日高亮」点亮那天
+    var editDateDay = null;                      // 正在改「日期」的那天（点日期数字进入，改完移动当天全部记事）
+    var persistTimer = null;
     function scheduleSoftCommit() { if (softTimer) clearTimeout(softTimer); softTimer = setTimeout(function () { softTimer = null; commit(); }, 350); }
     function flushSoftCommit() { if (softTimer) { clearTimeout(softTimer); softTimer = null; } commit(); }
+    // 只落盘、不重绘（供汇总里就地编辑文字用：重绘会毁掉正在输入的输入框、丢焦点）。
+    function persist() { var next = canon(toObj(S)); if (next !== _data) { _data = next; if (onChange) onChange(_data); } }
+    function schedulePersist() { if (persistTimer) clearTimeout(persistTimer); persistTimer = setTimeout(function () { persistTimer = null; persist(); }, 350); }
+    function flushPersist() { if (persistTimer) { clearTimeout(persistTimer); persistTimer = null; } persist(); }
+    // 只重画左侧日历卡（不动汇总面板 DOM）：汇总里改文字时实时更新日历圆点，又不打断输入。
+    function refreshCalOnly() {
+      var cardEl = dom.querySelector('.calendar-block');
+      if (!cardEl) { render(); return; }
+      cardEl.setAttribute('data-cal-style', S.opts.style || 'A');
+      cardEl.setAttribute('data-cal-fit', S.opts.compact ? '0' : '1');
+      cardEl.innerHTML = buildCalInner();
+      bindCal();
+      layoutSummary();
+    }
 
     // 简约黄历一行：干支年 + 农历月日 + 生肖（+ 节气/节日）。
     function almanacLine(d) {
@@ -325,9 +350,122 @@
     // 幂等：数据没真变就只重绘、不回写节点，避免"点开日子又离开(临时空记事增删)"触发幻影编辑判脏。
     function commit() { var next = canon(toObj(S)); render(); if (next !== _data) { _data = next; if (onChange) onChange(_data); } }
 
-    function render() {
-      dom.setAttribute('data-cal-style', S.opts.style || 'A');
-      dom.setAttribute('data-cal-fit', S.opts.compact ? '0' : '1');
+    // ===== 汇总事项面板 =====
+    function ymLabel() { return S.y + ' 年 ' + (S.m + 1) + ' 月'; }
+    // 收集本月「有非空记事」的日子（按日期升序），供面板与复制复用。
+    function monthDays() {
+      var out = [];
+      for (var d = 1; d <= 31; d++) {
+        var arr = (S.notes[noteKey(d)] || []).filter(function (n) { return noteText(n).trim(); });
+        if (arr.length) out.push({ d: d, arr: arr });
+      }
+      return out;
+    }
+    // 单条汇总记事行（可编辑）：勾选框 + 文本框 + 颜色标记 + 删除；data-d/data-i 指回 S.notes 原始下标。
+    function sumRowHtml(d, i, n) {
+      var t = noteText(n), c = noteColor(n), dn = noteDone(n);
+      var kk = d + '-' + i;
+      var di = ' data-d="' + d + '" data-i="' + i + '"';
+      var ck = '<span class="cal-note-ck' + (dn ? ' on' : '') + '"' + di + (c ? ' style="--ck:' + c + '"' : '') + ' title="完成/取消">' + IC_CHECK + '</span>';
+      var sw = '<span class="cal-note-sw' + (c ? ' has' : '') + '"' + di + (c ? ' style="background:' + c + '"' : '') + ' title="颜色标记（长按记事可拖动）"></span>';
+      var pal = '';
+      if (openSumColorKey === kk) {
+        pal = '<div class="color-picker-row cal-pal cal-sum-pal"' + di + '>' + COLOR_PRESETS.map(function (cc) {
+          return '<div class="color-dot-choice' + (cc.value ? '' : ' none') + ((c || null) === cc.value ? ' selected' : '') + '" data-c="' + (cc.value || '') + '"' + (cc.value ? ' style="background:' + cc.value + '"' : '') + ' title="' + cc.name + '"></div>';
+        }).join('') + '</div>';
+      }
+      return '<div class="cal-sum-i' + (dn ? ' done' : '') + '"' + di + '>'
+        + ck
+        + '<textarea class="cal-sum-edit" rows="1"' + di + ' placeholder="写点什么…">' + esc(t) + '</textarea>'
+        + sw + '<span class="del"' + di + ' title="删除">×</span></div>' + pal;
+    }
+
+    function buildSummaryHtml() {
+      var days = [];
+      for (var d = 1; d <= 31; d++) {
+        var raw = S.notes[noteKey(d)] || [];
+        var has = raw.some(function (n) { return noteText(n).trim(); });
+        if (has) days.push({ d: d, raw: raw });
+      }
+      var body;
+      if (!days.length) { body = '<div class="cal-sum-empty">本月暂无记事，在下方添加一条</div>'; }
+      else {
+        body = days.map(function (it) {
+          var items = it.raw.map(function (n, i) {
+            return noteText(n).trim() ? sumRowHtml(it.d, i, n) : '';
+          }).join('');
+          var dcol = (editDateDay === it.d)
+            ? '<input class="cal-sum-dedit" type="text" inputmode="numeric" maxlength="2" value="' + it.d + '">'
+            : '<span class="cal-sum-d" data-d="' + it.d + '" title="点击改日期（移动当天全部记事到新日期）">' + it.d + '</span>';
+          return '<div class="cal-sum-day" data-d="' + it.d + '"><div class="cal-sum-dcol">' + dcol + '</div><div class="cal-sum-items">' + items + '</div></div>';
+        }).join('');
+      }
+      // 底部添加行：默认「＋ 添加记事…」，＋ 占据最左侧的日期位；点＋后该位变成日期输入框 + 文本框。
+      var addRow;
+      if (sumAddOpen) {
+        addRow = '<div class="cal-sum-add open">'
+          + '<input class="cal-sum-add-d" type="text" inputmode="numeric" maxlength="2" placeholder="日" value="' + (TODAY.y === S.y && TODAY.m === S.m ? TODAY.d : '') + '">'
+          + '<textarea class="cal-sum-add-t" rows="1" placeholder="写点什么…"></textarea></div>';
+      } else {
+        addRow = '<div class="cal-sum-add"><span class="cal-sum-addplus" title="添加记事">＋</span><span class="cal-sum-addhint">添加记事…</span></div>';
+      }
+      // 新日期投放区：仅拖动时显形；若正等待填日期(pendingNewMove)，显示内联「几号」输入框。
+      var zone;
+      if (pendingNewMove) {
+        zone = '<div class="cal-sum-newzone active"><span class="cal-sum-nzhint">移到</span><input class="cal-sum-newdate" type="text" inputmode="numeric" maxlength="2" placeholder="日" autofocus><span class="cal-sum-nzhint">日（回车确认）</span></div>';
+      } else {
+        zone = '<div class="cal-sum-newzone"><span class="cal-sum-nzhint">拖到这里 → 移到新日期</span></div>';
+      }
+      return '<div class="cal-summary">'
+        + '<div class="cal-summary-h"><span class="cal-summary-title">汇总事项</span><span class="cal-summary-ym">' + ymLabel() + '</span>'
+        + '<button type="button" class="cal-sum-copy" title="复制本月记事">' + IC_COPY + '</button></div>'
+        + '<div class="cal-summary-body">' + body + zone + addRow + '</div></div>';
+    }
+
+    // 只重画右侧汇总面板（不动左侧日历卡）：用于汇总内的结构性变化（选色开关等）。
+    function renderSumOnly() {
+      var sumEl = dom.querySelector('.cal-summary');
+      if (!S.opts.summary) { if (sumEl) { sumEl.remove(); } dom.classList.remove('has-summary', 'side', 'below'); return; }
+      if (!sumEl) { render(); return; }
+      var st = sumEl.scrollTop;               // 重建 DOM 会把内部滚动位置清零→保存后还原，避免"乱跳到顶再跳回"
+      sumEl.outerHTML = buildSummaryHtml();
+      bindSum();
+      layoutSummary();
+      var neo = dom.querySelector('.cal-summary'); if (neo) neo.scrollTop = st;
+    }
+    function buildSummaryText() {
+      var lines = ['汇总事项 ' + ymLabel()];
+      var days = monthDays();
+      if (!days.length) { lines.push('本月暂无记事'); }
+      else days.forEach(function (it) {
+        lines.push(it.d + ' 日：' + it.arr.map(function (n) { return noteText(n).trim() + (noteDone(n) ? '（已完成）' : ''); }).join('；'));
+      });
+      return lines.join('\n');
+    }
+    // 布局：宽度够→汇总放右侧(与日历齐高，内部滚动)；不够→放下方(与日历同宽，实时跟随)。
+    // 先切到「非并排」量日历自然宽度，再据可用宽决定并排/下方，避免并排时日历被设定宽而量不准。
+    var SUM_MIN = 230, SUM_GAP = 14, _lastShellW = -1;
+    function layoutSummary() {
+      var sumEl = dom.querySelector('.cal-summary');
+      var calCard = dom.querySelector('.calendar-block');
+      if (!sumEl || !calCard) { dom.classList.remove('has-summary', 'side', 'below'); return; }
+      dom.classList.add('has-summary');
+      dom.classList.remove('side');
+      sumEl.style.width = '';
+      sumEl.style.height = '';
+      var availW = dom.clientWidth || 0;
+      _lastShellW = Math.round(availW);
+      var calW = calCard.offsetWidth || 0;
+      var side = (availW - calW - SUM_GAP) >= SUM_MIN;
+      dom.classList.toggle('side', side);
+      dom.classList.toggle('below', !side);
+      // 右侧：固定为日历高度（内容多则内部滚动），与日历齐平；下方：只锁宽度、不限高度。
+      if (side) sumEl.style.height = (calCard.offsetHeight || 0) + 'px';
+      else sumEl.style.width = (calCard.offsetWidth || 0) + 'px';
+    }
+
+    // 只构建日历卡内部（头部 + 网格）HTML；外层 .calendar-block 由 render/refreshCalOnly 提供。
+    function buildCalInner() {
       var startSun = !S.opts.startMon;
       var head = startSun ? WK_SUN : WK_MON;
       var rows = matrix(S.y, S.m, startSun);
@@ -335,6 +473,7 @@
         + '<span class="cal-title" title="点击选择年月">' + S.y + ' 年 ' + (S.m + 1) + ' 月 <span class="cal-caret">▾</span></span>'
         + '<button class="cal-today" type="button" title="回到今天">' + IC_TODAY + '</button>'
         + '<button class="cal-setbtn" title="显示设置">' + IC_SET + '</button>'
+        + '<button class="cal-sumbtn' + (S.opts.summary ? ' on' : '') + '" type="button" title="汇总事项">' + IC_SUM + '</button>'
         + '<div class="cal-pop cal-pop-month hidden"><div class="cal-pop-h"><button class="cal-py" type="button">‹</button><span class="cal-y"></span><button class="cal-ny" type="button">›</button></div><div class="cal-ms"></div></div>'
         + '<div class="cal-pop cal-pop-set hidden">'
         + '<div class="cal-styrow">' + STYLES.map(function (s) {
@@ -343,7 +482,10 @@
         + '<div class="cal-pop-div"></div>'
         + OPTS.map(function (o) {
           return '<div class="cal-optrow' + (S.opts[o[0]] ? ' on' : '') + '" data-k="' + o[0] + '"><span>' + o[1] + '</span><span class="cal-sw"></span></div>';
-        }).join('') + '</div>'
+        }).join('')
+        + '<div class="cal-pop-div"></div>'
+        + '<div class="cal-fsrow"><span>日历字号</span><div class="cal-fsctrl"><button type="button" class="cal-fsdec" title="缩小（也可 Ctrl+滚轮）">－</button><span class="cal-fsval">' + calPct() + '%</span><button type="button" class="cal-fsinc" title="放大（也可 Ctrl+滚轮）">＋</button></div></div>'
+        + '</div>'
         + '</div>';
       // CSS Grid（而非 table）：表头独立一行、天格独立一栅格 → 皮肤可自由控制圆角/间距/描线，
       // 也彻底摆脱编辑器通用表格样式的干扰。
@@ -355,7 +497,9 @@
           if (!d) { h += '<div class="cal-day cal-pad"></div>'; return; }
           var cls = ['cal-day'];
           if (wendCol(ci)) cls.push('wend');
-          if (S.opts.today && isToday(d)) cls.push('today');
+          // 编辑汇总某条时，把「今日高亮」临时借给正在编辑的那天（此时今日格不高亮）；否则正常高亮今日。
+          if (editHlDay != null) { if (d === editHlDay) cls.push('today'); }
+          else if (S.opts.today && isToday(d)) cls.push('today');
           var sub = cellSub(d);
           var subHtml = sub ? '<div class="cal-sub cal-sub-' + sub.cls + '">' + esc(sub.text) + '</div>' : '';
           var arr = (S.notes[noteKey(d)] || []).filter(function (n) { return noteText(n).trim(); });
@@ -383,9 +527,36 @@
         });
       });
       h += '</div></div></div>';
-      dom.innerHTML = h;
-      bind();
+      return h;
     }
+
+    function render() {
+      var oldSum = dom.querySelector('.cal-summary');
+      var st = oldSum ? oldSum.scrollTop : 0;   // 保住汇总内部滚动位置，重建后还原（勾选/删除/加记事等 commit 都会走这里）
+      // 日历卡（.calendar-block）承载全部日历样式/数据属性；汇总面板作为兄弟节点由外壳(.cal-shell)排布。
+      var cardHtml = '<div class="calendar-block" data-cal-style="' + (S.opts.style || 'A') + '" data-cal-fit="' + (S.opts.compact ? '0' : '1') + '">' + buildCalInner() + '</div>';
+      dom.innerHTML = cardHtml + (S.opts.summary ? buildSummaryHtml() : '');
+      bind();
+      layoutSummary();
+      growSumEdits();
+      var neo = dom.querySelector('.cal-summary'); if (neo) neo.scrollTop = st;
+      // 首次挂载/切笔记时编辑区可能还没完成布局，textarea 测高会得 0（文字被压成一条看不见）；
+      // 下一帧布局稳定后再量一次高度、重排汇总，修复"文字空白、切月切回才显示"。
+      if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(function () { layoutSummary(); growSumEdits(); var n2 = dom.querySelector('.cal-summary'); if (n2) n2.scrollTop = st; });
+    }
+
+    // 汇总里可换行的输入按内容自动增高；布局未稳时 scrollHeight 可能为 0，需在布局稳定后再量。
+    function growSumEdits() {
+      var sumEl = dom.querySelector('.cal-summary');
+      if (!sumEl) return;
+      sumEl.querySelectorAll('.cal-sum-edit, .cal-sum-add-t').forEach(function (el) {
+        el.style.height = 'auto';
+        el.style.height = (el.scrollHeight + 2) + 'px';
+      });
+    }
+
+    function calFont() { return (typeof window !== 'undefined' && window.__calFont) ? window.__calFont : null; }
+    function calPct() { var f = calFont(); return f ? Math.round(f.get() * 100) : 100; }
 
     function closePops() {
       var mp = dom.querySelector('.cal-pop-month'), sp = dom.querySelector('.cal-pop-set');
@@ -434,12 +605,17 @@
       }
     }
 
-    function bind() {
+    function bind() { bindCal(); bindSum(); }
+
+    function bindCal() {
       var head = dom.querySelector('.cal-head');
+      if (!head) return;
       var mp = head.querySelector('.cal-pop-month'), sp = head.querySelector('.cal-pop-set');
       head.querySelector('.cal-title').addEventListener('click', function (e) { e.stopPropagation(); if (mp.classList.contains('hidden')) openMonth(); else mp.classList.add('hidden'); });
       head.querySelector('.cal-setbtn').addEventListener('click', function (e) { e.stopPropagation(); mp.classList.add('hidden'); sp.classList.toggle('hidden'); });
       head.querySelector('.cal-today').addEventListener('click', function (e) { e.stopPropagation(); S.y = TODAY.y; S.m = TODAY.m; commit(); });
+      var sumbtn = head.querySelector('.cal-sumbtn');
+      if (sumbtn) sumbtn.addEventListener('click', function (e) { e.stopPropagation(); S.opts.summary = !S.opts.summary; saveDefOpts(S.opts); commit(); });
       head.querySelector('.cal-py').addEventListener('click', function (e) { e.stopPropagation(); py += (pmode === 'm' ? -1 : -12); drawPop(); });
       head.querySelector('.cal-ny').addEventListener('click', function (e) { e.stopPropagation(); py += (pmode === 'm' ? 1 : 12); drawPop(); });
       head.querySelector('.cal-y').addEventListener('click', function (e) { e.stopPropagation(); pmode = (pmode === 'm' ? 'y' : 'm'); drawPop(); });
@@ -455,11 +631,265 @@
       sp.querySelectorAll('.cal-sty').forEach(function (b) {
         b.addEventListener('click', function (e) { e.stopPropagation(); S.opts.style = b.dataset.s; commit(); saveDefOpts(S.opts); dom.querySelector('.cal-pop-set').classList.remove('hidden'); });
       });
+      // 日历字号 −/＋（全局比例，与 Ctrl+滚轮共用）：改完不重绘，只更新数字并触发汇总重排（保持弹层打开）。
+      var fsval = sp.querySelector('.cal-fsval');
+      var bumpFs = function (dir) { var f = calFont(); if (!f) return; var v = f.set(f.get() + dir * (f.STEP || 0.1)); if (fsval) fsval.textContent = Math.round(v * 100) + '%'; };
+      var fsdec = sp.querySelector('.cal-fsdec'), fsinc = sp.querySelector('.cal-fsinc');
+      if (fsdec) fsdec.addEventListener('click', function (e) { e.stopPropagation(); bumpFs(-1); });
+      if (fsinc) fsinc.addEventListener('click', function (e) { e.stopPropagation(); bumpFs(1); });
       dom.querySelectorAll('.cal-day[data-d]').forEach(function (el) {
         el.addEventListener('click', function () { hideTip(); openDay(+el.dataset.d, el, true); });
         el.addEventListener('mouseenter', function () { showTip(+el.dataset.d, el); });
         el.addEventListener('mouseleave', hideTip);
       });
+    }
+
+    function dim(y, m) { return new Date(y, m + 1, 0).getDate(); }
+
+    function bindSum() {
+      var sumEl = dom.querySelector('.cal-summary');
+      if (!sumEl) return;
+      var copyBtn = sumEl.querySelector('.cal-sum-copy');
+      if (copyBtn) copyBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var done = function () { copyBtn.classList.add('ok'); setTimeout(function () { try { copyBtn.classList.remove('ok'); } catch (_) {} }, 1100); };
+        try { navigator.clipboard.writeText(buildSummaryText()).then(done, function () {}); } catch (_) {}
+      });
+
+      function arrOf(d) { return S.notes[noteKey(d)] || []; }
+      function autoGrow(el) { el.style.height = 'auto'; el.style.height = (el.scrollHeight + 2) + 'px'; }
+
+      // 文本就地编辑：只改数据 + 只重画左侧日历圆点（不动汇总 DOM，保住焦点/光标）；空的失焦删除。
+      // 编辑时（获得焦点）才把左侧日历对应那天点亮，失焦复位——避免 hover 快速划过时高亮乱闪。
+      sumEl.querySelectorAll('.cal-sum-edit').forEach(function (inp) {
+        autoGrow(inp);
+        inp.addEventListener('focus', function () { editHlDay = +inp.dataset.d; refreshCalOnly(); });
+        inp.addEventListener('input', function () {
+          var d = +inp.dataset.d, i = +inp.dataset.i, a = arrOf(d);
+          if (a[i] === undefined) return;
+          a[i] = makeNote(inp.value, noteColor(a[i]), noteDone(a[i]));
+          autoGrow(inp);
+          refreshCalOnly();
+          schedulePersist();
+        });
+        inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); inp.blur(); } });
+        inp.addEventListener('blur', function () {
+          var d = +inp.dataset.d, i = +inp.dataset.i, a = arrOf(d);
+          editHlDay = null;
+          if (a[i] !== undefined && !noteText(a[i]).trim()) { a.splice(i, 1); if (!a.length) delete S.notes[noteKey(d)]; commit(); }
+          else { flushPersist(); refreshCalOnly(); }
+        });
+      });
+
+      // 勾选完成：已完成沉底（本天内稳定分区）
+      sumEl.querySelectorAll('.cal-note-ck').forEach(function (ck) {
+        ck.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        ck.addEventListener('click', function () {
+          var d = +ck.dataset.d, key = noteKey(d), a = S.notes[key] || [], i = +ck.dataset.i;
+          if (a[i] === undefined) return;
+          a[i] = makeNote(noteText(a[i]), noteColor(a[i]), !noteDone(a[i]));
+          var u = a.filter(function (n) { return !noteDone(n); }), dn = a.filter(function (n) { return noteDone(n); });
+          S.notes[key] = u.concat(dn);
+          openSumColorKey = null; commit();
+        });
+      });
+
+      // 删除
+      sumEl.querySelectorAll('.del').forEach(function (x) {
+        x.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        x.addEventListener('click', function () {
+          var d = +x.dataset.d, key = noteKey(d), a = S.notes[key] || [];
+          a.splice(+x.dataset.i, 1); if (!a.length) delete S.notes[key];
+          openSumColorKey = null; commit();
+        });
+      });
+
+      // 颜色标记：开/收调色板（只重画汇总）；选色后落盘并整体重画。
+      sumEl.querySelectorAll('.cal-note-sw').forEach(function (sw) {
+        sw.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        sw.addEventListener('click', function () {
+          var kk = sw.dataset.d + '-' + sw.dataset.i;
+          openSumColorKey = (openSumColorKey === kk ? null : kk);
+          renderSumOnly();
+        });
+      });
+      sumEl.querySelectorAll('.cal-sum-pal .color-dot-choice').forEach(function (dot) {
+        dot.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        dot.addEventListener('click', function () {
+          var pal = dot.parentNode, d = +pal.dataset.d, i = +pal.dataset.i, a = S.notes[noteKey(d)] || [];
+          if (a[i] !== undefined) a[i] = makeNote(noteText(a[i]), dot.dataset.c || null, noteDone(a[i]));
+          openSumColorKey = null; commit();
+        });
+      });
+
+      // 长按拖动
+      sumEl.querySelectorAll('.cal-sum-i').forEach(function (row) {
+        row.addEventListener('pointerdown', function (e) { summaryDragStart(e, row); });
+      });
+
+      // 直接改日期：点日期数字 → 变输入框 → 回车/失焦把当天全部记事移到新日期（新日期若已有记事则合并追加）。
+      sumEl.querySelectorAll('.cal-sum-d').forEach(function (sp) {
+        sp.addEventListener('click', function (e) {
+          e.stopPropagation();
+          editDateDay = +sp.dataset.d; renderSumOnly();
+          var inp = dom.querySelector('.cal-sum-dedit');
+          if (inp) { try { inp.focus({ preventScroll: true }); inp.select(); } catch (_) { try { inp.focus(); } catch (__) {} } }
+        });
+      });
+      var dedit = sumEl.querySelector('.cal-sum-dedit');
+      if (dedit && editDateDay != null) {
+        var commitDate = function () {
+          var oldD = editDateDay, newD = parseInt(dedit.value, 10);
+          editDateDay = null;
+          if (!(newD >= 1 && newD <= dim(S.y, S.m)) || newD === oldD || !S.notes[noteKey(oldD)]) { renderSumOnly(); return; }
+          var ok = noteKey(oldD), nk = noteKey(newD);
+          S.notes[nk] = (S.notes[nk] || []).concat(S.notes[ok]);
+          delete S.notes[ok];
+          commit();
+        };
+        dedit.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); commitDate(); }
+          else if (e.key === 'Escape') { e.preventDefault(); editDateDay = null; renderSumOnly(); }
+        });
+        dedit.addEventListener('blur', function () { if (editDateDay != null) commitDate(); });
+      }
+
+      // 底部添加行
+      var add = sumEl.querySelector('.cal-sum-add');
+      if (add && !sumAddOpen) {
+        // 阻止 mousedown 抢焦点：否则正在编辑的输入框会先 blur→重排，导致点击丢失或视图乱跳
+        add.addEventListener('mousedown', function (e) { e.preventDefault(); });
+        add.addEventListener('click', function () {
+          // 清掉可能残留的空记事（原本靠输入框 blur 清理，这里已阻止 blur）
+          Object.keys(S.notes).forEach(function (k) {
+            var a = (S.notes[k] || []).filter(function (n) { return noteText(n).trim(); });
+            if (a.length) S.notes[k] = a; else delete S.notes[k];
+          });
+          editHlDay = null;
+          sumAddOpen = true; renderSumOnly();
+          var t = dom.querySelector('.cal-sum-add-t'); if (t) { try { t.focus({ preventScroll: true }); } catch (_) { t.focus(); } }
+          // 添加行在最底部：滚到底确保新输入框可见（覆盖 renderSumOnly 还原的旧滚动位置）
+          var se = dom.querySelector('.cal-summary'); if (se) se.scrollTop = se.scrollHeight;
+        });
+      } else if (add) {
+        var dInp = add.querySelector('.cal-sum-add-d'), tInp = add.querySelector('.cal-sum-add-t');
+        autoGrow(tInp);
+        var commitAdd = function () {
+          var day = parseInt(dInp.value, 10), txt = (tInp.value || '').trim();
+          if (!txt) { sumAddOpen = false; renderSumOnly(); return; }
+          if (!(day >= 1 && day <= dim(S.y, S.m))) day = (TODAY.y === S.y && TODAY.m === S.m ? TODAY.d : 1);
+          var key = noteKey(day); (S.notes[key] = S.notes[key] || []).push(makeNote(txt, null, false));
+          sumAddOpen = false; commit();
+        };
+        tInp.addEventListener('input', function () { autoGrow(tInp); });
+        tInp.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitAdd(); }
+          else if (e.key === 'Escape') { e.preventDefault(); sumAddOpen = false; renderSumOnly(); }
+        });
+        tInp.addEventListener('blur', function () { setTimeout(function () { if (document.activeElement === dInp) return; commitAdd(); }, 0); });
+        dInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); tInp.focus(); } });
+      }
+
+      // 新日期投放：内联「几号」输入
+      var nd = sumEl.querySelector('.cal-sum-newdate');
+      if (nd && pendingNewMove) {
+        try { nd.focus({ preventScroll: true }); } catch (_) { try { nd.focus(); } catch (__) {} }
+        var confirmMove = function () {
+          var day = parseInt(nd.value, 10), pm = pendingNewMove; pendingNewMove = null;
+          if (!pm) { render(); return; }
+          var fk = noteKey(pm.fromD), fa = S.notes[fk] || [];
+          if (fa[pm.fromI] === undefined || !(day >= 1 && day <= dim(S.y, S.m))) { render(); return; }
+          var item = fa.splice(pm.fromI, 1)[0]; if (!fa.length) delete S.notes[fk];
+          var tk = noteKey(day); (S.notes[tk] = S.notes[tk] || []).push(item); commit();
+        };
+        nd.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); confirmMove(); }
+          else if (e.key === 'Escape') { e.preventDefault(); pendingNewMove = null; render(); }
+        });
+        nd.addEventListener('blur', function () { setTimeout(function () { if (pendingNewMove) { pendingNewMove = null; render(); } }, 0); });
+      }
+    }
+
+    // 汇总长按拖动：排序 / 跨天移动 / 拖到「新日期投放区」。落点提示线复用侧栏视觉(drag-above/drag-below)。
+    function summaryDragStart(e, row) {
+      if (e.button !== undefined && e.button !== 0) return;
+      if (e.target.closest('.del') || e.target.closest('.cal-note-sw') || e.target.closest('.cal-note-ck') || e.target.closest('.color-dot-choice')) return;
+      var fromD = +row.dataset.d, fromI = +row.dataset.i;
+      var sx = e.clientX, sy = e.clientY, pid = e.pointerId;
+      var sumEl = dom.querySelector('.cal-summary');
+      var dragging = false, target = null;
+      var timer = setTimeout(begin, 300);
+      function begin() {
+        dragging = true;
+        try { row.setPointerCapture(pid); } catch (_) {}
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        row.classList.add('cal-dragging');
+        document.body.style.userSelect = 'none';
+        if (sumEl) sumEl.classList.add('cal-sum-dragging');
+      }
+      function clearInd() {
+        if (!sumEl) return;
+        sumEl.querySelectorAll('.drag-above,.drag-below').forEach(function (el) { el.classList.remove('drag-above', 'drag-below'); });
+        var nz = sumEl.querySelector('.cal-sum-newzone'); if (nz) nz.classList.remove('drag-over');
+      }
+      function move(ev) {
+        if (!dragging) {
+          if (Math.abs(ev.clientX - sx) > 6 || Math.abs(ev.clientY - sy) > 6) { clearTimeout(timer); cleanup(); }
+          return;
+        }
+        ev.preventDefault();
+        clearInd(); target = null;
+        var el = document.elementFromPoint(ev.clientX, ev.clientY);
+        if (!el) return;
+        var nz = el.closest && el.closest('.cal-sum-newzone');
+        if (nz && sumEl.contains(nz)) { nz.classList.add('drag-over'); target = { newzone: true }; return; }
+        var hit = el.closest && el.closest('.cal-sum-i');
+        if (hit && sumEl.contains(hit)) {
+          var r = hit.getBoundingClientRect();
+          var below = ev.clientY > r.top + r.height / 2;
+          hit.classList.add(below ? 'drag-below' : 'drag-above');
+          target = { day: +hit.dataset.d, idx: +hit.dataset.i, below: below };
+          return;
+        }
+        var grp = el.closest && el.closest('.cal-sum-day');
+        if (grp && sumEl.contains(grp)) { target = { day: +grp.dataset.d, tail: true }; return; }
+      }
+      function finishDrag() {
+        document.body.style.userSelect = '';
+        if (sumEl) sumEl.classList.remove('cal-sum-dragging');
+        clearInd();
+      }
+      function cleanup() {
+        clearTimeout(timer);
+        document.removeEventListener('pointermove', move, true);
+        document.removeEventListener('pointerup', up, true);
+      }
+      function up(ev) {
+        cleanup();
+        if (!dragging) return;
+        finishDrag();
+        applySummaryMove(fromD, fromI, target);
+      }
+      document.addEventListener('pointermove', move, true);
+      document.addEventListener('pointerup', up, true);
+    }
+
+    // 用「引用对象」定位插入点，规避删除后下标漂移的差一 bug。
+    function applySummaryMove(fromD, fromI, target) {
+      if (!target) { render(); return; }
+      var fromKey = noteKey(fromD), fromArr = S.notes[fromKey] || [], item = fromArr[fromI];
+      if (item === undefined) { render(); return; }
+      if (target.newzone) { pendingNewMove = { fromD: fromD, fromI: fromI }; renderSumOnly(); return; }
+      var toKey = noteKey(target.day);
+      var refNote = (!target.tail) ? (S.notes[toKey] || [])[target.idx] : null;
+      if (refNote === item) { render(); return; }
+      fromArr.splice(fromI, 1); if (!fromArr.length) delete S.notes[fromKey];
+      var toArr = S.notes[toKey] = S.notes[toKey] || [];
+      var insertAt;
+      if (refNote == null) insertAt = toArr.length;
+      else { var ri = toArr.indexOf(refNote); insertAt = ri < 0 ? toArr.length : (target.below ? ri + 1 : ri); }
+      toArr.splice(insertAt, 0, item);
+      commit();
     }
 
     function openDay(d, td, addNew) {
@@ -664,11 +1094,17 @@
       }
     }
 
-    // 滚轮切月：仅当鼠标悬在左上角「年月按钮」(.cal-title)上滚动才切月——避免在日历正文上滚动误改月份
-    // （之前整块都能滚切月，很容易误操作月份变来变去）。不在按钮上时不拦截，滚轮正常滚动页面。节流：一次滚动一个月。
+    // 滚轮切月：鼠标悬在日历「顶栏」(.cal-head，含年月/按钮，排除弹层) 或汇总「标题栏」上滚动才切月——
+    // 避免在日历正文/记事上滚动误改月份。不在顶栏时不拦截，滚轮正常滚动页面。节流：一次滚动一个月。
     function onWheel(e) {
-      if (!(e.target.closest && e.target.closest('.cal-title'))) return;
-      e.preventDefault();
+      // Ctrl/⌘ + 滚轮留给「日历字体缩放」（app.js 全局处理），这里不切月。
+      if (e.ctrlKey || e.metaKey) return;
+      // 在「日历整条顶栏(.cal-head，排除其中弹层)」或「汇总面板顶部标题栏」上滚动才切月，其余处正常滚动。
+      if (!(e.target.closest && (
+        (e.target.closest('.cal-head') && !e.target.closest('.cal-pop')) ||
+        e.target.closest('.cal-summary-h')
+      ))) return;
+      e.preventDefault(); e.stopPropagation();
       var t = Date.now();
       if (t - wheelLock < 200) return;
       wheelLock = t;
@@ -689,6 +1125,21 @@
     };
     document.addEventListener('mousedown', onDocDown, true);
 
+    // 编辑区宽度变化（窗口/侧栏）时重排汇总面板；只在「宽度」变化时触发，避免并排↔下方切换改变高度引起自反馈循环。
+    var _ro = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      _ro = new ResizeObserver(function () {
+        if (Math.round(dom.clientWidth) === _lastShellW) return;
+        layoutSummary();
+        growSumEdits();
+      });
+      try { _ro.observe(dom); } catch (_) { _ro = null; }
+    }
+
+    // 日历字号变化（Ctrl+滚轮 / 弹层 −＋）→ 字变高，汇总在右侧时高度要跟随日历重排。
+    var onCalFont = function () { layoutSummary(); growSumEdits(); };
+    window.addEventListener('zhinote:calfont', onCalFont);
+
     render();
     if (api._pendingAutoOpen) { api._pendingAutoOpen = false; setTimeout(function () { try { openMonth(); } catch (_) {} }, 0); }
 
@@ -702,8 +1153,10 @@
       },
       destroy: function () {
         if (softTimer) { try { clearTimeout(softTimer); } catch (_) {} softTimer = null; }
+        if (_ro) { try { _ro.disconnect(); } catch (_) {} _ro = null; }
         if (hoverTip) { try { hoverTip.remove(); } catch (_) {} hoverTip = null; }
         try { dom.removeEventListener('wheel', onWheel); } catch (_) {}
+        try { window.removeEventListener('zhinote:calfont', onCalFont); } catch (_) {}
         try { document.removeEventListener('mousedown', onDocDown, true); } catch (_) {}
         if (card) {
           try { document.removeEventListener('mousedown', cardDocDown, true); } catch (_) {}

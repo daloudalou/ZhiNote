@@ -4415,20 +4415,141 @@ body.theme-gruvbox .md-ctx-sep {
  * 日历块（calendarBlock / ZhiCalendar）
  * 网格锁死不可编辑，点某天弹卡片记事；今日样式固定「整格淡底」。
  * ============================================================ */
+/* ── 日历外壳：日历卡 + 可选「汇总事项」面板 ── */
+.cal-shell { margin: 12px 0; }
+.cal-shell > .calendar-block { margin: 0; }
+/* 并排：汇总在右，与日历齐高、内部滚动（高度由 JS 设） */
+.cal-shell.has-summary.side { display: flex; align-items: flex-start; gap: 14px; }
+.cal-shell.has-summary.side > .calendar-block { flex: 0 0 auto; }
+/* 并排时紧凑日历给确定宽度，避免作为 flex 项时等宽列(1fr)塌陷；展开日历保持 fit-content */
+.cal-shell.has-summary.side > .calendar-block:not([data-cal-fit="1"]) { width: calc(600px * var(--cal-fs, 1)); max-width: 100%; }
+.cal-shell.has-summary.side > .cal-summary { flex: 1 1 230px; min-width: 200px; max-width: 460px; }
+/* 下方：竖排左对齐，汇总宽度由 JS 设为与日历同宽、实时跟随；高度不限（内容多就自然变高） */
+.cal-shell.has-summary.below { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
+
+.cal-summary {
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  padding: 0 13px 12px;
+  color: var(--text);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  user-select: text;
+  -webkit-user-select: text;
+}
+/* 标题栏固定：内容多滚动时顶部「汇总事项 + 年月 + 复制」始终可见；全宽铺满盖住下方内容 */
+.cal-summary-h {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 7px;
+  margin: 0 -13px 4px; padding: 11px 13px 9px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+  border-radius: 10px 10px 0 0;
+  cursor: ns-resize; /* 手势提示：此处滚动可切换月份 */
+}
+.cal-summary-title { font-weight: 700; font-size: 13px; }
+.cal-summary-ym { font-size: 12px; color: var(--text-secondary); }
+.cal-summary-h .cal-sum-copy {
+  margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 6px;
+  background: transparent; cursor: pointer; color: var(--text-tertiary); transition: background .12s, color .12s;
+}
+.cal-summary-h .cal-sum-copy:hover { background: var(--bg-tertiary); color: var(--accent); }
+.cal-summary-h .cal-sum-copy.ok { color: var(--success); }
+.cal-summary-body { display: flex; flex-direction: column; }
+.cal-sum-empty { color: var(--text-tertiary); font-size: 12.5px; padding: 4px 2px; }
+.cal-sum-day { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); }
+.cal-sum-day:first-child { border-top: none; }
+/* 日期列：固定宽，与首条记事首行文字对齐（同为 line-height:1.5、同 2px 顶距） */
+.cal-sum-dcol { flex: none; width: 22px; padding-top: 2px; }
+.cal-sum-d { display: block; text-align: center; font-weight: 700; font-size: 12.5px; color: var(--accent); line-height: 1.5; }
+.cal-sum-items { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* 可编辑记事行：勾选框 + 文本框 + 颜色标记 + 删除（悬停才显控件，低存在感） */
+/* 记事行统一约定（汇总/天卡片共用同一套尺寸）：行 line-height:1.5em，圆圈用 em 尺寸 + em 外边距，
+   使圆圈恒定垂直居中于首行文字，且随 --cal-fs 缩放一起等比缩放，永不错位。 */
+.cal-sum-i { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; border-radius: 7px; padding: 2px 6px; margin: 0 -6px; transition: background .12s; touch-action: none; }
+.cal-sum-i:hover { background: var(--bg-tertiary); }
+.cal-sum-i.cal-dragging { opacity: .5; }
+/* 落点提示线：与侧栏笔记树完全一致——两端留白的直线（非随圆角弯曲的描边） */
+.cal-sum-i.drag-above::before { content: ''; position: absolute; left: 4px; right: 4px; top: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
+.cal-sum-i.drag-below::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
+.cal-sum-i .cal-note-ck { width: 1em; height: 1em; margin-top: calc((1.5em - 1em) / 2); flex: none; box-sizing: border-box; border: 1.4px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-sum-i .cal-note-ck svg { width: .66em; height: .66em; opacity: 0; transition: opacity .12s; }
+.cal-sum-i .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
+.cal-sum-i .cal-note-ck.on svg { opacity: 1; }
+.cal-sum-edit {
+  box-sizing: border-box; flex: 1 1 auto; min-width: 0; border: none; border-radius: 6px; background: transparent; resize: none; outline: none; box-shadow: none; -webkit-appearance: none; appearance: none;
+  font: inherit; font-size: 12.5px; line-height: 1.5; color: var(--text); padding: 0 .4em;
+  overflow: hidden; word-break: break-word; overflow-wrap: anywhere; transition: background .12s;
+}
+/* 聚焦只淡淡铺个底，无边框、无描圈——彻底消除"多个框重叠"的错觉 */
+.cal-sum-edit:focus { background: var(--bg-tertiary); }
+.cal-sum-i.done .cal-sum-edit { text-decoration: line-through; color: var(--text-tertiary); }
+.cal-sum-i .cal-note-sw { width: .56em; height: .56em; margin-top: calc((1.5em - .56em) / 2); border-radius: 50%; flex: none; cursor: pointer; border: 1.4px solid var(--border-strong); background: transparent; box-sizing: border-box; opacity: 0; transition: transform .12s, opacity .12s; }
+.cal-sum-i .cal-note-sw:hover { transform: scale(1.2); }
+.cal-sum-i .cal-note-sw.has { border-color: transparent; opacity: .92; }
+.cal-sum-i:hover .cal-note-sw { opacity: 1; }
+.cal-sum-i .del { color: var(--text-tertiary); cursor: pointer; font-size: 1.1em; line-height: 1.5; margin-top: 0; flex: none; padding: 0 2px; opacity: 0; transition: color .12s, opacity .12s; }
+.cal-sum-i:hover .del { opacity: 1; }
+.cal-sum-i .del:hover { color: var(--danger); }
+.cal-sum-pal { margin: 2px 0 4px 22px; }
+
+/* 汇总内的小输入统一样式：圆角、细边、单一描线（聚焦只把边变强调色，绝不叠圈，避免"好几个框重叠"的观感） */
+.cal-sum-add-d, .cal-sum-add-t, .cal-sum-newdate, .cal-sum-dedit {
+  box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary);
+  outline: none; box-shadow: none; -webkit-appearance: none; appearance: none;
+  font: inherit; color: var(--text); transition: border-color .12s;
+}
+.cal-sum-add-d:focus, .cal-sum-add-t:focus, .cal-sum-newdate:focus, .cal-sum-dedit:focus {
+  border-color: var(--accent); box-shadow: none;
+}
+/* 全局有 :focus-visible{outline:2px accent} —— 那正是"粗紫框"的来源。日历里的输入一律取消外描边，只靠边框/底色示意 */
+.cal-summary input:focus, .cal-summary textarea:focus,
+.cal-summary input:focus-visible, .cal-summary textarea:focus-visible,
+.cal-daycard input:focus, .cal-daycard textarea:focus,
+.cal-daycard input:focus-visible, .cal-daycard textarea:focus-visible { outline: none; }
+/* 日期小框：定宽、居中、强调色数字 */
+.cal-sum-add-d, .cal-sum-newdate, .cal-sum-dedit {
+  flex: none; width: 26px; text-align: center; font-size: 12.5px; font-weight: 700; color: var(--accent); padding: 1px 0;
+}
+.cal-sum-dedit { width: 24px; }
+
+/* 底部添加行：＋ 占据日期列位置；展开后变成「日期小框 + 内容框」，整体居中对齐更清爽 */
+.cal-sum-add { display: flex; align-items: center; gap: 8px; padding: 6px 4px; margin: 2px -4px 0; border-top: 1px solid var(--border); cursor: pointer; border-radius: 7px; }
+.cal-sum-add:not(.open):hover { background: var(--bg-tertiary); }
+.cal-sum-addplus { flex: none; width: 22px; text-align: center; color: var(--text-tertiary); font-size: 15px; line-height: 1.4; }
+.cal-sum-addhint { color: var(--text-tertiary); font-size: 12.5px; }
+.cal-sum-add.open { cursor: default; }
+.cal-sum-add-t { flex: 1 1 auto; min-width: 0; resize: none; font-size: 12.5px; line-height: 1.5; padding: 3px 8px; overflow: hidden; }
+.cal-sum-add-t::placeholder { color: var(--text-tertiary); }
+
+/* 新日期投放区：平时隐藏，拖动时/待填日期时显形；居中一条圆角虚线胶囊，克制不抢眼 */
+.cal-sum-newzone { display: none; align-items: center; justify-content: center; gap: 7px; margin: 8px auto 0; padding: 6px 14px; border: 1px dashed var(--border-strong); border-radius: 999px; color: var(--text-secondary); font-size: 12px; width: fit-content; max-width: 100%; }
+.cal-summary.cal-sum-dragging .cal-sum-newzone, .cal-sum-newzone.active { display: flex; }
+.cal-sum-newzone.drag-over { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.cal-sum-newzone.active { border-style: solid; border-color: var(--border); background: var(--bg-secondary); }
+.cal-sum-nzhint { pointer-events: none; }
+.cal-sum-d { cursor: pointer; border-radius: 5px; transition: background .12s; }
+.cal-sum-d:hover { background: var(--bg-tertiary); }
+
 .calendar-block {
   position: relative;
   margin: 12px 0;
   padding: 14px 16px 12px;
-  /* 等宽 7 列的固定观感：块宽自适应到正文，但不超过 600px；列等宽、记事截断、悬停看全文 */
+  /* 等宽 7 列的固定观感：块宽自适应到正文，但不超过 600px（随日历字号 --cal-fs 等比缩放）；列等宽、记事截断、悬停看全文 */
   width: 100%;
-  max-width: 600px;
+  max-width: calc(600px * var(--cal-fs, 1));
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-elevated);
   user-select: none;
   -webkit-user-select: none;
 }
-.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+/* 顶栏整条可滚动切月：ns-resize 手势提示；标题/按钮各自保留 pointer */
+.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; cursor: ns-resize; }
 .calendar-block .cal-title {
   font-weight: 700; font-size: 15px; cursor: pointer; padding: 3px 9px; border-radius: 7px;
   display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
@@ -4436,14 +4557,15 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .calendar-block .cal-title:hover { background: var(--bg-tertiary); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .calendar-block .cal-caret { font-size: 10px; opacity: .55; }
-.calendar-block .cal-today, .calendar-block .cal-setbtn {
+.calendar-block .cal-today, .calendar-block .cal-setbtn, .calendar-block .cal-sumbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 7px;
   background: transparent; cursor: pointer; color: var(--text-secondary);
   transition: background .12s, color .12s;
 }
-.calendar-block .cal-today { margin-left: auto; }
-.calendar-block .cal-today:hover, .calendar-block .cal-setbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
+.calendar-block .cal-today { margin-left: auto; }  /* 右侧按钮组第一个：把「回今天/设置/汇总」整体推到右边 */
+.calendar-block .cal-today:hover, .calendar-block .cal-setbtn:hover, .calendar-block .cal-sumbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
+.calendar-block .cal-sumbtn.on { color: var(--accent); }
 
 .calendar-block .cal-pop {
   position: absolute; z-index: 40; background: var(--bg-elevated);
@@ -4473,19 +4595,30 @@ body.theme-gruvbox .md-ctx-sep {
 .calendar-block .cal-sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
 .calendar-block .cal-optrow.on .cal-sw { background: var(--accent); }
 .calendar-block .cal-optrow.on .cal-sw::after { left: 17px; }
+/* 弹层内「日历字号」−／＋ 步进 */
+.calendar-block .cal-fsrow { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; font-size: 12.5px; color: var(--text); }
+.calendar-block .cal-fsctrl { display: inline-flex; align-items: center; gap: 6px; }
+.calendar-block .cal-fsval { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; color: var(--text-secondary); font-size: 12px; }
+.calendar-block .cal-fsdec, .calendar-block .cal-fsinc {
+  width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-strong); background: var(--bg-tertiary); color: var(--text-secondary);
+  border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; padding: 0;
+  transition: border-color .12s, color .12s, background .12s;
+}
+.calendar-block .cal-fsdec:hover, .calendar-block .cal-fsinc:hover { border-color: var(--accent); color: var(--accent); }
 
 /* 网格基座：CSS Grid（表头行 + 天格），彻底摆脱表格样式干扰。配色/圆角/描线交给 A/B/C/D 皮肤。 */
 .calendar-block .cal-gridwrap { }
 .calendar-block .cal-headrow { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.calendar-block .cal-wd { text-align: center; font-size: 11px; letter-spacing: .5px; font-weight: 600; color: var(--text-secondary); padding: 8px 0; }
+.calendar-block .cal-wd { text-align: center; font-size: 11px; letter-spacing: .5px; font-weight: 600; color: var(--text-secondary); padding: calc(8px * var(--cal-fs, 1)) 0; }
 .calendar-block .cal-wd.we { color: var(--danger); }
 .calendar-block .cal-body { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
 /* min-width:0 + overflow:hidden：窄屏(手机)下让 7 列能压缩到容器内、单元格内容自截断，
    不再被记事药丸(白space:nowrap)的最小宽度撑破网格、溢出到日历圆角背景外。 */
-.calendar-block .cal-day { color: var(--text); padding: 5px 7px 6px; min-height: 56px; cursor: pointer; position: relative; min-width: 0; overflow: hidden; transition: background .12s, transform .12s, box-shadow .12s, border-color .12s; }
+.calendar-block .cal-day { color: var(--text); padding: calc(5px * var(--cal-fs, 1)) calc(7px * var(--cal-fs, 1)) calc(6px * var(--cal-fs, 1)); min-height: calc(56px * var(--cal-fs, 1)); cursor: pointer; position: relative; min-width: 0; overflow: hidden; transition: background .12s, transform .12s, box-shadow .12s, border-color .12s; }
 .calendar-block .cal-day.cal-pad { cursor: default; }
 .calendar-block .cal-day.wend .cal-dnum { color: var(--danger); }
-.calendar-block .cal-drow { display: flex; align-items: center; justify-content: space-between; gap: 3px; min-height: 20px; }
+.calendar-block .cal-drow { display: flex; align-items: center; justify-content: space-between; gap: 3px; min-height: calc(20px * var(--cal-fs, 1)); }
 .calendar-block .cal-dnum { font-weight: 600; font-size: 13px; line-height: 1.3; }
 .calendar-block .cal-addhint { opacity: 0; color: var(--accent); font-size: 12px; font-weight: 700; }
 .calendar-block .cal-day:hover .cal-addhint { opacity: .5; }
@@ -4508,13 +4641,13 @@ body.theme-gruvbox .md-ctx-sep {
    表头与日期列用 subgrid 共享同一套列轨道保证对齐。单条记事文本宽度设上限(下方 340px)，防一条超长记事把列撑到离谱。 */
 .calendar-block[data-cal-fit="1"] { width: fit-content; max-width: 100%; }
 .calendar-block[data-cal-fit="1"] .cal-gridwrap { overflow-x: visible; }
-.calendar-block[data-cal-fit="1"] .cal-gridinner { display: grid; grid-template-columns: repeat(7, minmax(96px, max-content)); }
+.calendar-block[data-cal-fit="1"] .cal-gridinner { display: grid; grid-template-columns: repeat(7, minmax(calc(96px * var(--cal-fs, 1)), max-content)); }
 .calendar-block[data-cal-fit="1"] .cal-headrow,
 .calendar-block[data-cal-fit="1"] .cal-body { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
-.calendar-block[data-cal-fit="1"] .cal-day { min-height: 56px; min-width: 0; overflow: visible; }
+.calendar-block[data-cal-fit="1"] .cal-day { min-height: calc(56px * var(--cal-fs, 1)); min-width: 0; overflow: visible; }
 .calendar-block[data-cal-fit="1"] .cal-notes-fit { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
 .calendar-block[data-cal-fit="1"] .cal-n-line { display: flex; align-items: flex-start; gap: 4px; font-size: 10px; line-height: 1.4; color: var(--text-secondary); }
-.calendar-block[data-cal-fit="1"] .cal-n-line .cal-n-dot { margin-top: 4px; }
+.calendar-block[data-cal-fit="1"] .cal-n-line .cal-n-dot { margin-top: calc((1.4em - .62em) / 2); }
 .calendar-block[data-cal-fit="1"] .cal-n-line .cal-n-txt { min-width: 0; max-width: 340px; white-space: pre-wrap; overflow: visible; word-break: break-word; overflow-wrap: anywhere; }
 .calendar-block[data-cal-fit="1"] .cal-n-line.done .cal-n-txt { text-decoration: line-through; color: var(--text-tertiary); }
 /* 窄屏(手机/窄编辑区≤768)：7 列最小宽 96px 合计已超出屏幕，收缩块会溢出卡片。改为块占满可用宽、
@@ -4523,7 +4656,7 @@ body.theme-gruvbox .md-ctx-sep {
   .calendar-block[data-cal-fit="1"] { width: 100%; }
   .calendar-block[data-cal-fit="1"] .cal-gridwrap { overflow-x: auto; overscroll-behavior-x: contain; }
 }
-.cal-n-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; vertical-align: middle; flex: none; }
+.cal-n-dot { display: inline-block; width: .62em; height: .62em; border-radius: 50%; vertical-align: middle; flex: none; }
 .cal-n-dot.cal-n-dot-empty { background: var(--border-strong); }
 
 /* ===== 皮肤 A · 净白（无线、留白、今日圆点；Notion / Cron 风）===== */
@@ -4578,27 +4711,29 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 .cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 2px; }
 /* 方案甲·克制风：记事平时像纯文本、无边框；hover 才淡淡浮起，颜色/删除按需出现。 */
-.cal-daycard .cal-note-row { display: flex; align-items: flex-start; gap: 7px; padding: 4px 6px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
+.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 6px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
 .cal-daycard .cal-note-row:hover { background: var(--bg-tertiary); }
-.cal-daycard .cal-note-row.cal-dragging { opacity: .5; box-shadow: 0 4px 12px rgba(0,0,0,.25); }
-.cal-daycard .cal-note-row.cal-drop { box-shadow: inset 0 2px 0 var(--accent); }
+.cal-daycard .cal-note-row.cal-dragging { opacity: .5; }
+/* 落点提示线：与侧栏笔记树一致的两端留白直线 */
+.cal-daycard .cal-note-row.cal-drop::before { content: ''; position: absolute; left: 6px; right: 6px; top: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
 /* 颜色选择：卡片内收窄成一行（小一点的色球 + 紧凑间距） */
 .cal-daycard .cal-pal.color-picker-row { padding: 6px 2px 2px; gap: 5px; flex-wrap: nowrap; }
 .cal-daycard .cal-pal .color-dot-choice { width: 15px; height: 15px; border-width: 1.5px; }
-.cal-daycard .cal-note-sw { width: 12px; height: 12px; margin-top: 4px; border-radius: 50%; flex: none; cursor: pointer; border: 1.5px solid var(--border-strong); background: transparent; box-sizing: border-box; opacity: 0; transition: transform .12s, opacity .12s; }
+.cal-daycard .cal-note-sw { width: .56em; height: .56em; margin-top: calc((1.5em - .56em) / 2); border-radius: 50%; flex: none; cursor: pointer; border: 1.4px solid var(--border-strong); background: transparent; box-sizing: border-box; opacity: 0; transition: transform .12s, opacity .12s; }
 .cal-daycard .cal-note-sw:hover { transform: scale(1.2); }
 .cal-daycard .cal-note-sw.has { border-color: transparent; opacity: .92; }
 .cal-daycard .cal-note-row:hover .cal-note-sw { opacity: 1; }
-/* 任务勾选框：圆形，边框=记事颜色(--ck)；勾选(.on)→整圆填色+白勾。 */
-.cal-daycard .cal-note-ck { width: 18px; height: 18px; margin-top: 1px; flex: none; box-sizing: border-box; border: 1.7px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
-.cal-daycard .cal-note-ck svg { opacity: 0; transition: opacity .12s; }
+/* 任务勾选框：圆形，边框=记事颜色(--ck)；勾选(.on)→整圆填色+白勾。与汇总同尺寸。 */
+.cal-daycard .cal-note-ck { width: 1em; height: 1em; margin-top: calc((1.5em - 1em) / 2); flex: none; box-sizing: border-box; border: 1.4px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-daycard .cal-note-ck svg { width: .66em; height: .66em; opacity: 0; transition: opacity .12s; }
 .cal-daycard .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
 .cal-daycard .cal-note-ck.on svg { opacity: 1; }
 .cal-daycard .cal-note-row.done .cal-edit { text-decoration: line-through; color: var(--text-tertiary); }
-.cal-daycard .cal-edit { flex: 1; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; line-height: 1.5; padding: 3px 5px; border-radius: 5px; outline: none; font-family: inherit; resize: none; overflow: hidden; white-space: pre-wrap; word-break: break-word; transition: background .12s; }
+/* 输入框与汇总一致：无边框、透明底、聚焦淡淡铺底（去掉原来的 inset 描边，避免与汇总不一致） */
+.cal-daycard .cal-edit { box-sizing: border-box; flex: 1 1 auto; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; line-height: 1.5; padding: 0 .4em; border-radius: 6px; outline: none; box-shadow: none; -webkit-appearance: none; appearance: none; font-family: inherit; resize: none; overflow: hidden; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; transition: background .12s; }
 .cal-daycard .cal-edit::placeholder { color: var(--text-tertiary); }
-.cal-daycard .cal-edit:focus { background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
-.cal-daycard .del { color: var(--text-tertiary); cursor: pointer; font-size: 14px; line-height: 1; margin-top: 3px; flex: none; padding: 0 2px; opacity: 0; transition: color .12s, opacity .12s; }
+.cal-daycard .cal-edit:focus { background: var(--bg-tertiary); }
+.cal-daycard .del { color: var(--text-tertiary); cursor: pointer; font-size: 1.1em; line-height: 1.5; margin-top: 0; flex: none; padding: 0 2px; opacity: 0; transition: color .12s, opacity .12s; }
 .cal-daycard .cal-note-row:hover .del { opacity: 1; }
 .cal-daycard .del:hover { color: var(--danger); }
 .cal-daycard .cal-pal { padding: 6px 2px 2px; }
@@ -4616,9 +4751,45 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-hovertip-h { font-size: 10.5px; color: var(--text-tertiary); margin-bottom: 4px; }
 .cal-hovertip-alm { font-size: 10px; color: var(--text-tertiary); line-height: 1.5; margin: 0 0 6px; padding-bottom: 5px; border-bottom: 1px solid var(--border); }
 .cal-hovertip-i { display: flex; align-items: flex-start; gap: 5px; padding: 2px 0; }
-.cal-hovertip-i .cal-n-dot { margin-top: 5px; }
+.cal-hovertip-i .cal-n-dot { margin-top: calc((1.5em - .62em) / 2); }
 .cal-hovertip-t { flex: 1; min-width: 0; white-space: normal; word-break: break-word; overflow-wrap: anywhere; line-height: 1.5; }
 .cal-hovertip-i.done .cal-hovertip-t { text-decoration: line-through; color: var(--text-tertiary); }
+
+/* ── 日历字体缩放：全局变量 --cal-fs（默认 1，Ctrl+滚轮/设置调整）──
+   字号在此处统一覆写（同选择器、后出现即生效）；单元格高度/内边距、列最小宽、整块最大宽也各自乘 --cal-fs
+   （见上方 .cal-day / .cal-drow / .cal-wd / [data-cal-fit] 网格列 / .calendar-block max-width），
+   使「字体与日历表整体等比放大缩小」——字大格子大、字小格子小，不再挤。 */
+.calendar-block .cal-title { font-size: calc(15px * var(--cal-fs, 1)); }
+.calendar-block .cal-wd { font-size: calc(11px * var(--cal-fs, 1)); }
+.calendar-block .cal-dnum { font-size: calc(13px * var(--cal-fs, 1)); }
+.calendar-block .cal-addhint { font-size: calc(12px * var(--cal-fs, 1)); }
+.calendar-block .cal-sub { font-size: calc(10px * var(--cal-fs, 1)); }
+.calendar-block .cal-n-inline { font-size: calc(10px * var(--cal-fs, 1)); }
+.calendar-block .cal-prog { font-size: calc(9.5px * var(--cal-fs, 1)); }
+.calendar-block[data-cal-style] .cal-n-line { font-size: calc(10px * var(--cal-fs, 1)); }
+/* 汇总面板 */
+.cal-summary-title { font-size: calc(13px * var(--cal-fs, 1)); }
+.cal-summary-ym { font-size: calc(12px * var(--cal-fs, 1)); }
+.cal-sum-empty { font-size: calc(12.5px * var(--cal-fs, 1)); }
+/* 记事行整体字号（供行内圆圈的 em 尺寸跟随缩放；文字另有各自覆写，等值不冲突） */
+.cal-sum-i { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-sum-d { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-sum-edit { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-sum-add-t { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-sum-addhint { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-sum-addplus { font-size: calc(15px * var(--cal-fs, 1)); }
+.cal-sum-add-d, .cal-sum-newdate, .cal-sum-dedit { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-sum-newzone { font-size: calc(12px * var(--cal-fs, 1)); }
+/* 天卡片 & 悬停浮层 */
+.cal-daycard { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-daycard .dt { font-size: calc(14px * var(--cal-fs, 1)); }
+.cal-daycard .meta { font-size: calc(11px * var(--cal-fs, 1)); }
+.cal-daycard .cal-addbtn { font-size: calc(12px * var(--cal-fs, 1)); }
+.cal-daycard .cal-edit { font-size: calc(12.5px * var(--cal-fs, 1)); }
+.cal-daycard .cal-empty { font-size: calc(11.5px * var(--cal-fs, 1)); }
+.cal-hovertip { font-size: calc(12px * var(--cal-fs, 1)); }
+.cal-hovertip-h { font-size: calc(10.5px * var(--cal-fs, 1)); }
+.cal-hovertip-alm { font-size: calc(10px * var(--cal-fs, 1)); }
 
 @media (max-width: 480px) {
   .calendar-block { padding: 12px 10px 10px; }

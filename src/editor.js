@@ -195,7 +195,8 @@ const CalendarBlock = Node.create({
   addNodeView() {
     return ({ node, getPos, editor: ed }) => {
       const dom = document.createElement('div');
-      dom.className = 'calendar-block';
+      // 外壳：承载「日历卡(.calendar-block)」+ 可选「汇总事项(.cal-summary)」，布局(并排/下方)由 calendar.js 控制。
+      dom.className = 'cal-shell';
       dom.setAttribute('data-calendar-block', '');
       dom.contentEditable = 'false';
       dom.addEventListener('dragstart', (e) => e.preventDefault());
