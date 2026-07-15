@@ -4435,22 +4435,25 @@ body.theme-gruvbox .md-ctx-sep {
   padding: 0 13px 12px;
   color: var(--text);
   overflow-y: auto;
+  scrollbar-gutter: stable;   /* 常留滚动条空间：洞察展开/收起时内容宽度不再跳动 */
   overscroll-behavior: contain;
   user-select: text;
   -webkit-user-select: text;
 }
-/* 标题栏固定：内容多滚动时顶部「汇总事项 + 年月 + 复制」始终可见；全宽铺满盖住下方内容 */
-.cal-summary-h {
+/* 置顶区固定：年月栏 + 切换条一起常驻，内容滚动时都不被盖住；全宽铺满 */
+.cal-summary-top {
   position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: center; gap: 7px;
-  margin: 0 -13px 4px; padding: 11px 13px 9px;
+  margin: 0 -13px; padding: 0 13px 8px;
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border);
   border-radius: 10px 10px 0 0;
-  cursor: ns-resize; /* 手势提示：此处滚动可切换月份 */
 }
-.cal-summary-title { font-weight: 700; font-size: 13px; }
-.cal-summary-ym { font-size: 12px; color: var(--text-secondary); }
+.cal-summary-h {
+  display: flex; align-items: center; gap: 7px;
+  padding: 10px 0 7px;
+  cursor: ns-resize; /* 手势提示：此处滚动切月 */
+}
+.cal-summary-ym { font-weight: 700; font-size: 12.5px; color: var(--text); }
 .cal-summary-h .cal-sum-copy {
   margin-left: auto; display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 6px;
@@ -4458,13 +4461,17 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .cal-summary-h .cal-sum-copy:hover { background: var(--bg-tertiary); color: var(--accent); }
 .cal-summary-h .cal-sum-copy.ok { color: var(--success); }
+.cal-summary-h .cal-sum-copy.hide { visibility: hidden; }
 .cal-summary-body { display: flex; flex-direction: column; }
+@keyframes calSumFade { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.cal-summary-body.cal-fade { animation: calSumFade .2s ease; }
 .cal-sum-empty { color: var(--text-tertiary); font-size: 12.5px; padding: 4px 2px; }
 .cal-sum-day { display: flex; align-items: flex-start; gap: 8px; padding: 5px 0; border-top: 1px solid var(--border); }
 .cal-sum-day:first-child { border-top: none; }
 /* 日期列：固定宽，与首条记事首行文字对齐（同为 line-height:1.5、同 2px 顶距） */
-.cal-sum-dcol { flex: none; width: 22px; padding-top: 2px; }
-.cal-sum-d { display: block; text-align: center; font-weight: 700; font-size: 12.5px; color: var(--accent); line-height: 1.5; }
+.cal-sum-dcol { flex: none; padding-top: 1px; }
+.cal-sum-d { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 22px; padding: 0 7px; border-radius: 8px; background: var(--accent-bg); color: var(--accent); font-weight: 700; font-size: 12px; line-height: 1; cursor: pointer; transition: filter .12s; }
+.cal-sum-d:hover { filter: brightness(1.06); }
 .cal-sum-items { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 
 /* 可编辑记事行：勾选框 + 文本框 + 颜色标记 + 删除（悬停才显控件，低存在感） */
@@ -4476,10 +4483,10 @@ body.theme-gruvbox .md-ctx-sep {
 /* 落点提示线：与侧栏笔记树完全一致——两端留白的直线（非随圆角弯曲的描边） */
 .cal-sum-i.drag-above::before { content: ''; position: absolute; left: 4px; right: 4px; top: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
 .cal-sum-i.drag-below::after { content: ''; position: absolute; left: 4px; right: 4px; bottom: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
-.cal-sum-i .cal-note-ck { width: 1em; height: 1em; margin-top: calc((1.5em - 1em) / 2); flex: none; box-sizing: border-box; border: 1.4px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
-.cal-sum-i .cal-note-ck svg { width: .66em; height: .66em; opacity: 0; transition: opacity .12s; }
-.cal-sum-i .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
-.cal-sum-i .cal-note-ck.on svg { opacity: 1; }
+.cal-sum-i .cal-note-ck { width: 1.5em; height: 1.5em; margin-top: 0; flex: none; box-sizing: border-box; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; transition: filter .12s, transform .12s; }
+.cal-sum-i .cal-note-ck svg { width: .82em; height: .82em; stroke: #fff; opacity: 1; }
+.cal-sum-i .cal-note-ck:hover { filter: brightness(1.08); }
+.cal-sum-i.done .cal-note-ck { opacity: .6; }
 .cal-sum-edit {
   box-sizing: border-box; flex: 1 1 auto; min-width: 0; border: none; border-radius: 6px; background: transparent; resize: none; outline: none; box-shadow: none; -webkit-appearance: none; appearance: none;
   font: inherit; font-size: 12.5px; line-height: 1.5; color: var(--text); padding: 0 .4em;
@@ -4522,7 +4529,8 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-sum-add:not(.open):hover { background: var(--bg-tertiary); }
 .cal-sum-addplus { flex: none; width: 22px; text-align: center; color: var(--text-tertiary); font-size: 15px; line-height: 1.4; }
 .cal-sum-addhint { color: var(--text-tertiary); font-size: 12.5px; }
-.cal-sum-add.open { cursor: default; }
+.cal-sum-add.open { cursor: default; flex-direction: column; align-items: stretch; gap: 0; }
+.cal-sum-add.open .cal-sum-add-d { flex: none; }
 .cal-sum-add-t { flex: 1 1 auto; min-width: 0; resize: none; font-size: 12.5px; line-height: 1.5; padding: 3px 8px; overflow: hidden; }
 .cal-sum-add-t::placeholder { color: var(--text-tertiary); }
 
@@ -4658,6 +4666,79 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .cal-n-dot { display: inline-block; width: .62em; height: .62em; border-radius: 50%; vertical-align: middle; flex: none; }
 .cal-n-dot.cal-n-dot-empty { background: var(--border-strong); }
+/* 月格/悬停里的类型小图标标记（替代圆点位，颜色由行内 style 给类型色） */
+.cal-n-tyic { display: inline-flex; align-items: center; justify-content: center; vertical-align: middle; flex: none; }
+.cal-n-tyic svg { display: block; }
+.calendar-block[data-cal-fit="1"] .cal-n-line .cal-n-tyic { margin-top: calc((1.4em - .95em) / 2); }
+.cal-hovertip-i .cal-n-tyic { margin-top: calc((1.5em - .95em) / 2); }
+
+/* ===== 事件类型：单条右侧「类型」控件(点击换类型) + 类型选择器一排 ===== */
+/* 改类型控件：固定标签图标（中性色），hover 变清晰——不再用类型图标，避免与左侧类型标记重复 */
+.cal-note-ty { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; cursor: pointer; color: var(--text-tertiary); opacity: .7; transition: opacity .12s, background .12s, color .12s; }
+.cal-note-ty svg { display: block; }
+.cal-note-ty:hover { opacity: 1; color: var(--text-secondary); background: var(--bg-hover); }
+.cal-sum-i:hover .cal-note-ty,
+.cal-daycard .cal-note-row:hover .cal-note-ty { opacity: 1; }
+/* 类型选择器样式见下方 .cal-typepick .cal-type-choice（与底部添加事件格同款） */
+
+/* ===== 重复事件（生日/纪念日）：月格小行 + 日期卡片编辑区 ===== */
+.cal-recur { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; min-width: 0; }
+.cal-recur-i { display: flex; align-items: center; gap: 3px; min-width: 0; font-size: calc(11px * var(--cal-fs, 1)); line-height: 1.3; }
+.cal-recur-i .cal-n-tyic { flex: none; }
+.cal-recur-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-block[data-cal-fit="1"] .cal-recur-t { white-space: normal; overflow: visible; word-break: break-word; overflow-wrap: anywhere; }
+.cal-daycard .cal-recur-sec { margin: 6px 0 2px; }
+.cal-daycard .cal-recur-list { display: flex; flex-direction: column; gap: 3px; margin-bottom: 6px; }
+.cal-daycard .cal-recur-row { display: flex; align-items: center; gap: .5em; padding: 3px 8px; }
+.cal-daycard .cal-recur-row .cal-recur-ic { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.5em; height: 1.5em; border-radius: 6px; color: #fff; margin: 0; }
+.cal-daycard .cal-recur-row .cal-recur-ic svg { width: .82em; height: .82em; stroke: #fff; }
+.cal-daycard .cal-recur-name { flex: 1; min-width: 0; border: none; background: transparent; font: inherit; color: var(--text-primary); padding: 2px 5px; border-radius: 6px; outline: none; box-sizing: border-box; }
+.cal-daycard .cal-recur-name:focus { background: var(--bg-tertiary); }
+.cal-daycard .cal-recur-lunar { flex: none; font-size: 11px; padding: 2px 7px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-tertiary); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
+.cal-daycard .cal-recur-lunar.on { color: #fff; background: var(--accent); border-color: var(--accent); }
+.cal-daycard .cal-recur-y0 { flex: none; width: 52px; border: none; background: transparent; font: inherit; font-size: 12px; color: var(--text-secondary); padding: 2px 4px; border-radius: 6px; outline: none; text-align: center; box-sizing: border-box; }
+.cal-daycard .cal-recur-y0:focus { background: var(--bg-tertiary); }
+.cal-daycard .cal-recur-age { flex: none; font-size: 11px; color: var(--text-tertiary); white-space: nowrap; }
+.cal-daycard .cal-recur-del { flex: none; }
+
+/* 底部「＋ 事件」菜单：默认只有一个低调按钮；点开才展开生日/纪念日/经期开始 */
+.cal-daycard .cal-evadd { margin-top: 6px; }
+.cal-daycard .cal-evbtn { display: inline-flex; align-items: center; font-size: 12px; padding: 3px 9px; border-radius: 7px; border: 1px dashed var(--border); background: transparent; color: var(--text-tertiary); cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+.cal-daycard .cal-evbtn:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.cal-daycard .cal-evadd.open .cal-evbtn { color: var(--text-secondary); border-style: solid; }
+.cal-daycard .cal-evmenu { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 7px; }
+.cal-daycard .cal-evopt { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 11px; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: inherit; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-daycard .cal-evopt:hover { background: var(--bg-hover); }
+.cal-daycard .cal-evopt svg { flex: none; }
+
+/* ===== 月经追踪：月格底色 + 日期卡片一行 ===== */
+/* 例假高亮用「叠加层」画：浮在格子底色之上、数字之下——因为背景色会被主题格子色/今日色抢占（细线·卡片主题格子本身有底色、今日也有底色），用 background 会被盖掉 */
+.calendar-block .cal-day > * { position: relative; z-index: 1; }
+.calendar-block .cal-day.cal-p-real::after,
+.calendar-block .cal-day.cal-p-pred::after,
+.calendar-block .cal-day.cal-p-ovu::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: inherit; pointer-events: none; z-index: 0; }
+.calendar-block .cal-day.cal-p-real::after { background: rgba(226, 106, 141, .18); }
+.calendar-block .cal-day.cal-p-pred::after { background: repeating-linear-gradient(45deg, rgba(226, 106, 141, .16), rgba(226, 106, 141, .16) 4px, transparent 4px, transparent 8px); }
+.calendar-block .cal-day.cal-p-ovu::after { background: rgba(139, 92, 246, .16); }
+.calendar-block .cal-day.cal-p-real .cal-dnum,
+.calendar-block .cal-day.cal-p-pred .cal-dnum { color: #d24f7a; }
+.calendar-block .cal-day.cal-p-ovu .cal-dnum { color: #8b5cf6; }
+.cal-daycard .cal-p-sec { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 2px; padding: 8px; border-radius: 8px; background: rgba(226, 106, 141, .09); font-size: 12.5px; }
+.cal-daycard .cal-p-main { display: flex; align-items: center; gap: .5em; }
+.cal-daycard .cal-p-ic { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.5em; height: 1.5em; border-radius: 6px; color: #fff; }
+.cal-daycard .cal-p-ic svg { width: .82em; height: .82em; stroke: #fff; }
+.cal-daycard .cal-p-t { flex: 1; min-width: 0; color: var(--text-secondary); }
+.cal-daycard .cal-p-len { color: #d24f7a; }
+.cal-daycard .cal-p-confirm { flex: none; margin-left: auto; font-size: 12px; padding: 3px 10px; border-radius: 7px; border: 1px solid rgba(226, 106, 141, .5); background: transparent; color: #d24f7a; cursor: pointer; transition: background .12s; white-space: nowrap; }
+.cal-daycard .cal-p-confirm:hover { background: rgba(226, 106, 141, .12); }
+.cal-daycard .cal-p-del { flex: none; }
+/* 周期± / 长度± 小控件：与主行文字左缘对齐 */
+.cal-daycard .cal-p-cfg { display: flex; flex-wrap: wrap; gap: 6px 16px; padding-left: calc(1.5em + .5em); }
+.cal-daycard .cal-p-cfg-i { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
+.cal-daycard .cal-p-cfg-i .lb { color: var(--text-secondary); }
+.cal-daycard .cal-p-cfg-i .v { min-width: 1.3em; text-align: center; color: var(--text); font-variant-numeric: tabular-nums; }
+.cal-daycard .cal-p-cfg-i button { flex: none; width: 20px; height: 20px; border-radius: 5px; border: 1px solid var(--border); background: transparent; cursor: pointer; color: var(--text-secondary); line-height: 1; padding: 0; }
+.cal-daycard .cal-p-cfg-i button:hover { background: var(--bg-hover); }
 
 /* ===== 皮肤 A · 净白（无线、留白、今日圆点；Notion / Cron 风）===== */
 .calendar-block[data-cal-style="A"] .cal-headrow { border-bottom: 1px solid var(--border); margin-bottom: 4px; }
@@ -4694,13 +4775,195 @@ body.theme-gruvbox .md-ctx-sep {
 .calendar-block[data-cal-style="D"] .cal-day.today .cal-dnum { color: var(--accent); }
 
 /* 天卡片（挂 body，浮层） */
-.cal-daycard {
-  position: fixed; z-index: 3000; width: 268px; background: var(--bg-elevated);
-  border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow-lg, 0 14px 36px rgba(0,0,0,.22));
-  padding: 13px; font-size: 12.5px;
-  max-height: 82vh; overflow-y: auto; overscroll-behavior: contain;
+/* 日期卡片改为居中弹层（仿 demo）：遮罩 + 卡片 */
+.cal-daycard-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; min-height: 100vh; min-height: 100dvh;
+  background: rgba(15, 15, 15, .34); z-index: 3000;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
 }
-.cal-daycard.hidden { display: none; }
+.cal-daycard-mask.hidden { display: none; }
+.cal-daycard {
+  width: 348px; max-width: 100%; max-height: 82dvh; display: flex; flex-direction: column;
+  background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 15px;
+  box-shadow: var(--shadow-lg, 0 20px 60px rgba(0,0,0,.3)); overflow: hidden;
+  font-size: calc(13px * var(--cal-fs, 1)); animation: calCardIn .16s ease;
+}
+@keyframes calCardIn { from { transform: translateY(8px) scale(.985); opacity: 0; } to { transform: none; opacity: 1; } }
+.cal-daycard .cal-dc-h { position: relative; padding: 14px 16px 11px; border-bottom: 1px solid var(--border); }
+.cal-daycard .cal-dc-d { font-size: calc(15.5px * var(--cal-fs, 1)); font-weight: 700; }
+.cal-daycard .cal-dc-l { font-size: calc(11.5px * var(--cal-fs, 1)); color: var(--text-secondary); margin-top: 2px; }
+.cal-daycard .cal-dc-x { position: absolute; top: 11px; right: 12px; width: 26px; height: 26px; border: none; background: transparent; color: var(--text-tertiary); border-radius: 7px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.cal-daycard .cal-dc-x:hover { background: var(--bg-hover); color: var(--text-primary); }
+.cal-daycard .cal-dc-b { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 10px 16px; display: flex; flex-direction: column; gap: 4px; }
+.cal-daycard .cal-dc-empty { color: var(--text-tertiary); font-size: calc(12px * var(--cal-fs, 1)); text-align: center; padding: 16px 0; }
+.cal-daycard .cal-dc-f { border-top: 1px solid var(--border); padding: 11px 14px 13px; }
+.cal-daycard .cal-dc-ph { font-size: calc(11px * var(--cal-fs, 1)); color: var(--text-tertiary); font-weight: 600; margin: 0 2px 8px; }
+.cal-daycard .cal-typegrid { display: flex; flex-wrap: wrap; gap: 7px; }
+.cal-daycard .cal-typebtn { flex: 1 1 84px; min-width: 84px; display: flex; align-items: center; justify-content: flex-start; gap: 7px; white-space: nowrap;
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 9px; background: transparent; color: var(--text-primary);
+  font-size: calc(12.5px * var(--cal-fs, 1)); font-weight: 600; cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-daycard .cal-typebtn:hover { background: var(--bg-hover); }
+/* 类型图标框：所有地方通用（底部添加事件格 + 改类型选择器）；开头图标对齐，文字不居中 */
+.cal-tb-i { flex: none; width: 20px; height: 20px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #fff; }
+.cal-tb-i svg { stroke: #fff; }
+
+/* 事件行（生日/纪念日/例假）的删除键：始终可见的垃圾桶按钮，hover 变红——不再靠悬停才浮现的隐形 × */
+.cal-daycard .cal-ev-del, .cal-summary .cal-ev-del { flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--text-tertiary); cursor: pointer; transition: background .12s, color .12s, border-color .12s; }
+.cal-daycard .cal-ev-del:hover, .cal-summary .cal-ev-del:hover { color: var(--danger); background: var(--danger-bg, rgba(245,63,63,.1)); border-color: var(--danger-bg, rgba(245,63,63,.28)); }
+.cal-daycard .cal-ev-del svg, .cal-summary .cal-ev-del svg { display: block; }
+
+/* 「改类型」选择器：与底部「添加事件」格子同款（彩色图标框 + 名），保证风格一致 */
+.cal-typepick { display: flex; flex-direction: column; gap: 8px; margin: 3px 0 6px; }
+.cal-tp-types { display: flex; flex-wrap: wrap; gap: 7px; }
+.cal-typepick .cal-type-choice { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap;
+  border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px 6px 7px; background: transparent; color: var(--text-primary);
+  font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: inherit; transition: background .12s, border-color .12s; }
+.cal-typepick .cal-type-choice:hover { background: var(--bg-hover); }
+.cal-typepick .cal-type-choice.selected { border-color: var(--accent); }
+
+/* 行内「持续天数」步进：单天默认藏起(cal-note-sp-one)，行 hover/编辑才现；跨天常显。低存在感、直接改。 */
+.cal-note-sp { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 1px; white-space: nowrap;
+  border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 11px; line-height: 1.3;
+  transition: opacity .12s, background .12s, color .12s; }
+.cal-note-sp .cal-note-spv { width: 20px; padding: 1px 0; border: none; background: transparent; color: inherit; font: inherit; font-size: 11px;
+  text-align: center; font-variant-numeric: tabular-nums; border-radius: 4px; -moz-appearance: textfield; }
+.cal-note-sp .cal-note-spv:focus { outline: none; background: var(--bg-elevated); box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-note-sp .cal-note-spv::-webkit-inner-spin-button, .cal-note-sp .cal-note-spv::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.cal-note-sp .cal-note-spu { font-style: normal; padding-right: 2px; }
+.cal-note-sp .cal-note-spb { width: 18px; height: 18px; border: none; background: transparent; border-radius: 999px;
+  cursor: pointer; color: var(--text-secondary); font-size: 13px; line-height: 1; font-family: inherit; padding: 0; }
+.cal-note-sp .cal-note-spb:hover { background: var(--accent-bg); color: var(--accent); }
+.cal-note-sp-one { opacity: 0; pointer-events: none; }
+.cal-note-row:hover .cal-note-sp-one, .cal-note-row:focus-within .cal-note-sp-one,
+.cal-sum-i:hover .cal-note-sp-one, .cal-sum-i:focus-within .cal-note-sp-one { opacity: 1; pointer-events: auto; }
+
+/* 汇总添加行：日期 + 类型选择 + 持续天数 一行，文本另起一行 */
+.cal-sum-add-r1 { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 6px; }
+.cal-add-tys { display: inline-flex; gap: 5px; }
+.cal-add-ty { display: inline-flex; align-items: center; justify-content: center; padding: 3px; border: 1px solid transparent;
+  border-radius: 8px; background: transparent; cursor: pointer; font-family: inherit; transition: border-color .12s, background .12s; }
+.cal-add-ty:hover { background: var(--bg-hover); }
+.cal-add-ty.on { border-color: var(--accent); background: var(--accent-bg); }
+.cal-add-sp { opacity: 1; pointer-events: auto; }
+
+/* 跨天完成度：细进度条 + k/N（低存在感，随行右侧） */
+.cal-note-prog { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 5px; }
+.cal-note-prog .cal-prog-bar { width: 32px; height: 5px; border-radius: 3px; background: var(--bg-tertiary); overflow: hidden; }
+.cal-note-prog .cal-prog-bar i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .18s; }
+.cal-note-prog .cal-prog-txt { font-size: 10.5px; color: var(--text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 日期卡「延续中」区：起点在别天、持续到今天的记事，只读+可跳去起点+可删整条 */
+.cal-daycard .cal-contlist { display: flex; flex-direction: column; gap: 2px; margin: 2px 0; }
+.cal-daycard .cal-cont-row { position: relative; display: flex; align-items: center; gap: .5em; padding: 3px 8px; border-radius: 7px;
+  cursor: pointer; color: var(--text-secondary); transition: background .12s; }
+.cal-daycard .cal-cont-row:hover { background: var(--bg-tertiary); }
+.cal-daycard .cal-cont-ic { flex: none; width: 1.5em; height: 1.5em; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; color: #fff; opacity: .85; }
+.cal-daycard .cal-cont-ic svg { stroke: #fff; }
+.cal-daycard .cal-cont-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-daycard .cal-cont-t.done { text-decoration: line-through; color: var(--text-tertiary); }
+.cal-daycard .cal-cont-day { flex: none; font-size: 11px; color: var(--text-tertiary); }
+.cal-daycard .cal-cont-del { flex: none; opacity: 0; }
+.cal-daycard .cal-cont-row:hover .cal-cont-del { opacity: 1; }
+
+/* ===== 月格跨天「连续横条」（做法B）=====
+   横条带紧跟日期行、位于农历/胶囊之上；横向向格子左右各出血 7px（= 格子水平内边距）到格子边，
+   无缝皮肤(A/D)相邻两天段自然相连、缝隙皮肤(B/C)缝处轻微断开。真起点圆左角、真末尾圆右角，中段/断周处方角平接。 */
+.calendar-block .cal-barband { margin: calc(3px * var(--cal-fs, 1)) calc(-7px * var(--cal-fs, 1)) 0; display: flex; flex-direction: column; gap: calc(2px * var(--cal-fs, 1)); min-width: 0; }
+.calendar-block .cal-bar { position: relative; height: calc(15px * var(--cal-fs, 1)); display: flex; align-items: center; gap: calc(3px * var(--cal-fs, 1));
+  color: #fff; font-size: calc(10.5px * var(--cal-fs, 1)); line-height: 1; padding: 0 calc(4px * var(--cal-fs, 1)); overflow: hidden; cursor: pointer; }
+.calendar-block .cal-bar-empty { background: transparent !important; pointer-events: none; cursor: default; }
+.calendar-block .cal-bar.is-start { margin-left: calc(7px * var(--cal-fs, 1)); border-top-left-radius: 7px; border-bottom-left-radius: 7px; }
+.calendar-block .cal-bar.is-end { margin-right: calc(7px * var(--cal-fs, 1)); border-top-right-radius: 7px; border-bottom-right-radius: 7px; }
+.calendar-block .cal-bar-i { flex: none; display: inline-flex; align-items: center; }
+.calendar-block .cal-bar-i svg { stroke: #fff; width: calc(11px * var(--cal-fs, 1)); height: calc(11px * var(--cal-fs, 1)); }
+.calendar-block .cal-bar-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-block .cal-bar.done { opacity: .5; }
+.calendar-block .cal-bar.all-done .cal-bar-t { text-decoration: line-through; }
+
+/* ===== 月格事件小胶囊（仿 demo）===== */
+.calendar-block .cal-chips { margin-top: calc(4px * var(--cal-fs, 1)); display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.calendar-block .cal-chip { display: flex; align-items: center; gap: 4px; color: #fff; border-radius: 6px; padding: 1px 6px;
+  font-size: calc(10.5px * var(--cal-fs, 1)); line-height: 1.5; white-space: nowrap; overflow: hidden; }
+.calendar-block .cal-chip-i { flex: none; display: inline-flex; align-items: center; }
+.calendar-block .cal-chip-i svg { stroke: #fff; width: calc(11px * var(--cal-fs, 1)); height: calc(11px * var(--cal-fs, 1)); }
+.calendar-block .cal-chip-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.calendar-block .cal-chip-ck { cursor: pointer; }
+.calendar-block .cal-chip.done { opacity: .55; }
+.calendar-block .cal-chip.sp-m:not(.done), .calendar-block .cal-chip.sp-z:not(.done) { opacity: .8; }
+.calendar-block .cal-chip.done .cal-chip-t { text-decoration: line-through; }
+.calendar-block .cal-chip-more { font-size: calc(10px * var(--cal-fs, 1)); color: var(--text-tertiary); padding: 0 4px; }
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip { white-space: normal; }
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-t { white-space: normal; overflow: visible; word-break: break-word; overflow-wrap: anywhere; }
+
+/* ===== 右侧面板：汇总/日程 分段切换 ===== */
+/* 切换条：并入置顶区、两颗软胶囊；选中用淡色底(不再用阴影，避免"突出") */
+.cal-seg { display: flex; gap: 6px; background: transparent; padding: 0; margin: 0; }
+.cal-seg-b { flex: 1; border: 1px solid transparent; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12.5px; font-weight: 600; padding: 5px 0; border-radius: 8px; cursor: pointer; transition: background .12s, color .12s; }
+.cal-seg-b:hover { color: var(--text-primary); }
+.cal-seg-b.on { background: var(--accent-bg); color: var(--accent); }
+
+/* 洞察收纳条：默认一行摘要，点开展开完整卡片 */
+.cal-insight { margin: 8px 0 0; }
+.cal-insight-h { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-tertiary); cursor: pointer; color: var(--text-secondary); font-size: 12px; text-align: left; transition: background .12s; }
+.cal-insight-h:hover { background: var(--bg-hover); }
+.cal-is-row { flex: 1; min-width: 0; display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; }
+.cal-is-b { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-weight: 600; }
+.cal-is-b svg { flex: none; }
+.cal-is-caret { flex: none; color: var(--text-tertiary); transition: transform .18s; }
+.cal-insight-h.open .cal-is-caret { transform: rotate(180deg); }
+/* 展开的洞察卡在滚动区内正常随内容流动（不再自带内层滚动/限高，避免和面板滚动打架、盖住列表） */
+.cal-insight-body { margin: 8px 0 4px; animation: calSumFade .2s ease; }
+/* 已记录例假清单（洞察卡内），任意一条可删 */
+.cal-prec { margin-top: 8px; border-top: 1px solid var(--border); padding-top: 6px; }
+.cal-prec-h { font-size: 11px; color: var(--text-tertiary); margin-bottom: 3px; }
+.cal-prec-i { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.cal-prec-d { flex: 1; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-prec-len { flex: none; color: var(--text-tertiary); }
+.cal-prec-del { flex: none; }
+.cal-prec-i .cal-tic { flex: none; display: inline-flex; }
+
+/* 洞察卡内的开关（如排卵日预测），与设置里的开关同款 */
+.cal-ptoggle { position: relative; width: 34px; height: 19px; border-radius: 19px; background: var(--border-strong); border: none; padding: 0; cursor: pointer; transition: background .15s; flex: none; }
+.cal-ptoggle .dot { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: #fff; transition: left .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+.cal-ptoggle.on { background: var(--accent); }
+.cal-ptoggle.on .dot { left: 17px; }
+
+/* ===== 洞察卡 ===== */
+.cal-icard { position: relative; overflow: hidden; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 12px 13px 12px 15px; margin-bottom: 10px; }
+.cal-ic-bar { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+.cal-ic-top { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; }
+.cal-ic-top .cal-tic { flex: none; display: inline-flex; }
+.cal-ic-main { font-size: 20px; font-weight: 800; margin: 6px 0 2px; }
+.cal-ic-sub { font-size: 12px; color: var(--text-secondary); margin-top: 1px; }
+.cal-setrow { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin-top: 8px; }
+.cal-setrow .lb { flex: 1; color: var(--text-secondary); }
+.cal-help { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-tertiary); font-size: 10px; font-weight: 700; cursor: help; vertical-align: 1px; }
+.cal-stepper { display: flex; align-items: center; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.cal-stepper button { width: 26px; height: 26px; border: none; background: transparent; cursor: pointer; color: var(--text-secondary); font-size: 14px; line-height: 1; }
+.cal-stepper button:hover { background: var(--bg-hover); }
+.cal-stepper .val { min-width: 34px; text-align: center; font-size: 12.5px; font-weight: 700; }
+.cal-set-note { font-size: 11px; color: var(--text-tertiary); margin-top: 8px; line-height: 1.6; }
+.cal-mini-list { margin-top: 6px; }
+.cal-mli { display: flex; align-items: center; gap: 8px; padding: 6px 2px; border-top: 1px solid var(--border); font-size: 12.5px; }
+.cal-mli .cal-tic { flex: none; display: inline-flex; }
+.cal-mli .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-mli .rt { flex: none; color: var(--text-tertiary); font-size: 11.5px; }
+
+/* ===== 日程列表 ===== */
+.cal-ag-group { margin-bottom: 14px; }
+.cal-ag-h { font-size: 11.5px; font-weight: 700; color: var(--text-tertiary); margin: 0 0 7px; }
+.cal-ag-item { display: flex; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--border); border-radius: 11px; margin-bottom: 7px; background: var(--bg-elevated); cursor: pointer; transition: background .12s, border-color .12s; }
+.cal-ag-item:hover { background: var(--bg-hover); }
+.cal-ai-icn { flex: none; width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; color: #fff; }
+.cal-ai-icn svg { stroke: #fff; }
+.cal-ai-t { flex: 1; min-width: 0; }
+.cal-ai-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-ai-name.done { text-decoration: line-through; color: var(--text-tertiary); }
+.cal-ai-meta { font-size: 11px; color: var(--text-secondary); margin-top: 1px; }
+.cal-ai-rt { flex: none; text-align: right; }
+.cal-ai-days { font-size: 14px; font-weight: 800; }
+.cal-ai-date { font-size: 10.5px; color: var(--text-tertiary); }
 .cal-daycard .dt { font-weight: 700; font-size: 14px; margin-bottom: 3px; }
 .cal-daycard .meta { font-size: 11px; color: var(--text-secondary); margin-bottom: 9px; line-height: 1.6; }
 .cal-daycard .meta .k { color: var(--text-tertiary); }
@@ -4711,11 +4974,11 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 .cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 2px; }
 /* 方案甲·克制风：记事平时像纯文本、无边框；hover 才淡淡浮起，颜色/删除按需出现。 */
-.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 6px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
+.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 8px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
 .cal-daycard .cal-note-row:hover { background: var(--bg-tertiary); }
 .cal-daycard .cal-note-row.cal-dragging { opacity: .5; }
 /* 落点提示线：与侧栏笔记树一致的两端留白直线 */
-.cal-daycard .cal-note-row.cal-drop::before { content: ''; position: absolute; left: 6px; right: 6px; top: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
+.cal-daycard .cal-note-row.cal-drop::before { content: ''; position: absolute; left: 8px; right: 8px; top: -1px; height: 2px; background: var(--accent); border-radius: 1px; }
 /* 颜色选择：卡片内收窄成一行（小一点的色球 + 紧凑间距） */
 .cal-daycard .cal-pal.color-picker-row { padding: 6px 2px 2px; gap: 5px; flex-wrap: nowrap; }
 .cal-daycard .cal-pal .color-dot-choice { width: 15px; height: 15px; border-width: 1.5px; }
@@ -4724,10 +4987,10 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-daycard .cal-note-sw.has { border-color: transparent; opacity: .92; }
 .cal-daycard .cal-note-row:hover .cal-note-sw { opacity: 1; }
 /* 任务勾选框：圆形，边框=记事颜色(--ck)；勾选(.on)→整圆填色+白勾。与汇总同尺寸。 */
-.cal-daycard .cal-note-ck { width: 1em; height: 1em; margin-top: calc((1.5em - 1em) / 2); flex: none; box-sizing: border-box; border: 1.4px solid var(--ck, var(--border-strong)); border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background .12s, border-color .12s; }
-.cal-daycard .cal-note-ck svg { width: .66em; height: .66em; opacity: 0; transition: opacity .12s; }
-.cal-daycard .cal-note-ck.on { background: var(--ck, var(--accent)); border-color: var(--ck, var(--accent)); }
-.cal-daycard .cal-note-ck.on svg { opacity: 1; }
+.cal-daycard .cal-note-ck { width: 1.5em; height: 1.5em; margin-top: 0; flex: none; box-sizing: border-box; border-radius: 6px; display: flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; transition: filter .12s, transform .12s; }
+.cal-daycard .cal-note-ck svg { width: .82em; height: .82em; stroke: #fff; opacity: 1; }
+.cal-daycard .cal-note-ck:hover { filter: brightness(1.08); }
+.cal-daycard .cal-note-row.done .cal-note-ck { opacity: .6; }
 .cal-daycard .cal-note-row.done .cal-edit { text-decoration: line-through; color: var(--text-tertiary); }
 /* 输入框与汇总一致：无边框、透明底、聚焦淡淡铺底（去掉原来的 inset 描边，避免与汇总不一致） */
 .cal-daycard .cal-edit { box-sizing: border-box; flex: 1 1 auto; min-width: 0; border: none; background: transparent; color: var(--text); font-size: 12.5px; line-height: 1.5; padding: 0 .4em; border-radius: 6px; outline: none; box-shadow: none; -webkit-appearance: none; appearance: none; font-family: inherit; resize: none; overflow: hidden; white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; transition: background .12s; }
