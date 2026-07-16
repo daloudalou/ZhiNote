@@ -4456,7 +4456,9 @@ body.theme-gruvbox .md-ctx-sep {
   color: var(--text);
   overflow-y: auto;
   scrollbar-gutter: stable;   /* 常留滚动条空间：洞察展开/收起时内容宽度不再跳动 */
-  overscroll-behavior: contain;
+  /* 并排(side)模式下汇总是定高滚动区；用 auto 而非 contain，滚到头后把滚轮交还给笔记，
+     否则鼠标停在汇总上就永远滚不动下方笔记（窗口小/汇总在侧时尤其明显）。 */
+  overscroll-behavior: auto;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -4497,7 +4499,7 @@ body.theme-gruvbox .md-ctx-sep {
 /* 可编辑记事行：勾选框 + 文本框 + 颜色标记 + 删除（悬停才显控件，低存在感） */
 /* 记事行统一约定（汇总/天卡片共用同一套尺寸）：行 line-height:1.5em，圆圈用 em 尺寸 + em 外边距，
    使圆圈恒定垂直居中于首行文字，且随 --cal-fs 缩放一起等比缩放，永不错位。 */
-.cal-sum-i { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; border-radius: 7px; padding: 2px 6px; margin: 0 -6px; transition: background .12s; touch-action: none; }
+.cal-sum-i { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; border-radius: 7px; padding: 2px 6px; margin: 0 -6px; transition: background .12s; touch-action: pan-y; }
 .cal-sum-i:hover { background: var(--bg-tertiary); }
 .cal-sum-i.cal-dragging { opacity: .5; }
 /* 落点提示线：与侧栏笔记树完全一致——两端留白的直线（非随圆角弯曲的描边） */
@@ -4577,7 +4579,7 @@ body.theme-gruvbox .md-ctx-sep {
   -webkit-user-select: none;
 }
 /* 顶栏整条可滚动切月：ns-resize 手势提示；标题/按钮各自保留 pointer */
-.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; cursor: ns-resize; }
+.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .calendar-block .cal-title {
   font-weight: 700; font-size: 15px; cursor: pointer; padding: 3px 9px; border-radius: 7px;
   display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
@@ -4585,15 +4587,34 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .calendar-block .cal-title:hover { background: var(--bg-tertiary); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .calendar-block .cal-caret { font-size: 10px; opacity: .55; }
-.calendar-block .cal-today, .calendar-block .cal-setbtn, .calendar-block .cal-sumbtn {
+/* 「今天 ‹ ›」极简幽灵三连（年月保持左侧原位、两侧无箭头）：无边框、箭头淡，hover 才浮底。 */
+.calendar-block .cal-nav { display: inline-flex; align-items: center; gap: 2px; }
+.calendar-block .cal-navm {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 26px; padding: 0; border: 0; border-radius: 7px;
+  background: transparent; cursor: pointer; color: var(--text-tertiary);
+  transition: background .12s, color .12s;
+}
+.calendar-block .cal-today {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 26px; padding: 0 8px; border: 0; border-radius: 7px;
+  background: transparent; cursor: pointer; color: var(--text-secondary);
+  font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.calendar-block .cal-nav .cal-navm:hover,
+.calendar-block .cal-today:hover { background: var(--bg-hover); color: var(--accent); }
+/* 右侧图标组：显示设置 · 精简模式 · 汇总事项 */
+.calendar-block .cal-setbtn, .calendar-block .cal-compactbtn, .calendar-block .cal-sumbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 7px;
   background: transparent; cursor: pointer; color: var(--text-secondary);
   transition: background .12s, color .12s;
 }
-.calendar-block .cal-today { margin-left: auto; }  /* 右侧按钮组第一个：把「回今天/设置/汇总」整体推到右边 */
-.calendar-block .cal-today:hover, .calendar-block .cal-setbtn:hover, .calendar-block .cal-sumbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
-.calendar-block .cal-sumbtn.on { color: var(--accent); }
+.calendar-block .cal-setbtn { margin-left: auto; }  /* 把右侧图标组整体推到最右 */
+.calendar-block .cal-setbtn:hover, .calendar-block .cal-compactbtn:hover, .calendar-block .cal-sumbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
+.calendar-block .cal-sumbtn.on, .calendar-block .cal-compactbtn.on { color: var(--accent); }
+.calendar-block .cal-summary-ym { cursor: ns-resize; }
 
 .calendar-block .cal-pop {
   position: absolute; z-index: 40; background: var(--bg-elevated);
@@ -4913,8 +4934,10 @@ body.theme-gruvbox .md-ctx-sep {
 .calendar-block .cal-chip.sp-m:not(.done), .calendar-block .cal-chip.sp-z:not(.done) { opacity: .8; }
 .calendar-block .cal-chip.done .cal-chip-t { text-decoration: line-through; }
 .calendar-block .cal-chip-more { font-size: calc(10px * var(--cal-fs, 1)); color: var(--text-tertiary); padding: 0 4px; }
-.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip { white-space: normal; }
-.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-t { white-space: normal; overflow: visible; word-break: break-word; overflow-wrap: anywhere; }
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip { white-space: normal; align-items: flex-start; }
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-i { margin-top: calc(3px * var(--cal-fs, 1)); }
+/* 展开模式：按用户自己输入的换行断行（pre-wrap 保留 \n）；超长单行到上限再自动折行，不会无限撑宽日历。 */
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-t { white-space: pre-wrap; overflow: visible; word-break: break-word; overflow-wrap: anywhere; max-width: 320px; }
 
 /* ===== 右侧面板：汇总/日程 分段切换 ===== */
 /* 切换条：并入置顶区、两颗软胶囊；选中用淡色底(不再用阴影，避免"突出") */
@@ -4994,7 +5017,7 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 .cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 2px; }
 /* 方案甲·克制风：记事平时像纯文本、无边框；hover 才淡淡浮起，颜色/删除按需出现。 */
-.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 8px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
+.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 8px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: pan-y; }
 .cal-daycard .cal-note-row:hover { background: var(--bg-tertiary); }
 .cal-daycard .cal-note-row.cal-dragging { opacity: .5; }
 /* 落点提示线：与侧栏笔记树一致的两端留白直线 */
@@ -5078,6 +5101,127 @@ body.theme-gruvbox .md-ctx-sep {
   .calendar-block { padding: 12px 10px 10px; }
   .calendar-block .cal-grid td { height: 42px; }
 }
+
+/* ===================== 应用锁 ===================== */
+/* 锁屏遮罩：默认不显示，仅当 <html> 带 applock-showing 时铺满全屏。沿用应用主题变量。 */
+.applock-overlay { display: none; }
+/* 遮罩从顶栏下方开始，不覆盖自绘顶栏——这样顶栏的窗口按钮可点、拖动区不被 no-drag 抵消，仍能拖动窗口。
+   （Chromium 的可拖动区按矩形相减计算、不看层级，遮罩若盖住顶栏就会把拖动区减没。） */
+html.applock-showing .applock-overlay {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; top: var(--titlebar-height); left: 0; right: 0; bottom: 0;
+  z-index: 100000; background: var(--bg);
+}
+/* 安装为 PWA/全屏（无自绘顶栏）时铺满，避免顶部露出内容 */
+html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
+.applock-card {
+  display: flex; flex-direction: column; align-items: center;
+  width: min(88vw, 320px); padding: 8px 4px; text-align: center;
+}
+.applock-logo { width: 56px; height: 56px; border-radius: 15px; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-tertiary); box-shadow: var(--shadow-sm); margin-bottom: 14px; font-size: 28px; line-height: 1; }
+.applock-name { font-size: 17px; font-weight: 650; color: var(--text); letter-spacing: .5px; }
+.applock-sub { font-size: 12.5px; color: var(--text-tertiary); margin-top: 5px; margin-bottom: 20px; }
+.applock-ipwrap { position: relative; width: 100%; }
+.applock-ipwrap input {
+  width: 100%; height: 42px; box-sizing: border-box;
+  padding: 0 40px 0 14px; border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--bg-tertiary); color: var(--text); font-size: 14px; outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.applock-ipwrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.applock-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 7px;
+}
+.applock-eye:hover { color: var(--accent); background: var(--bg-hover); }
+.applock-err { min-height: 16px; font-size: 12px; color: var(--danger); margin: 8px 0 2px; }
+.applock-unlock {
+  width: 100%; height: 42px; margin-top: 4px; border: 0; border-radius: 10px;
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .12s, transform .06s;
+}
+.applock-unlock:hover { background: var(--accent-hover); }
+.applock-unlock:active { transform: translateY(1px); }
+.applock-forgot { margin-top: 14px; font-size: 12.5px; color: var(--text-tertiary); cursor: pointer; }
+.applock-forgot:hover { color: var(--accent); text-decoration: underline; }
+.applock-overlay.applock-wrong .applock-card { animation: applockShake .4s; }
+@keyframes applockShake {
+  0%, 100% { transform: translateX(0); } 20% { transform: translateX(-8px); }
+  40% { transform: translateX(7px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(3px); }
+}
+
+/* 应用锁 · 小对话框 */
+.applock-dlg-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 100010;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .32);
+}
+.applock-dlg {
+  width: min(90vw, 320px); padding: 18px 18px 16px; border-radius: 14px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+}
+.applock-dlg-t { font-size: 14.5px; font-weight: 650; color: var(--text); margin-bottom: 14px; }
+.applock-dlg-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
+.applock-dlg-row > span { font-size: 12.5px; color: var(--text-secondary); }
+.applock-dlg-row input {
+  height: 38px; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--border-strong);
+  border-radius: 9px; background: var(--bg-tertiary); color: var(--text); font-size: 13.5px; outline: none;
+}
+.applock-dlg-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.applock-dlg-note {
+  font-size: 12px; line-height: 1.55; color: var(--text-tertiary);
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin: 2px 0 12px;
+}
+.applock-dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.applock-dlg-btns button { height: 34px; padding: 0 16px; border-radius: 9px; font-size: 13px; cursor: pointer; border: 1px solid var(--border-strong); }
+.applock-dlg-cancel { background: transparent; color: var(--text-secondary); }
+.applock-dlg-cancel:hover { background: var(--bg-hover); }
+.applock-dlg-ok { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+.applock-dlg-ok:hover { background: var(--accent-hover); }
+
+/* 应用锁 · 轻提示 */
+.applock-note {
+  position: fixed; left: 50%; bottom: 40px;
+  transform: translateX(-50%) translateY(12px);
+  z-index: 100020; padding: 9px 16px; border-radius: 10px; font-size: 13px;
+  background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+  opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none;
+}
+.applock-note.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 应用锁 · 设置面板 */
+.applock-set { display: flex; flex-direction: column; margin-top: 2px; }
+.applock-row { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.applock-row:last-child { border-bottom: 0; }
+.applock-lbl { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; color: var(--text); }
+.applock-lbl small { font-size: 12px; color: var(--text-tertiary); }
+.applock-btn {
+  flex: 0 0 auto; height: 32px; padding: 0 14px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary);
+}
+.applock-btn:hover { background: var(--bg-hover); color: var(--accent); }
+/* 空闲时长：数字输入框 + 「分钟」单位，样式与应用里其它输入框一致（不用原生下拉，避免观感割裂） */
+.applock-num { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.applock-num-u { font-size: 12.5px; color: var(--text-tertiary); white-space: nowrap; }
+.modal-body .applock-num-i, .applock-num-i {
+  width: 66px; height: 32px; box-sizing: border-box; margin-top: 0; padding: 0 8px;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg-tertiary); color: var(--text); font-size: 13px; text-align: center;
+  outline: none; transition: border-color .12s, box-shadow .12s;
+}
+.modal-body .applock-num-i:focus, .applock-num-i:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); background: var(--bg); }
+.applock-hint { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text-tertiary); }
+.applock-kbd { display: inline-block; min-width: 20px; padding: 2px 6px; border-radius: 6px; font-size: 11.5px; text-align: center;
+  background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); }
+/* 开关（沿用应用其它开关观感的简版） */
+.applock-sw { flex: none; position: relative; width: 40px; height: 22px; border-radius: 11px; background: var(--border-strong); cursor: pointer; transition: background .15s; }
+.applock-sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left .15s; }
+.applock-sw.on { background: var(--accent); }
+.applock-sw.on::after { left: 20px; }
+.applock-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 </style>
   <style>body:not(.app-ready) { opacity: 0; }</style>
@@ -5360,6 +5504,24 @@ body.theme-gruvbox .md-ctx-sep {
   <div id="emoji-popover" class="hidden"></div>
   <div id="toast-container"></div>
 
+  <!-- 应用锁：锁屏遮罩（默认隐藏，html.applock-showing 时显示） -->
+  <div id="applock-overlay" class="applock-overlay">
+    <div class="applock-card">
+      <div class="applock-logo" aria-hidden="true">📖</div>
+      <div class="applock-name">枝记</div>
+      <div class="applock-sub">已锁定，请输入密码</div>
+      <div class="applock-ipwrap">
+        <input id="applock-input" type="password" autocomplete="off" spellcheck="false" placeholder="密码">
+        <button id="applock-eye" type="button" class="applock-eye" title="显示 / 隐藏" aria-label="显示或隐藏密码">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <div id="applock-err" class="applock-err"></div>
+      <button id="applock-unlock" type="button" class="applock-unlock">解锁</button>
+      <div id="applock-forgot" class="applock-forgot" hidden>忘记密码？</div>
+    </div>
+  </div>
+
   <!-- CDN dependencies (non-editor) -->
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.18.6/dist/index.js"></script>
@@ -5370,7 +5532,7 @@ body.theme-gruvbox .md-ctx-sep {
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.1.5';
+    window.__MD_VER__ = 'v1.1.6';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -83522,6 +83684,13 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     if (a == null || a <= 0) return '';
     return ev.ty === 'birth' ? (a + ' 岁') : (a + ' 周年');
   }
+  // 生日的生肖：按出生年月日的农历年推算（公历生日先换算成农历年，正确处理"春节前属上一生肖"）。需已填起始年。
+  function birthZodiac(ev) {
+    if (!ev || ev.ty !== 'birth' || !ev.y0) return '';
+    var ly = ev.y0;
+    if (!ev.lunar) { var lu = solar2lunar(ev.y0, ev.m, ev.d); if (lu && lu.ok) ly = lu.year; }
+    return '属' + zodiac(ly);
+  }
 
   // ===== 规范化 JSON（键排序，保证往返/跨端指纹稳定） =====
   function sortKeys(v) {
@@ -83537,7 +83706,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 
   // summary=右侧/下方「汇总事项」面板开关（头部图标切换，不在设置弹层里，默认开）。
   var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, compact: true, summary: true, style: 'D' };
-  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历'], ['compact', '精简记事']];
+  // 「精简记事」已从设置面板挪到头部独立按钮（cal-compactbtn），此处不再列出。
+  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历']];
   var STYLES = [['A', '简约'], ['B', '细线'], ['C', '卡片'], ['D', '柔底']];
 
   // 「上次选择的显示设置」记忆：只作下一个【新建】日历的默认；不改动任何已存在日历（它们各存各的 opts）。
@@ -83572,6 +83742,11 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   var IC_SUM = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><line x1="13.5" y1="4.5" x2="13.5" y2="19.5"/><line x1="16" y1="9" x2="18" y2="9"/><line x1="16" y1="12.2" x2="18" y2="12.2"/><line x1="16" y1="15.4" x2="18" y2="15.4"/></svg>';
   // 复制图标
   var IC_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
+  // 精简模式：圆角卡片 + 两行（浓缩列表）——与「今天日历/汇总」同属圆角矩形家族，不割裂。
+  var IC_COMPACT = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="4"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="14" y2="14"/></svg>';
+  // 上/下月小箭头（圆头 chevron）
+  var IC_CHEVL = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="14.5 6 8.5 12 14.5 18"/></svg>';
+  var IC_CHEVR = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9.5 6 15.5 12 9.5 18"/></svg>';
   var IC_X = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>';
   var IC_TRASH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 6 20.5 6"/><path d="M8.5 6V4.5a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5V6"/><path d="M6 6l1 13.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 6"/><line x1="10" y1="10" x2="10" y2="17"/><line x1="14" y1="10" x2="14" y2="17"/></svg>';
   // 「改类型」固定图标：标签(tag)形，表示"分类/类型"，点它换类型。风格与类型线性图标统一。
@@ -83610,6 +83785,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   };
   var TYPE_ORDER = ['person', 'task', 'work', 'birth', 'anniv', 'period'];
   var NOTE_PICK = ['person', 'task', 'work'];   // 按天记事可选的类型（生日/纪念日/月经属"事件"，走＋事件菜单）
+  var IS_TOUCH = (typeof window !== 'undefined') && (('ontouchstart' in window) || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
   function typeIconSvg(ty, size) {
     size = size || 16;
     var p = TYPE_ICONS[ty] || TYPE_ICONS.person;
@@ -83835,6 +84011,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     var openColorIdx = -1, softTimer = null, hoverTip = null;
     var openSumColorKey = null;               // 汇总里正在展开选色的条目 'day-idx'（如 '13-0'）
     var _cardPopOutside = null, _sumPopOutside = null;   // 类型/天数弹层的"点外部收起"监听（每次重绘先撤旧再挂新，防泄漏）
+    var _addOutside = null;                                // 汇总「添加记事」的"点外部落定/收起"监听（替代易在触屏误触发的失焦收起）
     var sumAddOpen = false;                    // 底部添加行是否已展开（点＋后显示日期+内容输入）
     var sumAddTy = 'person', sumAddSpan = 1;   // 汇总添加行：待添加记事的类型/持续天数
     var pendingNewMove = null;                 // 拖到"新日期投放区"后待填日期的搬移 { fromD, fromI }
@@ -83864,7 +84041,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     function almanacLine(d) {
       var info = dayInfo(S.y, S.m, d);
       if (!info.lunar.ok) return '';
-      var s = info.ganzhi + '年' + info.lunarMonth + info.lunarDay + ' · 属' + info.zodiac;
+      var s = info.ganzhi + '年' + info.lunarMonth + info.lunarDay + ' · ' + info.zodiac + '年';
       if (info.term) s += ' · ' + info.term;
       var fe = info.solarFest || info.lunarFest;
       if (fe) s += ' · ' + fe;
@@ -83992,7 +84169,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         var b = occ[L];
         if (!b) { html += '<div class="cal-bar cal-bar-empty"></div>'; continue; }
         var n = b.n, sp = b.sp, off = b.off, ty = noteType(n);
-        var isStart = off === 0, isEnd = off === sp - 1, label = isStart || ci === 0;
+        // 名称显示在每段"可见起点"：真起点 / 周首(断周处) / 本月首日(跨月延续进来的第一天)
+        var isStart = off === 0, isEnd = off === sp - 1, label = isStart || ci === 0 || d === 1;
         var doneDay = dayDone(n, off), col = chipColor(ty, n);
         var cls = ['cal-bar'];
         if (isStart) cls.push('is-start'); if (isEnd) cls.push('is-end');
@@ -84165,12 +84343,15 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         var gi = S.recur.indexOf(ev);
         var col = typeColorOf(ev.ty) || 'var(--text-tertiary, #999)';
         var ageTxt = ageText(ev, S.y);
+        var zodTxt = birthZodiac(ev);
+        var tail = ageTxt;
+        if (zodTxt) tail = tail ? (tail + ' · ' + zodTxt) : zodTxt;
         return '<div class="cal-recur-row" data-g="' + gi + '">'
           + '<span class="cal-recur-ic" style="background:' + col + '" title="' + NOTE_TYPES[ev.ty].name + '">' + typeIconSvg(ev.ty, 12) + '</span>'
           + '<input class="cal-recur-name" data-g="' + gi + '" placeholder="' + NOTE_TYPES[ev.ty].name + '名称" value="' + esc(ev.name || '') + '">'
           + '<button type="button" class="cal-recur-lunar' + (ev.lunar ? ' on' : '') + '" data-g="' + gi + '" title="按农历每年重复">农历</button>'
           + '<input class="cal-recur-y0" data-g="' + gi + '" inputmode="numeric" maxlength="4" placeholder="起始年" value="' + (ev.y0 || '') + '">'
-          + (ageTxt ? '<span class="cal-recur-age">' + ageTxt + '</span>' : '')
+          + (tail ? '<span class="cal-recur-age">' + tail + '</span>' : '')
           + '<button type="button" class="cal-ev-del cal-recur-del" data-g="' + gi + '" title="删除这个' + NOTE_TYPES[ev.ty].name + '">' + IC_TRASH + '</button></div>';
       }).join('');
       return '<div class="cal-recur-sec"><div class="cal-recur-list">' + list + '</div></div>';
@@ -84300,7 +84481,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       // 置顶区：年月(切月手势) + 切换条(切标签手势) + 复制键(仅汇总有，用占位保持两页布局一致、不跳动)
       // 置顶区：年月(切月) + 切换条(切标签) + 洞察摘要(两页共用、常驻可见、可展开)
       var head = '<div class="cal-summary-top">'
-        + '<div class="cal-summary-h"><span class="cal-summary-ym">' + ymLabel() + '</span>'
+        + '<div class="cal-summary-h"><span class="cal-summary-ym" title="在此滚轮切换月份">' + ymLabel() + '</span>'
         + '<button type="button" class="cal-sum-copy' + (isAg ? ' hide' : '') + '" title="复制本月记事">' + IC_COPY + '</button></div>'
         + '<div class="cal-seg" title="在此滚动切换汇总/日程">'
         + '<button type="button" class="cal-seg-b' + (!isAg ? ' on' : '') + '" data-tab="sum">汇总</button>'
@@ -84499,9 +84680,14 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       var head = startSun ? WK_SUN : WK_MON;
       var rows = matrix(S.y, S.m, startSun);
       var h = '<div class="cal-head">'
-        + '<span class="cal-title" title="点击选择年月">' + S.y + ' 年 ' + (S.m + 1) + ' 月 <span class="cal-caret">▾</span></span>'
-        + '<button class="cal-today" type="button" title="回到今天">' + IC_TODAY + '</button>'
+        + '<span class="cal-title" title="点击选择年月 · 在此滚轮切换月份">' + S.y + ' 年 ' + (S.m + 1) + ' 月 <span class="cal-caret">▾</span></span>'
+        + '<span class="cal-nav">'
+        + '<button class="cal-navm cal-navm-prev" type="button" title="上个月" aria-label="上个月">' + IC_CHEVL + '</button>'
+        + '<button class="cal-today" type="button" title="回到今天">今天</button>'
+        + '<button class="cal-navm cal-navm-next" type="button" title="下个月" aria-label="下个月">' + IC_CHEVR + '</button>'
+        + '</span>'
         + '<button class="cal-setbtn" title="显示设置">' + IC_SET + '</button>'
+        + '<button class="cal-compactbtn' + (S.opts.compact ? ' on' : '') + '" type="button" title="精简记事">' + IC_COMPACT + '</button>'
         + '<button class="cal-sumbtn' + (S.opts.summary ? ' on' : '') + '" type="button" title="汇总事项">' + IC_SUM + '</button>'
         + '<div class="cal-pop cal-pop-month hidden"><div class="cal-pop-h"><button class="cal-py" type="button">‹</button><span class="cal-y"></span><button class="cal-ny" type="button">›</button></div><div class="cal-ms"></div></div>'
         + '<div class="cal-pop cal-pop-set hidden">'
@@ -84633,6 +84819,10 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       head.querySelector('.cal-title').addEventListener('click', function (e) { e.stopPropagation(); if (mp.classList.contains('hidden')) openMonth(); else mp.classList.add('hidden'); });
       head.querySelector('.cal-setbtn').addEventListener('click', function (e) { e.stopPropagation(); mp.classList.add('hidden'); sp.classList.toggle('hidden'); });
       head.querySelector('.cal-today').addEventListener('click', function (e) { e.stopPropagation(); S.y = TODAY.y; S.m = TODAY.m; commit(); });
+      var navPrev = head.querySelector('.cal-navm-prev'); if (navPrev) navPrev.addEventListener('click', function (e) { e.stopPropagation(); stepMonth(-1); });
+      var navNext = head.querySelector('.cal-navm-next'); if (navNext) navNext.addEventListener('click', function (e) { e.stopPropagation(); stepMonth(1); });
+      var compactbtn = head.querySelector('.cal-compactbtn');
+      if (compactbtn) compactbtn.addEventListener('click', function (e) { e.stopPropagation(); S.opts.compact = !S.opts.compact; saveDefOpts(S.opts); commit(); });
       var sumbtn = head.querySelector('.cal-sumbtn');
       if (sumbtn) sumbtn.addEventListener('click', function (e) { e.stopPropagation(); S.opts.summary = !S.opts.summary; saveDefOpts(S.opts); commit(); });
       head.querySelector('.cal-py').addEventListener('click', function (e) { e.stopPropagation(); py += (pmode === 'm' ? -1 : -12); drawPop(); });
@@ -84906,13 +85096,18 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       } else if (add) {
         var dInp = add.querySelector('.cal-sum-add-d'), tInp = add.querySelector('.cal-sum-add-t');
         autoGrow(tInp);
+        var dropAddOutside = function () { if (_addOutside) { document.removeEventListener('pointerdown', _addOutside, true); _addOutside = null; } };
+        var addDone = false;   // 落定/取消只允许发生一次，杜绝回车+失焦/多次触发重复生成
         var commitAdd = function () {
+          if (addDone) return; addDone = true;
+          dropAddOutside();
           var day = parseInt(dInp.value, 10), txt = (tInp.value || '').trim();
           if (!txt) { sumAddOpen = false; renderSumOnly(); return; }
           if (!(day >= 1 && day <= dim(S.y, S.m))) day = (TODAY.y === S.y && TODAY.m === S.m ? TODAY.d : 1);
           var key = noteKey(day); (S.notes[key] = S.notes[key] || []).push(makeNote(txt, sumAddTy, false, null, sumAddSpan, null));
           sumAddOpen = false; commit();
         };
+        var cancelAdd = function () { if (addDone) return; addDone = true; dropAddOutside(); sumAddOpen = false; renderSumOnly(); };
         // 添加行：类型选择
         add.querySelectorAll('.cal-add-ty').forEach(function (b) {
           b.addEventListener('mousedown', function (e) { e.preventDefault(); });
@@ -84939,11 +85134,14 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         }
         tInp.addEventListener('input', function () { autoGrow(tInp); });
         tInp.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitAdd(); }
-          else if (e.key === 'Escape') { e.preventDefault(); sumAddOpen = false; renderSumOnly(); }
+          // 回车＝换行（记事可多行，与日/汇总里编辑记事一致）；点此框以外任意处即落定保存。
+          if (e.key === 'Escape') { e.preventDefault(); cancelAdd(); }
         });
-        tInp.addEventListener('blur', function () { setTimeout(function () { if (document.activeElement === dInp) return; commitAdd(); }, 0); });
         dInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); tInp.focus(); } });
+        // 点添加行以外任意处 → 落定并收起（替代"失焦即收起"：触屏上焦点站不稳会误触发导致闪退）
+        dropAddOutside();
+        _addOutside = function (e) { if (e.target.closest && e.target.closest('.cal-sum-add')) return; commitAdd(); };
+        setTimeout(function () { if (_addOutside && sumAddOpen) document.addEventListener('pointerdown', _addOutside, true); }, 0);
       }
 
       // 新日期投放：内联「几号」输入
@@ -85077,6 +85275,11 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       document.body.appendChild(cardMask);
       cardMask.addEventListener('mousedown', function (ev) { if (ev.target === cardMask) closeCard(); });
       document.addEventListener('keydown', cardEsc, true);
+      // 触屏/iOS：输入框获得焦点时滚到可见位置，避免被软键盘遮挡
+      card.addEventListener('focusin', function (ev) {
+        var t = ev.target; if (!t || !t.matches || !t.matches('input,textarea')) return;
+        setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
+      });
     }
     function cardEsc(e) { if (e.key === 'Escape' && cardMask && !cardMask.classList.contains('hidden')) { e.preventDefault(); closeCard(); } }
     function closeCard() { if (!cardMask) return; flushSoftCommit(); purgeEmpty(cardDay); cardMask.classList.add('hidden'); commit(); }
@@ -85086,8 +85289,12 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       hideTip();
       ensureCard();
       purgeEmpty(d);
+      // 触屏：关掉可能残留的软键盘（打开日期卡本身不需要输入）
+      if (document.activeElement && document.activeElement.blur) { try { document.activeElement.blur(); } catch (_) {} }
       cardMask.classList.remove('hidden');
       drawCard();
+      // 触屏：防"点开瞬间手指落点穿透到卡片输入框"误聚焦弹键盘——短暂禁用卡片内交互，只想看不想打字时不弹键盘
+      if (IS_TOUCH && card) { card.style.pointerEvents = 'none'; setTimeout(function () { if (card) card.style.pointerEvents = ''; }, 350); }
     }
 
     // 日期卡片「重复事件」区的交互：改名/切农历/起始年/删除/新增。改结构即 commit(重画月格)+drawCard。
@@ -85137,7 +85344,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       var lunLine = '';
       if (info.lunar.ok) {
         lunLine = '农历' + info.lunarMonth + info.lunarDay;
-        if (S.opts.almanac) lunLine = info.ganzhi + '年·属' + info.zodiac + ' · ' + info.lunarMonth + info.lunarDay;
+        if (S.opts.almanac) lunLine = info.ganzhi + '年·' + info.zodiac + '年 · ' + info.lunarMonth + info.lunarDay;
         if (info.term) lunLine += ' · ' + info.term;
         var fe = info.solarFest || info.lunarFest;
         if (fe) lunLine += ' · ' + fe;
@@ -85381,8 +85588,15 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       }
     }
 
-    // 滚轮切月：鼠标悬在日历「顶栏」(.cal-head，含年月/按钮，排除弹层) 或汇总「标题栏」上滚动才切月——
-    // 避免在日历正文/记事上滚动误改月份。不在顶栏时不拦截，滚轮正常滚动页面。节流：一次滚动一个月。
+    // 滚轮切月：仅当鼠标悬在「年月文字」上（日历 .cal-title / 汇总 .cal-summary-ym）滚动才切月——
+    // 其余任何位置（按钮、正文、记事、页面）都不拦截，滚轮照常滚动页面。节流：一次滚动一个月。
+    // 切月统一入口（滚轮 / 箭头 / 触屏滑动共用）：跨年回卷后重绘。
+    function stepMonth(delta) {
+      S.m += delta;
+      if (S.m < 0) { S.m = 11; S.y--; }
+      if (S.m > 11) { S.m = 0; S.y++; }
+      commit();
+    }
     function onWheel(e) {
       // Ctrl/⌘ + 滚轮留给「日历字体缩放」（app.js 全局处理），这里不切月。
       if (e.ctrlKey || e.metaKey) return;
@@ -85394,21 +85608,54 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         switchTab(e.deltaY > 0 ? 'agenda' : 'sum');
         return;
       }
-      // 在「日历整条顶栏(.cal-head，排除弹层)」或「汇总年月标题栏」上滚动 → 切月，其余处正常滚动。
+      // 仅在「年月文字」上滚动 → 切月，其余处（含头部按钮/正文/记事）一律正常滚动。
       if (!(
-        (e.target.closest('.cal-head') && !e.target.closest('.cal-pop')) ||
-        e.target.closest('.cal-summary-h')
+        e.target.closest('.cal-title') ||
+        e.target.closest('.cal-summary-ym')
       )) return;
       e.preventDefault(); e.stopPropagation();
       var t = Date.now();
       if (t - wheelLock < 200) return;
       wheelLock = t;
-      S.m += (e.deltaY > 0 ? 1 : -1);
-      if (S.m < 0) { S.m = 11; S.y--; }
-      if (S.m > 11) { S.m = 0; S.y++; }
-      commit();
+      stepMonth(e.deltaY > 0 ? 1 : -1);
     }
     dom.addEventListener('wheel', onWheel, { passive: false });
+
+    // 触屏：在月格网格上左右滑动切月（左滑=下月、右滑=上月）。仅横向为主的快滑才算，
+    // 不影响上下滚动、点日期、长按拖动排序；切月后吞掉紧随的一次点击，避免误开日期卡。
+    if (IS_TOUCH) {
+      var swX = 0, swY = 0, swT = 0, swActive = false, swSwallow = false;
+      dom.addEventListener('touchstart', function (e) {
+        if (e.touches.length !== 1 || !e.target.closest || !e.target.closest('.cal-gridwrap')) { swActive = false; return; }
+        swActive = true; swX = e.touches[0].clientX; swY = e.touches[0].clientY; swT = Date.now();
+      }, { passive: true });
+      dom.addEventListener('touchend', function (e) {
+        if (!swActive) return; swActive = false;
+        var tch = e.changedTouches && e.changedTouches[0]; if (!tch) return;
+        var dx = tch.clientX - swX, dy = tch.clientY - swY;
+        if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.6 && (Date.now() - swT) < 600) {
+          swSwallow = true; setTimeout(function () { swSwallow = false; }, 500);
+          stepMonth(dx < 0 ? 1 : -1);
+        }
+      }, { passive: true });
+      dom.addEventListener('click', function (e) {
+        if (swSwallow && e.target.closest && e.target.closest('.cal-gridwrap')) { swSwallow = false; e.preventDefault(); e.stopPropagation(); }
+      }, true);
+    }
+
+    // 右键菜单指令（由 app.js 的编辑器右键菜单派发到日历外壳，动作留在日历内实现）。
+    dom.addEventListener('zhinote:cal-cmd', function (ev) {
+      var cmd = ev.detail && ev.detail.cmd; if (!cmd) return;
+      if (cmd === 'today') { S.y = TODAY.y; S.m = TODAY.m; commit(); }
+      else if (cmd === 'compact') { S.opts.compact = !S.opts.compact; saveDefOpts(S.opts); commit(); }
+      else if (cmd === 'copyText') { try { navigator.clipboard.writeText(buildSummaryText()); } catch (_) {} }
+      else if (cmd === 'copySource') { try { navigator.clipboard.writeText('```calendar\n' + canon(toObj(S)) + '\n```'); } catch (_) {} }
+    });
+    // 触屏/iOS：汇总/日程里输入框获得焦点时滚到可见位置，避免被软键盘遮挡（挂在常驻容器上、只挂一次）
+    dom.addEventListener('focusin', function (ev) {
+      var t = ev.target; if (!t || !t.matches || !t.matches('.cal-summary input, .cal-summary textarea')) return;
+      setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
+    });
 
     // 点击任意「非弹层、非切换按钮」处都关闭弹层——含日历自身区域（之前只有点日历外部才关）。
     var onDocDown = function (e) {
@@ -85464,6 +85711,320 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 
   var api = { mount: mount, defaultData: defaultData, canon: canon, dayInfo: dayInfo, _pendingAutoOpen: false };
   window.ZhiCalendar = api;
+})();
+
+</script>
+  <script>
+/* 应用锁（软锁）——只挡界面、内容不加密；密码只存本机、不随云同步。
+ * 触发上锁：冷启动（已开启时）、点右上角叉的瞬间、Ctrl+L、空闲超时（时长可设）。
+ * 忘记密码：设了「密保问题」才有兜底重置入口；没设则只能清本机设置解除。
+ * 暴露 window.appLock：init / isEnabled / isLocked / lock / mountSettings。
+ */
+(function () {
+  'use strict';
+
+  var K = {
+    enabled: 'zhinote.applock.enabled', // '1' / 其它
+    salt: 'zhinote.applock.salt',
+    hash: 'zhinote.applock.hash',       // 密码指纹
+    idle: 'zhinote.applock.idle',       // 空闲自动上锁（分钟）0=关
+    secq: 'zhinote.applock.secq',       // 密保问题（明文）
+    sech: 'zhinote.applock.sech',       // 密保答案指纹
+  };
+
+  function lget(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
+  function lset(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  function ldel(k) { try { localStorage.removeItem(k); } catch (_) {} }
+
+  function isEnabled() { return lget(K.enabled) === '1' && !!lget(K.hash); }
+  function idleMin() { var n = parseInt(lget(K.idle) || '0', 10); return (n > 0 && n <= 1440) ? n : 0; }
+  function hasSecq() { return !!lget(K.secq) && !!lget(K.sech); }
+  function norm(s) { return String(s == null ? '' : s).trim(); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function rndSalt() {
+    try { var a = new Uint8Array(16); crypto.getRandomValues(a); return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
+    catch (_) { return String(Date.now()) + Math.random().toString(16).slice(2); }
+  }
+  function hash(txt, salt) {
+    var s = (salt || '') + '\u0001' + (txt || '');
+    return Promise.resolve().then(function () {
+      if (window.crypto && crypto.subtle && crypto.subtle.digest) {
+        return crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)).then(function (buf) {
+          return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+        });
+      }
+      var h = 5381; for (var i = 0; i < s.length; i++) { h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; } return 'f' + h.toString(16);
+    });
+  }
+
+  // —— 轻量提示（不依赖 app.js 的 toast）——
+  function note(msg) {
+    var d = document.createElement('div'); d.className = 'applock-note'; d.textContent = msg;
+    document.body.appendChild(d);
+    requestAnimationFrame(function () { d.classList.add('show'); });
+    setTimeout(function () { d.classList.remove('show'); setTimeout(function () { try { d.remove(); } catch (_) {} }, 250); }, 1800);
+  }
+
+  // —— 小对话框：返回 Promise（确定→值对象，取消→null）；hint 为可选的提醒文字 ——
+  function dialog(title, rows, okText, hint) {
+    return new Promise(function (resolve) {
+      var mask = document.createElement('div'); mask.className = 'applock-dlg-mask';
+      var rowsHtml = rows.map(function (r) {
+        return '<label class="applock-dlg-row"><span>' + esc(r.label) + '</span>'
+          + '<input data-id="' + r.id + '" type="' + (r.type || 'text') + '" autocomplete="off" spellcheck="false"></label>';
+      }).join('');
+      mask.innerHTML = '<div class="applock-dlg" role="dialog"><div class="applock-dlg-t">' + esc(title) + '</div>'
+        + rowsHtml
+        + (hint ? '<div class="applock-dlg-note">' + esc(hint) + '</div>' : '')
+        + '<div class="applock-dlg-btns"><button type="button" class="applock-dlg-cancel">取消</button>'
+        + '<button type="button" class="applock-dlg-ok">' + esc(okText || '确定') + '</button></div></div>';
+      document.body.appendChild(mask);
+      var inputs = mask.querySelectorAll('input');
+      var done = false;
+      function close(v) { if (done) return; done = true; try { mask.remove(); } catch (_) {} resolve(v); }
+      function submit() { var out = {}; inputs.forEach(function (i) { out[i.dataset.id] = i.value; }); close(out); }
+      mask.querySelector('.applock-dlg-ok').addEventListener('click', submit);
+      mask.querySelector('.applock-dlg-cancel').addEventListener('click', function () { close(null); });
+      mask.addEventListener('mousedown', function (e) { if (e.target === mask) close(null); });
+      inputs.forEach(function (i, idx) {
+        i.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); if (idx < inputs.length - 1) inputs[idx + 1].focus(); else submit(); }
+          else if (e.key === 'Escape') { e.preventDefault(); close(null); }
+        });
+      });
+      setTimeout(function () { try { if (inputs[0]) inputs[0].focus(); } catch (_) {} }, 40);
+    });
+  }
+
+  // ===== 锁屏遮罩 =====
+  var _locked = false, _idleTimer = null, _wired = false;
+  function overlay() { return document.getElementById('applock-overlay'); }
+
+  function showOverlay() {
+    document.documentElement.classList.add('applock-showing');
+    var i = document.getElementById('applock-input'); if (i) { i.type = 'password'; i.value = ''; }
+    var e = document.getElementById('applock-err'); if (e) e.textContent = '';
+    var f = document.getElementById('applock-forgot'); if (f) f.hidden = !hasSecq();
+    setTimeout(function () { try { if (i) i.focus(); } catch (_) {} }, 60);
+  }
+  function hideOverlay() {
+    document.documentElement.classList.remove('applock-showing');
+    var ov = overlay(); if (ov) ov.classList.remove('applock-wrong');
+  }
+
+  function lock() { if (!isEnabled() || _locked) return; _locked = true; stopIdle(); showOverlay(); }
+  function isLocked() { return _locked; }
+
+  function tryUnlock(pw) {
+    return hash(pw, lget(K.salt) || '').then(function (h) {
+      if (h === lget(K.hash)) { _locked = false; hideOverlay(); startIdle(); return true; }
+      return false;
+    });
+  }
+
+  // 空闲自动上锁
+  function stopIdle() { if (_idleTimer) { clearTimeout(_idleTimer); _idleTimer = null; } }
+  function startIdle() { stopIdle(); var m = idleMin(); if (!isEnabled() || _locked || m <= 0) return; _idleTimer = setTimeout(lock, m * 60000); }
+  function bumpIdle() { if (_locked || !isEnabled() || idleMin() <= 0) return; startIdle(); }
+
+  function wireOverlay() {
+    if (_wired) return; var ov = overlay(); if (!ov) return; _wired = true;
+    var input = document.getElementById('applock-input');
+    var btn = document.getElementById('applock-unlock');
+    var eye = document.getElementById('applock-eye');
+    var err = document.getElementById('applock-err');
+    var forgot = document.getElementById('applock-forgot');
+    function attempt() {
+      tryUnlock(input ? input.value : '').then(function (ok) {
+        if (!ok) {
+          if (err) err.textContent = '密码不对';
+          ov.classList.add('applock-wrong'); setTimeout(function () { ov.classList.remove('applock-wrong'); }, 420);
+          if (input) { input.select(); }
+        }
+      });
+    }
+    if (btn) btn.addEventListener('click', attempt);
+    if (input) input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); attempt(); } });
+    if (eye) eye.addEventListener('click', function () { if (!input) return; input.type = input.type === 'password' ? 'text' : 'password'; input.focus(); });
+    if (forgot) forgot.addEventListener('click', onForgot);
+  }
+
+  function onForgot() {
+    if (!hasSecq()) return;
+    dialog('忘记密码', [{ id: 'a', label: lget(K.secq), type: 'text' }], '验证').then(function (r) {
+      if (!r) return;
+      hash(norm(r.a).toLowerCase(), lget(K.salt) || '').then(function (h) {
+        if (h !== lget(K.sech)) { note('密保答案不对'); return; }
+        dialog('设置新密码', [{ id: 'p1', label: '新密码', type: 'password' }, { id: 'p2', label: '再输一遍', type: 'password' }], '保存').then(function (np) {
+          if (!np) return;
+          if (!norm(np.p1)) { note('密码不能为空'); return; }
+          if (np.p1 !== np.p2) { note('两次输入不一致'); return; }
+          setPassword(np.p1).then(function () { _locked = false; hideOverlay(); startIdle(); note('密码已重置'); });
+        });
+      });
+    });
+  }
+
+  function setPassword(pw) {
+    var salt = rndSalt();
+    return hash(pw, salt).then(function (h) { lset(K.salt, salt); lset(K.hash, h); lset(K.enabled, '1'); });
+  }
+
+  // ===== 设置面板 =====
+  function idleInputHtml(cur) {
+    return '<span class="applock-num">'
+      + '<input type="number" class="applock-num-i" id="applock-idle" min="0" max="1440" step="1" inputmode="numeric" value="' + (cur > 0 ? cur : '') + '" placeholder="0">'
+      + '<span class="applock-num-u">分钟</span></span>';
+  }
+  function row(title, sub, ctrl) {
+    return '<div class="applock-row"><div class="applock-lbl">' + esc(title)
+      + (sub ? '<small>' + esc(sub) + '</small>' : '') + '</div>' + ctrl + '</div>';
+  }
+  function settingsHtml() {
+    var on = isEnabled();
+    var h = '<div class="applock-set">';
+    h += row('启用应用锁', '仅锁定界面，不加密笔记内容', '<span class="applock-sw' + (on ? ' on' : '') + '" id="applock-sw" role="switch" tabindex="0"></span>');
+    if (on) {
+      h += row('修改密码', '', '<button type="button" class="applock-btn" id="applock-chpw">修改</button>');
+      h += row('空闲自动锁定', '多少分钟无操作后自动锁定，0 = 关闭', idleInputHtml(idleMin()));
+      h += row('密保问题', hasSecq() ? '已设置，可用于找回密码' : '可选，用于忘记密码时重置', '<button type="button" class="applock-btn" id="applock-secq">' + (hasSecq() ? '修改 / 清除' : '设置') + '</button>');
+      h += row('立即锁定', '', '<span class="applock-hint"><span class="applock-kbd">Ctrl</span>+<span class="applock-kbd">L</span></span>');
+    }
+    return h + '</div>';
+  }
+
+  var _panelEl = null;
+  function rerender() { if (_panelEl) { _panelEl.innerHTML = settingsHtml(); bindPanel(); } }
+
+  function enableFlow() {
+    dialog('设置密码', [{ id: 'p1', label: '密码', type: 'password' }, { id: 'p2', label: '再输一遍', type: 'password' }], '开启',
+      '请牢记此密码。一旦忘记且未设置密保问题，将无法进入笔记（软锁无法被强制解开）。').then(function (r) {
+      if (!r) { rerender(); return; }
+      if (!norm(r.p1)) { note('密码不能为空'); rerender(); return; }
+      if (r.p1 !== r.p2) { note('两次输入不一致'); rerender(); return; }
+      setPassword(r.p1).then(function () { startIdle(); note('应用锁已开启'); rerender(); });
+    });
+  }
+  function disableFlow() {
+    dialog('关闭应用锁', [{ id: 'p', label: '输入当前密码', type: 'password' }], '关闭').then(function (r) {
+      if (!r) { rerender(); return; }
+      hash(r.p, lget(K.salt) || '').then(function (hh) {
+        if (hh !== lget(K.hash)) { note('密码不对'); rerender(); return; }
+        ldel(K.enabled); ldel(K.hash); ldel(K.salt); ldel(K.secq); ldel(K.sech); stopIdle();
+        note('应用锁已关闭'); rerender();
+      });
+    });
+  }
+  function changePwFlow() {
+    dialog('修改密码', [{ id: 'c', label: '当前密码', type: 'password' }, { id: 'p1', label: '新密码', type: 'password' }, { id: 'p2', label: '再输一遍', type: 'password' }], '保存').then(function (r) {
+      if (!r) return;
+      hash(r.c, lget(K.salt) || '').then(function (hh) {
+        if (hh !== lget(K.hash)) { note('当前密码不对'); return; }
+        if (!norm(r.p1)) { note('新密码不能为空'); return; }
+        if (r.p1 !== r.p2) { note('两次输入不一致'); return; }
+        setPassword(r.p1).then(function () { note('密码已修改'); });
+      });
+    });
+  }
+  function secqFlow() {
+    if (hasSecq()) {
+      dialog('密保问题', [{ id: 'q', label: '问题（留空=清除密保）', type: 'text' }, { id: 'a', label: '答案（留空=清除密保）', type: 'text' }], '保存').then(function (r) {
+        if (!r) return;
+        if (!norm(r.q) || !norm(r.a)) { ldel(K.secq); ldel(K.sech); note('已清除密保'); rerender(); return; }
+        hash(norm(r.a).toLowerCase(), lget(K.salt) || '').then(function (h) { lset(K.secq, norm(r.q)); lset(K.sech, h); note('密保已更新'); rerender(); });
+      });
+    } else {
+      dialog('设置密保问题', [{ id: 'q', label: '问题', type: 'text' }, { id: 'a', label: '答案', type: 'text' }], '保存').then(function (r) {
+        if (!r) return;
+        if (!norm(r.q) || !norm(r.a)) { note('问题和答案都要填'); return; }
+        hash(norm(r.a).toLowerCase(), lget(K.salt) || '').then(function (h) { lset(K.secq, norm(r.q)); lset(K.sech, h); note('密保已设置'); rerender(); });
+      });
+    }
+  }
+
+  function bindPanel() {
+    if (!_panelEl) return;
+    var sw = _panelEl.querySelector('#applock-sw');
+    if (sw) {
+      var toggle = function () { if (isEnabled()) disableFlow(); else enableFlow(); };
+      sw.addEventListener('click', toggle);
+      sw.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+    }
+    var chpw = _panelEl.querySelector('#applock-chpw'); if (chpw) chpw.addEventListener('click', changePwFlow);
+    var secq = _panelEl.querySelector('#applock-secq'); if (secq) secq.addEventListener('click', secqFlow);
+    var idle = _panelEl.querySelector('#applock-idle');
+    if (idle) {
+      var saveIdle = function () {
+        var v = parseInt(idle.value, 10); if (!(v >= 0)) v = 0; if (v > 1440) v = 1440;
+        lset(K.idle, String(v)); startIdle();
+        idle.value = v > 0 ? v : '';
+      };
+      idle.addEventListener('change', saveIdle);
+      idle.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); idle.blur(); } });
+    }
+  }
+
+  function mountSettings(el) { if (!el) return; _panelEl = el; el.innerHTML = settingsHtml(); bindPanel(); }
+
+  function focusInput() {
+    var i = document.getElementById('applock-input');
+    if (i) { try { i.focus(); } catch (_) {} }
+  }
+  // 锁定时窗口重新获得焦点/变可见后，把焦点抢回密码框——Quicker 显示窗口时会 editor.focus()，
+  // 否则用户看到锁屏却打不了字。延时略久，压过 app.js 那边 50ms 的 editor.focus()。
+  function refocusIfLocked() { if (_locked) setTimeout(focusInput, 80); }
+
+  // 触屏设备（手机/平板）：切走 App / 息屏 / 切标签就锁；电脑端不受影响（沿用点叉即锁 + Ctrl+L）。
+  var IS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  // 选文件/选图会临时把页面切到系统选择器，不能因此误锁：触发文件选择器时挂个时间窗，期间隐藏不上锁。
+  var _pickUntil = 0;
+  function isPicking() { return Date.now() < _pickUntil; }
+
+  // ===== 初始化 =====
+  function init() {
+    wireOverlay();
+    // 锁定时拦截所有键盘事件，防止 Ctrl+P 等全局快捷键在锁屏背后触发；只放行锁屏/其内对话框里的输入。
+    // 用捕获阶段并最先注册，才能 stopImmediatePropagation 掉 app.js 后注册的监听。
+    document.addEventListener('keydown', function (e) {
+      if (!_locked) return;
+      var t = e.target;
+      if (t && t.closest && (t.closest('#applock-overlay') || t.closest('.applock-dlg-mask'))) return;
+      e.stopImmediatePropagation(); e.preventDefault();
+    }, true);
+    window.addEventListener('focus', function () { refocusIfLocked(); if (_pickUntil) setTimeout(function () { _pickUntil = 0; }, 800); });
+    // 文件选择器打开：给一个较长的时间窗（点系统选择器可能停留很久），从选择器返回时再解除。
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (t && t.closest && t.closest('input[type="file"]')) _pickUntil = Date.now() + 5 * 60 * 1000;
+    }, true);
+    document.addEventListener('change', function (e) {
+      var t = e.target;
+      if (t && t.matches && t.matches('input[type="file"]')) setTimeout(function () { _pickUntil = 0; }, 800);
+    }, true);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) {
+        // 手机/平板：真正切走/息屏就锁（选文件那种一瞬切换不算）
+        if (IS_TOUCH && isEnabled() && !_locked && !isPicking()) { try { lock(); } catch (_) {} }
+      } else {
+        refocusIfLocked();
+      }
+    });
+    if (isEnabled()) { _locked = true; showOverlay(); }
+    ['pointerdown', 'keydown', 'wheel', 'touchstart'].forEach(function (ev) {
+      document.addEventListener(ev, bumpIdle, true);
+    });
+    if (isEnabled() && !_locked) startIdle();
+  }
+
+  window.appLock = {
+    init: init,
+    isEnabled: isEnabled,
+    isLocked: isLocked,
+    lock: lock,
+    focusInput: focusInput,
+    mountSettings: mountSettings,
+  };
 })();
 
 </script>
@@ -86729,6 +87290,13 @@ const editor = (() => {
    */
   function pasteText(text) {
     if (!_editor || !text) return;
+    // 粘贴「日历原代码」(```calendar 围栏)：直接还原成日历块，而非当普通代码块。方便迁移日历位置。
+    const _calFence = text.match(/^\uFEFF?\s*```calendar[^\n]*\n([\s\S]*?)\r?\n?```\s*$/);
+    if (_calFence) {
+      const data = (_calFence[1] || '').trim() || '{}';
+      _editor.chain().focus().insertContent({ type: 'calendarBlock', attrs: { data } }).run();
+      return;
+    }
     const processed = preprocessMathMarkdown(text);
     const marked = _editor.storage?.markdown?.manager?.markedInstance;
     let parsedHtml = '';
@@ -89363,6 +89931,8 @@ async function bootstrap() {
     const _dot = document.getElementById('cloud-sync-dot');
     if (_dot) _dot.style.display = 'none';
   }
+  // 应用锁：在页面可见前先挂上锁屏，避免冷启动闪出内容
+  try { window.appLock && window.appLock.init(); } catch (_) {}
   // 显示页面（防止闪白）
   requestAnimationFrame(() => document.body.classList.add('app-ready'));
 
@@ -90347,6 +90917,12 @@ function _isNonEditorTextTarget() {
 
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && !e.altKey && !e.shiftKey && (e.key === 'l' || e.key === 'L' || e.code === 'KeyL')) {
+    // 立即上锁（应用锁开启时才生效）
+    e.preventDefault();
+    try { window.appLock && window.appLock.lock(); } catch (_) {}
+    return;
+  }
   if (ctrl && (e.key === 'a' || e.key === 'A') && !e.shiftKey) {
     // 源码只读视图打开时：让原生全选作用于源码文本，不抢给编辑器
     if (editor.isMarkdownSourceOpen?.()) return;
@@ -93364,7 +93940,11 @@ function handleQuickerMessage(msg) {
   switch (msg.type) {
     case 'show':
       document.body.style.visibility = 'visible';
-      setTimeout(() => editor.focus(), 50);
+      setTimeout(() => {
+        // 锁屏中：焦点归还密码框，别被编辑器抢走（否则看到锁屏却打不了字）
+        if (window.appLock && window.appLock.isLocked()) window.appLock.focusInput();
+        else editor.focus();
+      }, 50);
       break;
     case 'reload':
       storage.init().then(() => { tree.render(); editor.reloadCurrent(); updateTrashBadge(); });
@@ -93733,6 +94313,8 @@ function renderAboutWebQr(box) {
 }
 
 async function requestHideWindow() {
+  // 点叉即锁：先挂上锁屏再隐藏，避免下次显示时被抢在锁屏前看到内容
+  try { window.appLock && window.appLock.lock(); } catch (_) {}
   editor.flushSave();
   if (storage.isQuicker()) {
     const method = storage.getSetting('syncMethod') || 'none';
@@ -94873,7 +95455,7 @@ function openSettingsModal(initialTab) {
   const curLineHeight = storage.getSetting('lineHeight') || 1.5;
   const curPadding = storage.getSetting('editorPadding') || 1;
   let lastTab = (typeof initialTab === 'string' && initialTab) || localStorage.getItem('zhinote-settings-tab') || 'appearance';
-  if (!['appearance', 'sync', 'backup', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
+  if (!['appearance', 'sync', 'backup', 'applock', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
   const curSyncMethod = storage.getSetting('syncMethod') || 'none';
   const curProvider = storage.getSetting('webdavProvider') || 'jianguoyun';
   // 实验：正文实时绑定开关（存 localStorage，编辑器在 storage.init 前就要读，故不用普通设置）
@@ -94883,6 +95465,7 @@ function openSettingsModal(initialTab) {
       <button type="button" class="settings-tabs-btn ${lastTab==='appearance'?'active':''}" data-tab="appearance">外观</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='sync'?'active':''}" data-tab="sync">同步</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='backup'?'active':''}" data-tab="backup">本地</button>
+      <button type="button" class="settings-tabs-btn ${lastTab==='applock'?'active':''}" data-tab="applock">应用锁</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='shortcuts'?'active':''}" data-tab="shortcuts">${window.matchMedia('(pointer: coarse)').matches ? '手势' : '快捷键'}</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='about'?'active':''}" data-tab="about">关于</button>
     </div>
@@ -95161,6 +95744,7 @@ function openSettingsModal(initialTab) {
         <div id="backup-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
       </div>
     </div>
+    <div id="settings-tab-applock" class="${lastTab!=='applock'?'settings-tab-hidden':''}"></div>
     <div id="settings-tab-shortcuts" class="${lastTab!=='shortcuts'?'settings-tab-hidden':''}">
       ${(() => {
         const groups = [
@@ -95544,7 +96128,8 @@ function openSettingsModal(initialTab) {
   });
 
   // ========== 顶级标签页切换（外观 / 同步）==========
-  const SETTINGS_TAB_ORDER = ['appearance', 'sync', 'backup', 'shortcuts', 'about'];
+  const SETTINGS_TAB_ORDER = ['appearance', 'sync', 'backup', 'applock', 'shortcuts', 'about'];
+  try { window.appLock && window.appLock.mountSettings(body.querySelector('#settings-tab-applock')); } catch (_) {}
   function activateSettingsTab(tab) {
     if (!SETTINGS_TAB_ORDER.includes(tab)) return;
     body.querySelectorAll('#settings-tab-seg .settings-tabs-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -96797,6 +97382,8 @@ function initEditorContextMenu() {
       return;
     }
 
+    const calHit = e.target.closest('[data-calendar-block]');
+
     e.preventDefault();
     document.querySelectorAll('.md-editor-ctx').forEach(m => m.remove());
     window.setBubbleSuppressed?.(true);
@@ -96855,7 +97442,32 @@ function initEditorContextMenu() {
       { label: '返回渲染', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>', action: () => editor.toggleMarkdownSource?.(false) },
       { label: '复制全部 Markdown', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: () => { try { const md = editor.getValue?.() || ''; navigator.clipboard?.writeText(md); } catch (_) {} } },
     ];
-    const items = inSource ? _srcMenuItems : [
+    // 日历专属右键菜单：复制原代码可粘贴迁移、复制纯文本、回到今天、精简显示、删除。
+    // 需要日历内部状态的动作(今天/精简/复制)派发事件给日历外壳(calendar.js 处理)；删除走编辑器命令。
+    const _calCmd = (cmd) => { try { calHit.dispatchEvent(new CustomEvent('zhinote:cal-cmd', { detail: { cmd } })); } catch (_) {} };
+    const _calDelete = () => {
+      const inst = editor.instance?.(); if (!inst) return;
+      const sel = inst.state.selection;
+      if (sel.node && sel.node.type.name === 'calendarBlock') { inst.chain().focus().deleteSelection().run(); return; }
+      try {
+        const pos = inst.view.posAtDOM(calHit, 0);
+        const $p = inst.state.doc.resolve(pos);
+        for (let d = $p.depth; d >= 0; d--) {
+          if ($p.node(d).type.name === 'calendarBlock') { const p2 = $p.before(d), n = $p.node(d); inst.chain().focus().deleteRange({ from: p2, to: p2 + n.nodeSize }).run(); return; }
+        }
+      } catch (_) {}
+    };
+    const _calMenuItems = [
+      { label: '复制日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>', title: '复制为可粘贴的日历代码，粘到别处会自动还原成日历', action: () => _calCmd('copySource') },
+      { label: '复制汇总', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>', action: () => _calCmd('copyText') },
+      { sep: true },
+      { label: '回到今天', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><circle cx="12" cy="14.5" r="1.8" fill="currentColor" stroke="none"/></svg>', action: () => _calCmd('today') },
+      { label: '精简显示', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="4"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="14" y2="14"/></svg>', action: () => _calCmd('compact') },
+      { sep: true },
+      { label: '删除日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: _calDelete },
+    ];
+
+    const items = calHit ? _calMenuItems : inSource ? _srcMenuItems : [
       ...(_inCodeBlock && _codeWrapper?._toggleFold ? [{ label: _codeWrapper.classList.contains('code-block-folded') ? '展开代码块' : '折叠代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => { _codeWrapper._toggleFold(); } }] : []),
       ...(_inCodeBlock && _codeWrapper ? [{ label: '复制全部代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>', action: () => { const code = _codeWrapper.querySelector('code'); if (code) navigator.clipboard?.writeText(code.textContent || ''); } }, { label: '删除代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: () => { const inst = editor.instance(); if (!inst) return; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const pos = $from.before(d); const node = $from.node(d); inst.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run(); break; } } } }, { sep: true }] : []),
       { label: '复制', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: _copyAction },

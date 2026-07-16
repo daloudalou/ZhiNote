@@ -1259,6 +1259,13 @@ const editor = (() => {
    */
   function pasteText(text) {
     if (!_editor || !text) return;
+    // 粘贴「日历原代码」(```calendar 围栏)：直接还原成日历块，而非当普通代码块。方便迁移日历位置。
+    const _calFence = text.match(/^\uFEFF?\s*```calendar[^\n]*\n([\s\S]*?)\r?\n?```\s*$/);
+    if (_calFence) {
+      const data = (_calFence[1] || '').trim() || '{}';
+      _editor.chain().focus().insertContent({ type: 'calendarBlock', attrs: { data } }).run();
+      return;
+    }
     const processed = preprocessMathMarkdown(text);
     const marked = _editor.storage?.markdown?.manager?.markedInstance;
     let parsedHtml = '';

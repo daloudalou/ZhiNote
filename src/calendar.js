@@ -165,6 +165,13 @@
     if (a == null || a <= 0) return '';
     return ev.ty === 'birth' ? (a + ' 岁') : (a + ' 周年');
   }
+  // 生日的生肖：按出生年月日的农历年推算（公历生日先换算成农历年，正确处理"春节前属上一生肖"）。需已填起始年。
+  function birthZodiac(ev) {
+    if (!ev || ev.ty !== 'birth' || !ev.y0) return '';
+    var ly = ev.y0;
+    if (!ev.lunar) { var lu = solar2lunar(ev.y0, ev.m, ev.d); if (lu && lu.ok) ly = lu.year; }
+    return '属' + zodiac(ly);
+  }
 
   // ===== 规范化 JSON（键排序，保证往返/跨端指纹稳定） =====
   function sortKeys(v) {
@@ -180,7 +187,8 @@
 
   // summary=右侧/下方「汇总事项」面板开关（头部图标切换，不在设置弹层里，默认开）。
   var DEFAULT_OPTS = { startMon: true, wend: true, today: true, lunar: true, term: true, fest: true, almanac: true, compact: true, summary: true, style: 'D' };
-  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历'], ['compact', '精简记事']];
+  // 「精简记事」已从设置面板挪到头部独立按钮（cal-compactbtn），此处不再列出。
+  var OPTS = [['today', '今日高亮'], ['wend', '周末标红'], ['startMon', '周一起始'], ['lunar', '显示农历'], ['term', '显示节气'], ['fest', '显示节假日'], ['almanac', '显示黄历']];
   var STYLES = [['A', '简约'], ['B', '细线'], ['C', '卡片'], ['D', '柔底']];
 
   // 「上次选择的显示设置」记忆：只作下一个【新建】日历的默认；不改动任何已存在日历（它们各存各的 opts）。
@@ -215,6 +223,11 @@
   var IC_SUM = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><line x1="13.5" y1="4.5" x2="13.5" y2="19.5"/><line x1="16" y1="9" x2="18" y2="9"/><line x1="16" y1="12.2" x2="18" y2="12.2"/><line x1="16" y1="15.4" x2="18" y2="15.4"/></svg>';
   // 复制图标
   var IC_COPY = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>';
+  // 精简模式：圆角卡片 + 两行（浓缩列表）——与「今天日历/汇总」同属圆角矩形家族，不割裂。
+  var IC_COMPACT = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="4"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="14" y2="14"/></svg>';
+  // 上/下月小箭头（圆头 chevron）
+  var IC_CHEVL = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="14.5 6 8.5 12 14.5 18"/></svg>';
+  var IC_CHEVR = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9.5 6 15.5 12 9.5 18"/></svg>';
   var IC_X = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>';
   var IC_TRASH = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3.5 6 20.5 6"/><path d="M8.5 6V4.5a1.5 1.5 0 0 1 1.5-1.5h4a1.5 1.5 0 0 1 1.5 1.5V6"/><path d="M6 6l1 13.5A1.5 1.5 0 0 0 8.5 21h7a1.5 1.5 0 0 0 1.5-1.5L18 6"/><line x1="10" y1="10" x2="10" y2="17"/><line x1="14" y1="10" x2="14" y2="17"/></svg>';
   // 「改类型」固定图标：标签(tag)形，表示"分类/类型"，点它换类型。风格与类型线性图标统一。
@@ -253,6 +266,7 @@
   };
   var TYPE_ORDER = ['person', 'task', 'work', 'birth', 'anniv', 'period'];
   var NOTE_PICK = ['person', 'task', 'work'];   // 按天记事可选的类型（生日/纪念日/月经属"事件"，走＋事件菜单）
+  var IS_TOUCH = (typeof window !== 'undefined') && (('ontouchstart' in window) || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
   function typeIconSvg(ty, size) {
     size = size || 16;
     var p = TYPE_ICONS[ty] || TYPE_ICONS.person;
@@ -478,6 +492,7 @@
     var openColorIdx = -1, softTimer = null, hoverTip = null;
     var openSumColorKey = null;               // 汇总里正在展开选色的条目 'day-idx'（如 '13-0'）
     var _cardPopOutside = null, _sumPopOutside = null;   // 类型/天数弹层的"点外部收起"监听（每次重绘先撤旧再挂新，防泄漏）
+    var _addOutside = null;                                // 汇总「添加记事」的"点外部落定/收起"监听（替代易在触屏误触发的失焦收起）
     var sumAddOpen = false;                    // 底部添加行是否已展开（点＋后显示日期+内容输入）
     var sumAddTy = 'person', sumAddSpan = 1;   // 汇总添加行：待添加记事的类型/持续天数
     var pendingNewMove = null;                 // 拖到"新日期投放区"后待填日期的搬移 { fromD, fromI }
@@ -507,7 +522,7 @@
     function almanacLine(d) {
       var info = dayInfo(S.y, S.m, d);
       if (!info.lunar.ok) return '';
-      var s = info.ganzhi + '年' + info.lunarMonth + info.lunarDay + ' · 属' + info.zodiac;
+      var s = info.ganzhi + '年' + info.lunarMonth + info.lunarDay + ' · ' + info.zodiac + '年';
       if (info.term) s += ' · ' + info.term;
       var fe = info.solarFest || info.lunarFest;
       if (fe) s += ' · ' + fe;
@@ -635,7 +650,8 @@
         var b = occ[L];
         if (!b) { html += '<div class="cal-bar cal-bar-empty"></div>'; continue; }
         var n = b.n, sp = b.sp, off = b.off, ty = noteType(n);
-        var isStart = off === 0, isEnd = off === sp - 1, label = isStart || ci === 0;
+        // 名称显示在每段"可见起点"：真起点 / 周首(断周处) / 本月首日(跨月延续进来的第一天)
+        var isStart = off === 0, isEnd = off === sp - 1, label = isStart || ci === 0 || d === 1;
         var doneDay = dayDone(n, off), col = chipColor(ty, n);
         var cls = ['cal-bar'];
         if (isStart) cls.push('is-start'); if (isEnd) cls.push('is-end');
@@ -808,12 +824,15 @@
         var gi = S.recur.indexOf(ev);
         var col = typeColorOf(ev.ty) || 'var(--text-tertiary, #999)';
         var ageTxt = ageText(ev, S.y);
+        var zodTxt = birthZodiac(ev);
+        var tail = ageTxt;
+        if (zodTxt) tail = tail ? (tail + ' · ' + zodTxt) : zodTxt;
         return '<div class="cal-recur-row" data-g="' + gi + '">'
           + '<span class="cal-recur-ic" style="background:' + col + '" title="' + NOTE_TYPES[ev.ty].name + '">' + typeIconSvg(ev.ty, 12) + '</span>'
           + '<input class="cal-recur-name" data-g="' + gi + '" placeholder="' + NOTE_TYPES[ev.ty].name + '名称" value="' + esc(ev.name || '') + '">'
           + '<button type="button" class="cal-recur-lunar' + (ev.lunar ? ' on' : '') + '" data-g="' + gi + '" title="按农历每年重复">农历</button>'
           + '<input class="cal-recur-y0" data-g="' + gi + '" inputmode="numeric" maxlength="4" placeholder="起始年" value="' + (ev.y0 || '') + '">'
-          + (ageTxt ? '<span class="cal-recur-age">' + ageTxt + '</span>' : '')
+          + (tail ? '<span class="cal-recur-age">' + tail + '</span>' : '')
           + '<button type="button" class="cal-ev-del cal-recur-del" data-g="' + gi + '" title="删除这个' + NOTE_TYPES[ev.ty].name + '">' + IC_TRASH + '</button></div>';
       }).join('');
       return '<div class="cal-recur-sec"><div class="cal-recur-list">' + list + '</div></div>';
@@ -943,7 +962,7 @@
       // 置顶区：年月(切月手势) + 切换条(切标签手势) + 复制键(仅汇总有，用占位保持两页布局一致、不跳动)
       // 置顶区：年月(切月) + 切换条(切标签) + 洞察摘要(两页共用、常驻可见、可展开)
       var head = '<div class="cal-summary-top">'
-        + '<div class="cal-summary-h"><span class="cal-summary-ym">' + ymLabel() + '</span>'
+        + '<div class="cal-summary-h"><span class="cal-summary-ym" title="在此滚轮切换月份">' + ymLabel() + '</span>'
         + '<button type="button" class="cal-sum-copy' + (isAg ? ' hide' : '') + '" title="复制本月记事">' + IC_COPY + '</button></div>'
         + '<div class="cal-seg" title="在此滚动切换汇总/日程">'
         + '<button type="button" class="cal-seg-b' + (!isAg ? ' on' : '') + '" data-tab="sum">汇总</button>'
@@ -1142,9 +1161,14 @@
       var head = startSun ? WK_SUN : WK_MON;
       var rows = matrix(S.y, S.m, startSun);
       var h = '<div class="cal-head">'
-        + '<span class="cal-title" title="点击选择年月">' + S.y + ' 年 ' + (S.m + 1) + ' 月 <span class="cal-caret">▾</span></span>'
-        + '<button class="cal-today" type="button" title="回到今天">' + IC_TODAY + '</button>'
+        + '<span class="cal-title" title="点击选择年月 · 在此滚轮切换月份">' + S.y + ' 年 ' + (S.m + 1) + ' 月 <span class="cal-caret">▾</span></span>'
+        + '<span class="cal-nav">'
+        + '<button class="cal-navm cal-navm-prev" type="button" title="上个月" aria-label="上个月">' + IC_CHEVL + '</button>'
+        + '<button class="cal-today" type="button" title="回到今天">今天</button>'
+        + '<button class="cal-navm cal-navm-next" type="button" title="下个月" aria-label="下个月">' + IC_CHEVR + '</button>'
+        + '</span>'
         + '<button class="cal-setbtn" title="显示设置">' + IC_SET + '</button>'
+        + '<button class="cal-compactbtn' + (S.opts.compact ? ' on' : '') + '" type="button" title="精简记事">' + IC_COMPACT + '</button>'
         + '<button class="cal-sumbtn' + (S.opts.summary ? ' on' : '') + '" type="button" title="汇总事项">' + IC_SUM + '</button>'
         + '<div class="cal-pop cal-pop-month hidden"><div class="cal-pop-h"><button class="cal-py" type="button">‹</button><span class="cal-y"></span><button class="cal-ny" type="button">›</button></div><div class="cal-ms"></div></div>'
         + '<div class="cal-pop cal-pop-set hidden">'
@@ -1276,6 +1300,10 @@
       head.querySelector('.cal-title').addEventListener('click', function (e) { e.stopPropagation(); if (mp.classList.contains('hidden')) openMonth(); else mp.classList.add('hidden'); });
       head.querySelector('.cal-setbtn').addEventListener('click', function (e) { e.stopPropagation(); mp.classList.add('hidden'); sp.classList.toggle('hidden'); });
       head.querySelector('.cal-today').addEventListener('click', function (e) { e.stopPropagation(); S.y = TODAY.y; S.m = TODAY.m; commit(); });
+      var navPrev = head.querySelector('.cal-navm-prev'); if (navPrev) navPrev.addEventListener('click', function (e) { e.stopPropagation(); stepMonth(-1); });
+      var navNext = head.querySelector('.cal-navm-next'); if (navNext) navNext.addEventListener('click', function (e) { e.stopPropagation(); stepMonth(1); });
+      var compactbtn = head.querySelector('.cal-compactbtn');
+      if (compactbtn) compactbtn.addEventListener('click', function (e) { e.stopPropagation(); S.opts.compact = !S.opts.compact; saveDefOpts(S.opts); commit(); });
       var sumbtn = head.querySelector('.cal-sumbtn');
       if (sumbtn) sumbtn.addEventListener('click', function (e) { e.stopPropagation(); S.opts.summary = !S.opts.summary; saveDefOpts(S.opts); commit(); });
       head.querySelector('.cal-py').addEventListener('click', function (e) { e.stopPropagation(); py += (pmode === 'm' ? -1 : -12); drawPop(); });
@@ -1549,13 +1577,18 @@
       } else if (add) {
         var dInp = add.querySelector('.cal-sum-add-d'), tInp = add.querySelector('.cal-sum-add-t');
         autoGrow(tInp);
+        var dropAddOutside = function () { if (_addOutside) { document.removeEventListener('pointerdown', _addOutside, true); _addOutside = null; } };
+        var addDone = false;   // 落定/取消只允许发生一次，杜绝回车+失焦/多次触发重复生成
         var commitAdd = function () {
+          if (addDone) return; addDone = true;
+          dropAddOutside();
           var day = parseInt(dInp.value, 10), txt = (tInp.value || '').trim();
           if (!txt) { sumAddOpen = false; renderSumOnly(); return; }
           if (!(day >= 1 && day <= dim(S.y, S.m))) day = (TODAY.y === S.y && TODAY.m === S.m ? TODAY.d : 1);
           var key = noteKey(day); (S.notes[key] = S.notes[key] || []).push(makeNote(txt, sumAddTy, false, null, sumAddSpan, null));
           sumAddOpen = false; commit();
         };
+        var cancelAdd = function () { if (addDone) return; addDone = true; dropAddOutside(); sumAddOpen = false; renderSumOnly(); };
         // 添加行：类型选择
         add.querySelectorAll('.cal-add-ty').forEach(function (b) {
           b.addEventListener('mousedown', function (e) { e.preventDefault(); });
@@ -1582,11 +1615,14 @@
         }
         tInp.addEventListener('input', function () { autoGrow(tInp); });
         tInp.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); commitAdd(); }
-          else if (e.key === 'Escape') { e.preventDefault(); sumAddOpen = false; renderSumOnly(); }
+          // 回车＝换行（记事可多行，与日/汇总里编辑记事一致）；点此框以外任意处即落定保存。
+          if (e.key === 'Escape') { e.preventDefault(); cancelAdd(); }
         });
-        tInp.addEventListener('blur', function () { setTimeout(function () { if (document.activeElement === dInp) return; commitAdd(); }, 0); });
         dInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); tInp.focus(); } });
+        // 点添加行以外任意处 → 落定并收起（替代"失焦即收起"：触屏上焦点站不稳会误触发导致闪退）
+        dropAddOutside();
+        _addOutside = function (e) { if (e.target.closest && e.target.closest('.cal-sum-add')) return; commitAdd(); };
+        setTimeout(function () { if (_addOutside && sumAddOpen) document.addEventListener('pointerdown', _addOutside, true); }, 0);
       }
 
       // 新日期投放：内联「几号」输入
@@ -1720,6 +1756,11 @@
       document.body.appendChild(cardMask);
       cardMask.addEventListener('mousedown', function (ev) { if (ev.target === cardMask) closeCard(); });
       document.addEventListener('keydown', cardEsc, true);
+      // 触屏/iOS：输入框获得焦点时滚到可见位置，避免被软键盘遮挡
+      card.addEventListener('focusin', function (ev) {
+        var t = ev.target; if (!t || !t.matches || !t.matches('input,textarea')) return;
+        setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
+      });
     }
     function cardEsc(e) { if (e.key === 'Escape' && cardMask && !cardMask.classList.contains('hidden')) { e.preventDefault(); closeCard(); } }
     function closeCard() { if (!cardMask) return; flushSoftCommit(); purgeEmpty(cardDay); cardMask.classList.add('hidden'); commit(); }
@@ -1729,8 +1770,12 @@
       hideTip();
       ensureCard();
       purgeEmpty(d);
+      // 触屏：关掉可能残留的软键盘（打开日期卡本身不需要输入）
+      if (document.activeElement && document.activeElement.blur) { try { document.activeElement.blur(); } catch (_) {} }
       cardMask.classList.remove('hidden');
       drawCard();
+      // 触屏：防"点开瞬间手指落点穿透到卡片输入框"误聚焦弹键盘——短暂禁用卡片内交互，只想看不想打字时不弹键盘
+      if (IS_TOUCH && card) { card.style.pointerEvents = 'none'; setTimeout(function () { if (card) card.style.pointerEvents = ''; }, 350); }
     }
 
     // 日期卡片「重复事件」区的交互：改名/切农历/起始年/删除/新增。改结构即 commit(重画月格)+drawCard。
@@ -1780,7 +1825,7 @@
       var lunLine = '';
       if (info.lunar.ok) {
         lunLine = '农历' + info.lunarMonth + info.lunarDay;
-        if (S.opts.almanac) lunLine = info.ganzhi + '年·属' + info.zodiac + ' · ' + info.lunarMonth + info.lunarDay;
+        if (S.opts.almanac) lunLine = info.ganzhi + '年·' + info.zodiac + '年 · ' + info.lunarMonth + info.lunarDay;
         if (info.term) lunLine += ' · ' + info.term;
         var fe = info.solarFest || info.lunarFest;
         if (fe) lunLine += ' · ' + fe;
@@ -2024,8 +2069,15 @@
       }
     }
 
-    // 滚轮切月：鼠标悬在日历「顶栏」(.cal-head，含年月/按钮，排除弹层) 或汇总「标题栏」上滚动才切月——
-    // 避免在日历正文/记事上滚动误改月份。不在顶栏时不拦截，滚轮正常滚动页面。节流：一次滚动一个月。
+    // 滚轮切月：仅当鼠标悬在「年月文字」上（日历 .cal-title / 汇总 .cal-summary-ym）滚动才切月——
+    // 其余任何位置（按钮、正文、记事、页面）都不拦截，滚轮照常滚动页面。节流：一次滚动一个月。
+    // 切月统一入口（滚轮 / 箭头 / 触屏滑动共用）：跨年回卷后重绘。
+    function stepMonth(delta) {
+      S.m += delta;
+      if (S.m < 0) { S.m = 11; S.y--; }
+      if (S.m > 11) { S.m = 0; S.y++; }
+      commit();
+    }
     function onWheel(e) {
       // Ctrl/⌘ + 滚轮留给「日历字体缩放」（app.js 全局处理），这里不切月。
       if (e.ctrlKey || e.metaKey) return;
@@ -2037,21 +2089,54 @@
         switchTab(e.deltaY > 0 ? 'agenda' : 'sum');
         return;
       }
-      // 在「日历整条顶栏(.cal-head，排除弹层)」或「汇总年月标题栏」上滚动 → 切月，其余处正常滚动。
+      // 仅在「年月文字」上滚动 → 切月，其余处（含头部按钮/正文/记事）一律正常滚动。
       if (!(
-        (e.target.closest('.cal-head') && !e.target.closest('.cal-pop')) ||
-        e.target.closest('.cal-summary-h')
+        e.target.closest('.cal-title') ||
+        e.target.closest('.cal-summary-ym')
       )) return;
       e.preventDefault(); e.stopPropagation();
       var t = Date.now();
       if (t - wheelLock < 200) return;
       wheelLock = t;
-      S.m += (e.deltaY > 0 ? 1 : -1);
-      if (S.m < 0) { S.m = 11; S.y--; }
-      if (S.m > 11) { S.m = 0; S.y++; }
-      commit();
+      stepMonth(e.deltaY > 0 ? 1 : -1);
     }
     dom.addEventListener('wheel', onWheel, { passive: false });
+
+    // 触屏：在月格网格上左右滑动切月（左滑=下月、右滑=上月）。仅横向为主的快滑才算，
+    // 不影响上下滚动、点日期、长按拖动排序；切月后吞掉紧随的一次点击，避免误开日期卡。
+    if (IS_TOUCH) {
+      var swX = 0, swY = 0, swT = 0, swActive = false, swSwallow = false;
+      dom.addEventListener('touchstart', function (e) {
+        if (e.touches.length !== 1 || !e.target.closest || !e.target.closest('.cal-gridwrap')) { swActive = false; return; }
+        swActive = true; swX = e.touches[0].clientX; swY = e.touches[0].clientY; swT = Date.now();
+      }, { passive: true });
+      dom.addEventListener('touchend', function (e) {
+        if (!swActive) return; swActive = false;
+        var tch = e.changedTouches && e.changedTouches[0]; if (!tch) return;
+        var dx = tch.clientX - swX, dy = tch.clientY - swY;
+        if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.6 && (Date.now() - swT) < 600) {
+          swSwallow = true; setTimeout(function () { swSwallow = false; }, 500);
+          stepMonth(dx < 0 ? 1 : -1);
+        }
+      }, { passive: true });
+      dom.addEventListener('click', function (e) {
+        if (swSwallow && e.target.closest && e.target.closest('.cal-gridwrap')) { swSwallow = false; e.preventDefault(); e.stopPropagation(); }
+      }, true);
+    }
+
+    // 右键菜单指令（由 app.js 的编辑器右键菜单派发到日历外壳，动作留在日历内实现）。
+    dom.addEventListener('zhinote:cal-cmd', function (ev) {
+      var cmd = ev.detail && ev.detail.cmd; if (!cmd) return;
+      if (cmd === 'today') { S.y = TODAY.y; S.m = TODAY.m; commit(); }
+      else if (cmd === 'compact') { S.opts.compact = !S.opts.compact; saveDefOpts(S.opts); commit(); }
+      else if (cmd === 'copyText') { try { navigator.clipboard.writeText(buildSummaryText()); } catch (_) {} }
+      else if (cmd === 'copySource') { try { navigator.clipboard.writeText('```calendar\n' + canon(toObj(S)) + '\n```'); } catch (_) {} }
+    });
+    // 触屏/iOS：汇总/日程里输入框获得焦点时滚到可见位置，避免被软键盘遮挡（挂在常驻容器上、只挂一次）
+    dom.addEventListener('focusin', function (ev) {
+      var t = ev.target; if (!t || !t.matches || !t.matches('.cal-summary input, .cal-summary textarea')) return;
+      setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
+    });
 
     // 点击任意「非弹层、非切换按钮」处都关闭弹层——含日历自身区域（之前只有点日历外部才关）。
     var onDocDown = function (e) {

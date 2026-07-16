@@ -4436,7 +4436,9 @@ body.theme-gruvbox .md-ctx-sep {
   color: var(--text);
   overflow-y: auto;
   scrollbar-gutter: stable;   /* 常留滚动条空间：洞察展开/收起时内容宽度不再跳动 */
-  overscroll-behavior: contain;
+  /* 并排(side)模式下汇总是定高滚动区；用 auto 而非 contain，滚到头后把滚轮交还给笔记，
+     否则鼠标停在汇总上就永远滚不动下方笔记（窗口小/汇总在侧时尤其明显）。 */
+  overscroll-behavior: auto;
   user-select: text;
   -webkit-user-select: text;
 }
@@ -4477,7 +4479,7 @@ body.theme-gruvbox .md-ctx-sep {
 /* 可编辑记事行：勾选框 + 文本框 + 颜色标记 + 删除（悬停才显控件，低存在感） */
 /* 记事行统一约定（汇总/天卡片共用同一套尺寸）：行 line-height:1.5em，圆圈用 em 尺寸 + em 外边距，
    使圆圈恒定垂直居中于首行文字，且随 --cal-fs 缩放一起等比缩放，永不错位。 */
-.cal-sum-i { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; border-radius: 7px; padding: 2px 6px; margin: 0 -6px; transition: background .12s; touch-action: none; }
+.cal-sum-i { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; border-radius: 7px; padding: 2px 6px; margin: 0 -6px; transition: background .12s; touch-action: pan-y; }
 .cal-sum-i:hover { background: var(--bg-tertiary); }
 .cal-sum-i.cal-dragging { opacity: .5; }
 /* 落点提示线：与侧栏笔记树完全一致——两端留白的直线（非随圆角弯曲的描边） */
@@ -4557,7 +4559,7 @@ body.theme-gruvbox .md-ctx-sep {
   -webkit-user-select: none;
 }
 /* 顶栏整条可滚动切月：ns-resize 手势提示；标题/按钮各自保留 pointer */
-.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; cursor: ns-resize; }
+.calendar-block .cal-head { position: relative; display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .calendar-block .cal-title {
   font-weight: 700; font-size: 15px; cursor: pointer; padding: 3px 9px; border-radius: 7px;
   display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
@@ -4565,15 +4567,34 @@ body.theme-gruvbox .md-ctx-sep {
 }
 .calendar-block .cal-title:hover { background: var(--bg-tertiary); color: var(--accent); box-shadow: inset 0 0 0 1px var(--border-strong); }
 .calendar-block .cal-caret { font-size: 10px; opacity: .55; }
-.calendar-block .cal-today, .calendar-block .cal-setbtn, .calendar-block .cal-sumbtn {
+/* 「今天 ‹ ›」极简幽灵三连（年月保持左侧原位、两侧无箭头）：无边框、箭头淡，hover 才浮底。 */
+.calendar-block .cal-nav { display: inline-flex; align-items: center; gap: 2px; }
+.calendar-block .cal-navm {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 26px; padding: 0; border: 0; border-radius: 7px;
+  background: transparent; cursor: pointer; color: var(--text-tertiary);
+  transition: background .12s, color .12s;
+}
+.calendar-block .cal-today {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 26px; padding: 0 8px; border: 0; border-radius: 7px;
+  background: transparent; cursor: pointer; color: var(--text-secondary);
+  font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  transition: background .12s, color .12s;
+}
+.calendar-block .cal-nav .cal-navm:hover,
+.calendar-block .cal-today:hover { background: var(--bg-hover); color: var(--accent); }
+/* 右侧图标组：显示设置 · 精简模式 · 汇总事项 */
+.calendar-block .cal-setbtn, .calendar-block .cal-compactbtn, .calendar-block .cal-sumbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 27px; height: 27px; padding: 0; border: 1px solid transparent; border-radius: 7px;
   background: transparent; cursor: pointer; color: var(--text-secondary);
   transition: background .12s, color .12s;
 }
-.calendar-block .cal-today { margin-left: auto; }  /* 右侧按钮组第一个：把「回今天/设置/汇总」整体推到右边 */
-.calendar-block .cal-today:hover, .calendar-block .cal-setbtn:hover, .calendar-block .cal-sumbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
-.calendar-block .cal-sumbtn.on { color: var(--accent); }
+.calendar-block .cal-setbtn { margin-left: auto; }  /* 把右侧图标组整体推到最右 */
+.calendar-block .cal-setbtn:hover, .calendar-block .cal-compactbtn:hover, .calendar-block .cal-sumbtn:hover { background: var(--bg-tertiary); color: var(--accent); }
+.calendar-block .cal-sumbtn.on, .calendar-block .cal-compactbtn.on { color: var(--accent); }
+.calendar-block .cal-summary-ym { cursor: ns-resize; }
 
 .calendar-block .cal-pop {
   position: absolute; z-index: 40; background: var(--bg-elevated);
@@ -4893,8 +4914,10 @@ body.theme-gruvbox .md-ctx-sep {
 .calendar-block .cal-chip.sp-m:not(.done), .calendar-block .cal-chip.sp-z:not(.done) { opacity: .8; }
 .calendar-block .cal-chip.done .cal-chip-t { text-decoration: line-through; }
 .calendar-block .cal-chip-more { font-size: calc(10px * var(--cal-fs, 1)); color: var(--text-tertiary); padding: 0 4px; }
-.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip { white-space: normal; }
-.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-t { white-space: normal; overflow: visible; word-break: break-word; overflow-wrap: anywhere; }
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip { white-space: normal; align-items: flex-start; }
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-i { margin-top: calc(3px * var(--cal-fs, 1)); }
+/* 展开模式：按用户自己输入的换行断行（pre-wrap 保留 \n）；超长单行到上限再自动折行，不会无限撑宽日历。 */
+.calendar-block[data-cal-fit="1"] .cal-chips-fit .cal-chip-t { white-space: pre-wrap; overflow: visible; word-break: break-word; overflow-wrap: anywhere; max-width: 320px; }
 
 /* ===== 右侧面板：汇总/日程 分段切换 ===== */
 /* 切换条：并入置顶区、两颗软胶囊；选中用淡色底(不再用阴影，避免"突出") */
@@ -4974,7 +4997,7 @@ body.theme-gruvbox .md-ctx-sep {
 .cal-daycard .cal-addbtn:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 .cal-daycard .cal-notelist { display: flex; flex-direction: column; gap: 2px; }
 /* 方案甲·克制风：记事平时像纯文本、无边框；hover 才淡淡浮起，颜色/删除按需出现。 */
-.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 8px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: none; }
+.cal-daycard .cal-note-row { position: relative; display: flex; align-items: flex-start; gap: .5em; line-height: 1.5; padding: 2px 8px; border-radius: 7px; background: transparent; transition: background .12s; touch-action: pan-y; }
 .cal-daycard .cal-note-row:hover { background: var(--bg-tertiary); }
 .cal-daycard .cal-note-row.cal-dragging { opacity: .5; }
 /* 落点提示线：与侧栏笔记树一致的两端留白直线 */
@@ -5058,3 +5081,124 @@ body.theme-gruvbox .md-ctx-sep {
   .calendar-block { padding: 12px 10px 10px; }
   .calendar-block .cal-grid td { height: 42px; }
 }
+
+/* ===================== 应用锁 ===================== */
+/* 锁屏遮罩：默认不显示，仅当 <html> 带 applock-showing 时铺满全屏。沿用应用主题变量。 */
+.applock-overlay { display: none; }
+/* 遮罩从顶栏下方开始，不覆盖自绘顶栏——这样顶栏的窗口按钮可点、拖动区不被 no-drag 抵消，仍能拖动窗口。
+   （Chromium 的可拖动区按矩形相减计算、不看层级，遮罩若盖住顶栏就会把拖动区减没。） */
+html.applock-showing .applock-overlay {
+  display: flex; align-items: center; justify-content: center;
+  position: fixed; top: var(--titlebar-height); left: 0; right: 0; bottom: 0;
+  z-index: 100000; background: var(--bg);
+}
+/* 安装为 PWA/全屏（无自绘顶栏）时铺满，避免顶部露出内容 */
+html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
+.applock-card {
+  display: flex; flex-direction: column; align-items: center;
+  width: min(88vw, 320px); padding: 8px 4px; text-align: center;
+}
+.applock-logo { width: 56px; height: 56px; border-radius: 15px; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-tertiary); box-shadow: var(--shadow-sm); margin-bottom: 14px; font-size: 28px; line-height: 1; }
+.applock-name { font-size: 17px; font-weight: 650; color: var(--text); letter-spacing: .5px; }
+.applock-sub { font-size: 12.5px; color: var(--text-tertiary); margin-top: 5px; margin-bottom: 20px; }
+.applock-ipwrap { position: relative; width: 100%; }
+.applock-ipwrap input {
+  width: 100%; height: 42px; box-sizing: border-box;
+  padding: 0 40px 0 14px; border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--bg-tertiary); color: var(--text); font-size: 14px; outline: none;
+  transition: border-color .12s, box-shadow .12s;
+}
+.applock-ipwrap input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.applock-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: 0; background: transparent; color: var(--text-tertiary); cursor: pointer; border-radius: 7px;
+}
+.applock-eye:hover { color: var(--accent); background: var(--bg-hover); }
+.applock-err { min-height: 16px; font-size: 12px; color: var(--danger); margin: 8px 0 2px; }
+.applock-unlock {
+  width: 100%; height: 42px; margin-top: 4px; border: 0; border-radius: 10px;
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background .12s, transform .06s;
+}
+.applock-unlock:hover { background: var(--accent-hover); }
+.applock-unlock:active { transform: translateY(1px); }
+.applock-forgot { margin-top: 14px; font-size: 12.5px; color: var(--text-tertiary); cursor: pointer; }
+.applock-forgot:hover { color: var(--accent); text-decoration: underline; }
+.applock-overlay.applock-wrong .applock-card { animation: applockShake .4s; }
+@keyframes applockShake {
+  0%, 100% { transform: translateX(0); } 20% { transform: translateX(-8px); }
+  40% { transform: translateX(7px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(3px); }
+}
+
+/* 应用锁 · 小对话框 */
+.applock-dlg-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 100010;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .32);
+}
+.applock-dlg {
+  width: min(90vw, 320px); padding: 18px 18px 16px; border-radius: 14px;
+  background: var(--bg-elevated); box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+}
+.applock-dlg-t { font-size: 14.5px; font-weight: 650; color: var(--text); margin-bottom: 14px; }
+.applock-dlg-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 11px; }
+.applock-dlg-row > span { font-size: 12.5px; color: var(--text-secondary); }
+.applock-dlg-row input {
+  height: 38px; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--border-strong);
+  border-radius: 9px; background: var(--bg-tertiary); color: var(--text); font-size: 13.5px; outline: none;
+}
+.applock-dlg-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.applock-dlg-note {
+  font-size: 12px; line-height: 1.55; color: var(--text-tertiary);
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px; margin: 2px 0 12px;
+}
+.applock-dlg-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.applock-dlg-btns button { height: 34px; padding: 0 16px; border-radius: 9px; font-size: 13px; cursor: pointer; border: 1px solid var(--border-strong); }
+.applock-dlg-cancel { background: transparent; color: var(--text-secondary); }
+.applock-dlg-cancel:hover { background: var(--bg-hover); }
+.applock-dlg-ok { background: var(--accent); color: #fff; border-color: transparent; font-weight: 600; }
+.applock-dlg-ok:hover { background: var(--accent-hover); }
+
+/* 应用锁 · 轻提示 */
+.applock-note {
+  position: fixed; left: 50%; bottom: 40px;
+  transform: translateX(-50%) translateY(12px);
+  z-index: 100020; padding: 9px 16px; border-radius: 10px; font-size: 13px;
+  background: var(--bg-elevated); color: var(--text); box-shadow: var(--shadow-lg); border: 1px solid var(--border);
+  opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none;
+}
+.applock-note.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 应用锁 · 设置面板 */
+.applock-set { display: flex; flex-direction: column; margin-top: 2px; }
+.applock-row { display: flex; align-items: center; gap: 12px; min-height: 46px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.applock-row:last-child { border-bottom: 0; }
+.applock-lbl { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13.5px; color: var(--text); }
+.applock-lbl small { font-size: 12px; color: var(--text-tertiary); }
+.applock-btn {
+  flex: 0 0 auto; height: 32px; padding: 0 14px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: transparent; color: var(--text-secondary);
+}
+.applock-btn:hover { background: var(--bg-hover); color: var(--accent); }
+/* 空闲时长：数字输入框 + 「分钟」单位，样式与应用里其它输入框一致（不用原生下拉，避免观感割裂） */
+.applock-num { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.applock-num-u { font-size: 12.5px; color: var(--text-tertiary); white-space: nowrap; }
+.modal-body .applock-num-i, .applock-num-i {
+  width: 66px; height: 32px; box-sizing: border-box; margin-top: 0; padding: 0 8px;
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--bg-tertiary); color: var(--text); font-size: 13px; text-align: center;
+  outline: none; transition: border-color .12s, box-shadow .12s;
+}
+.modal-body .applock-num-i:focus, .applock-num-i:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); background: var(--bg); }
+.applock-hint { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text-tertiary); }
+.applock-kbd { display: inline-block; min-width: 20px; padding: 2px 6px; border-radius: 6px; font-size: 11.5px; text-align: center;
+  background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); }
+/* 开关（沿用应用其它开关观感的简版） */
+.applock-sw { flex: none; position: relative; width: 40px; height: 22px; border-radius: 11px; background: var(--border-strong); cursor: pointer; transition: background .15s; }
+.applock-sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-sm); transition: left .15s; }
+.applock-sw.on { background: var(--accent); }
+.applock-sw.on::after { left: 20px; }
+.applock-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

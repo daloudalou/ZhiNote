@@ -179,6 +179,8 @@ async function bootstrap() {
     const _dot = document.getElementById('cloud-sync-dot');
     if (_dot) _dot.style.display = 'none';
   }
+  // 应用锁：在页面可见前先挂上锁屏，避免冷启动闪出内容
+  try { window.appLock && window.appLock.init(); } catch (_) {}
   // 显示页面（防止闪白）
   requestAnimationFrame(() => document.body.classList.add('app-ready'));
 
@@ -1163,6 +1165,12 @@ function _isNonEditorTextTarget() {
 
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && !e.altKey && !e.shiftKey && (e.key === 'l' || e.key === 'L' || e.code === 'KeyL')) {
+    // 立即上锁（应用锁开启时才生效）
+    e.preventDefault();
+    try { window.appLock && window.appLock.lock(); } catch (_) {}
+    return;
+  }
   if (ctrl && (e.key === 'a' || e.key === 'A') && !e.shiftKey) {
     // 源码只读视图打开时：让原生全选作用于源码文本，不抢给编辑器
     if (editor.isMarkdownSourceOpen?.()) return;
@@ -4180,7 +4188,11 @@ function handleQuickerMessage(msg) {
   switch (msg.type) {
     case 'show':
       document.body.style.visibility = 'visible';
-      setTimeout(() => editor.focus(), 50);
+      setTimeout(() => {
+        // 锁屏中：焦点归还密码框，别被编辑器抢走（否则看到锁屏却打不了字）
+        if (window.appLock && window.appLock.isLocked()) window.appLock.focusInput();
+        else editor.focus();
+      }, 50);
       break;
     case 'reload':
       storage.init().then(() => { tree.render(); editor.reloadCurrent(); updateTrashBadge(); });
@@ -4549,6 +4561,8 @@ function renderAboutWebQr(box) {
 }
 
 async function requestHideWindow() {
+  // 点叉即锁：先挂上锁屏再隐藏，避免下次显示时被抢在锁屏前看到内容
+  try { window.appLock && window.appLock.lock(); } catch (_) {}
   editor.flushSave();
   if (storage.isQuicker()) {
     const method = storage.getSetting('syncMethod') || 'none';
@@ -5689,7 +5703,7 @@ function openSettingsModal(initialTab) {
   const curLineHeight = storage.getSetting('lineHeight') || 1.5;
   const curPadding = storage.getSetting('editorPadding') || 1;
   let lastTab = (typeof initialTab === 'string' && initialTab) || localStorage.getItem('zhinote-settings-tab') || 'appearance';
-  if (!['appearance', 'sync', 'backup', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
+  if (!['appearance', 'sync', 'backup', 'applock', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
   const curSyncMethod = storage.getSetting('syncMethod') || 'none';
   const curProvider = storage.getSetting('webdavProvider') || 'jianguoyun';
   // 实验：正文实时绑定开关（存 localStorage，编辑器在 storage.init 前就要读，故不用普通设置）
@@ -5699,6 +5713,7 @@ function openSettingsModal(initialTab) {
       <button type="button" class="settings-tabs-btn ${lastTab==='appearance'?'active':''}" data-tab="appearance">外观</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='sync'?'active':''}" data-tab="sync">同步</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='backup'?'active':''}" data-tab="backup">本地</button>
+      <button type="button" class="settings-tabs-btn ${lastTab==='applock'?'active':''}" data-tab="applock">应用锁</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='shortcuts'?'active':''}" data-tab="shortcuts">${window.matchMedia('(pointer: coarse)').matches ? '手势' : '快捷键'}</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='about'?'active':''}" data-tab="about">关于</button>
     </div>
@@ -5977,6 +5992,7 @@ function openSettingsModal(initialTab) {
         <div id="backup-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
       </div>
     </div>
+    <div id="settings-tab-applock" class="${lastTab!=='applock'?'settings-tab-hidden':''}"></div>
     <div id="settings-tab-shortcuts" class="${lastTab!=='shortcuts'?'settings-tab-hidden':''}">
       ${(() => {
         const groups = [
@@ -6360,7 +6376,8 @@ function openSettingsModal(initialTab) {
   });
 
   // ========== 顶级标签页切换（外观 / 同步）==========
-  const SETTINGS_TAB_ORDER = ['appearance', 'sync', 'backup', 'shortcuts', 'about'];
+  const SETTINGS_TAB_ORDER = ['appearance', 'sync', 'backup', 'applock', 'shortcuts', 'about'];
+  try { window.appLock && window.appLock.mountSettings(body.querySelector('#settings-tab-applock')); } catch (_) {}
   function activateSettingsTab(tab) {
     if (!SETTINGS_TAB_ORDER.includes(tab)) return;
     body.querySelectorAll('#settings-tab-seg .settings-tabs-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -7613,6 +7630,8 @@ function initEditorContextMenu() {
       return;
     }
 
+    const calHit = e.target.closest('[data-calendar-block]');
+
     e.preventDefault();
     document.querySelectorAll('.md-editor-ctx').forEach(m => m.remove());
     window.setBubbleSuppressed?.(true);
@@ -7671,7 +7690,32 @@ function initEditorContextMenu() {
       { label: '返回渲染', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>', action: () => editor.toggleMarkdownSource?.(false) },
       { label: '复制全部 Markdown', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: () => { try { const md = editor.getValue?.() || ''; navigator.clipboard?.writeText(md); } catch (_) {} } },
     ];
-    const items = inSource ? _srcMenuItems : [
+    // 日历专属右键菜单：复制原代码可粘贴迁移、复制纯文本、回到今天、精简显示、删除。
+    // 需要日历内部状态的动作(今天/精简/复制)派发事件给日历外壳(calendar.js 处理)；删除走编辑器命令。
+    const _calCmd = (cmd) => { try { calHit.dispatchEvent(new CustomEvent('zhinote:cal-cmd', { detail: { cmd } })); } catch (_) {} };
+    const _calDelete = () => {
+      const inst = editor.instance?.(); if (!inst) return;
+      const sel = inst.state.selection;
+      if (sel.node && sel.node.type.name === 'calendarBlock') { inst.chain().focus().deleteSelection().run(); return; }
+      try {
+        const pos = inst.view.posAtDOM(calHit, 0);
+        const $p = inst.state.doc.resolve(pos);
+        for (let d = $p.depth; d >= 0; d--) {
+          if ($p.node(d).type.name === 'calendarBlock') { const p2 = $p.before(d), n = $p.node(d); inst.chain().focus().deleteRange({ from: p2, to: p2 + n.nodeSize }).run(); return; }
+        }
+      } catch (_) {}
+    };
+    const _calMenuItems = [
+      { label: '复制日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>', title: '复制为可粘贴的日历代码，粘到别处会自动还原成日历', action: () => _calCmd('copySource') },
+      { label: '复制汇总', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>', action: () => _calCmd('copyText') },
+      { sep: true },
+      { label: '回到今天', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><circle cx="12" cy="14.5" r="1.8" fill="currentColor" stroke="none"/></svg>', action: () => _calCmd('today') },
+      { label: '精简显示', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5.5" width="17" height="13" rx="4"/><line x1="7" y1="10" x2="17" y2="10"/><line x1="7" y1="14" x2="14" y2="14"/></svg>', action: () => _calCmd('compact') },
+      { sep: true },
+      { label: '删除日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: _calDelete },
+    ];
+
+    const items = calHit ? _calMenuItems : inSource ? _srcMenuItems : [
       ...(_inCodeBlock && _codeWrapper?._toggleFold ? [{ label: _codeWrapper.classList.contains('code-block-folded') ? '展开代码块' : '折叠代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => { _codeWrapper._toggleFold(); } }] : []),
       ...(_inCodeBlock && _codeWrapper ? [{ label: '复制全部代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>', action: () => { const code = _codeWrapper.querySelector('code'); if (code) navigator.clipboard?.writeText(code.textContent || ''); } }, { label: '删除代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: () => { const inst = editor.instance(); if (!inst) return; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const pos = $from.before(d); const node = $from.node(d); inst.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run(); break; } } } }, { sep: true }] : []),
       { label: '复制', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: _copyAction },
