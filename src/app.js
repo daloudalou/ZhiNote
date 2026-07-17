@@ -3629,10 +3629,13 @@ function toggleEmojiPicker(anchorEl) {
   }, 0);
 }
 
+let _modeBarHideTimer = null;
 function refreshEditorModeBar() {
   const bar = document.getElementById('editor-mode-bar');
   document.querySelector('.focus-float-hint')?.remove();
   if (!bar) return;
+  if (_modeBarHideTimer) { clearTimeout(_modeBarHideTimer); _modeBarHideTimer = null; }
+  bar.classList.remove('mode-bar-fade');
   bar.style.pointerEvents = '';
   let msg = '';
   if (document.body.classList.contains('sync-protection-mode')) {
@@ -3664,6 +3667,12 @@ function refreshEditorModeBar() {
   if (msg) {
     bar.textContent = msg;
     bar.classList.remove('hidden');
+    // 信息型提示（阅读/挖空模式）：短暂显示后淡出，避免长期压住标题文字；
+    // 模式状态由工具栏对应按钮的高亮持续指示，不靠这行提示常驻。
+    _modeBarHideTimer = setTimeout(() => {
+      bar.classList.add('mode-bar-fade');
+      _modeBarHideTimer = setTimeout(() => { bar.classList.add('hidden'); bar.classList.remove('mode-bar-fade'); }, 450);
+    }, 1000);
   } else {
     bar.textContent = '';
     bar.classList.add('hidden');

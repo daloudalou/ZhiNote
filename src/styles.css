@@ -1250,11 +1250,13 @@ body.theme-dark ::highlight(md-search-current) {
   border-radius: 999px;
   -webkit-app-region: no-drag;
   animation: editorModeBarIn 0.12s ease;
+  transition: opacity 0.45s ease;
   white-space: nowrap;
   pointer-events: none;
   z-index: 5;
 }
 .editor-mode-bar.hidden { display: none !important; }
+.editor-mode-bar.mode-bar-fade { opacity: 0; }
 @keyframes editorModeBarIn {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.95); }
   to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
