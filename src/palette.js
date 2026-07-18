@@ -29,6 +29,8 @@ const palette = (() => {
     { id: 'cmd-toggle-sidebar', label: '切换侧边栏', kbd: 'Ctrl+\\', icon: '⊟', run: () => window.toggleSidebar?.() },
     { id: 'cmd-trash', label: '打开回收站', icon: '🗑', run: () => tree.showTrash() },
     { id: 'cmd-templates', label: '管理模板', icon: '⌗', run: () => template.openManager() },
+    { id: 'cmd-mascot', label: '问小枝（AI 助手）', kbd: 'Alt+A', icon: '🌱', run: () => { try { window.mascot && window.mascot.openPanel(); } catch (_) {} } },
+    { id: 'cmd-mascot-block', label: '插入小枝对话块', icon: '💬', run: () => { try { window.mascot && window.mascot.insertChatBlock('', ''); } catch (_) {} } },
     { id: 'cmd-export', label: '导出为 Markdown 文件夹', icon: '⇣', run: () => window.requestExport?.() },
     { id: 'cmd-import', label: '从 Markdown 文件夹导入', icon: '⇡', run: () => window.requestImport?.() },
     { id: 'cmd-collapse', label: '折叠所有笔记节点', icon: '◢', run: () => { tree.collapseAllAnimated(); } },

@@ -181,6 +181,8 @@ async function bootstrap() {
   }
   // 应用锁：在页面可见前先挂上锁屏，避免冷启动闪出内容
   try { window.appLock && window.appLock.init(); } catch (_) {}
+  // 小枝 AI 助手形象
+  try { window.mascot && window.mascot.init(); } catch (_) {}
   // 显示页面（防止闪白）
   requestAnimationFrame(() => document.body.classList.add('app-ready'));
 
@@ -1165,6 +1167,18 @@ function _isNonEditorTextTarget() {
 
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
+  if (!ctrl && e.altKey && !e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
+    // 唤出 / 收起小枝
+    e.preventDefault();
+    try { window.mascot && window.mascot.toggle(); } catch (_) {}
+    return;
+  }
+  if (!ctrl && e.altKey && e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
+    // 常驻小枝显示/隐藏
+    e.preventDefault();
+    try { window.mascot && window.mascot.toggleResident(); } catch (_) {}
+    return;
+  }
   if (ctrl && !e.altKey && !e.shiftKey && (e.key === 'l' || e.key === 'L' || e.code === 'KeyL')) {
     // 立即上锁（应用锁开启时才生效）
     e.preventDefault();
@@ -5712,21 +5726,24 @@ function openSettingsModal(initialTab) {
   const curLineHeight = storage.getSetting('lineHeight') || 1.5;
   const curPadding = storage.getSetting('editorPadding') || 1;
   let lastTab = (typeof initialTab === 'string' && initialTab) || localStorage.getItem('zhinote-settings-tab') || 'appearance';
-  if (!['appearance', 'sync', 'backup', 'applock', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
+  if (!['appearance', 'sync', 'backup', 'applock', 'mascot', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
   const curSyncMethod = storage.getSetting('syncMethod') || 'none';
   const curProvider = storage.getSetting('webdavProvider') || 'jianguoyun';
   // 实验：正文实时绑定开关（存 localStorage，编辑器在 storage.init 前就要读，故不用普通设置）
   const _crdtBindOn = (function(){ try { const v = localStorage.getItem('zhinote.crdtBindEditor'); return v == null ? true : (v === '1' || v === 'true'); } catch (_) { return true; } })();
   body.innerHTML = `
+    <div class="settings-vnav-wrap">
     <div class="settings-tabs" role="tablist" id="settings-tab-seg">
       <button type="button" class="settings-tabs-btn ${lastTab==='appearance'?'active':''}" data-tab="appearance">外观</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='sync'?'active':''}" data-tab="sync">同步</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='backup'?'active':''}" data-tab="backup">本地</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='applock'?'active':''}" data-tab="applock">应用锁</button>
+      <button type="button" class="settings-tabs-btn ${lastTab==='mascot'?'active':''}" data-tab="mascot">小枝</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='shortcuts'?'active':''}" data-tab="shortcuts">${window.matchMedia('(pointer: coarse)').matches ? '手势' : '快捷键'}</button>
       <button type="button" class="settings-tabs-btn ${lastTab==='about'?'active':''}" data-tab="about">关于</button>
     </div>
 
+    <div class="settings-panes" id="settings-panes">
     <div id="settings-tab-appearance" class="${lastTab!=='appearance'?'settings-tab-hidden':''}">
     <div class="settings-section">主题</div>
     <div id="set-theme-grid" class="theme-chips">
@@ -5861,10 +5878,10 @@ function openSettingsModal(initialTab) {
     <label>服务器地址</label>
     <input type="text" id="set-webdav-url" placeholder="https://dav.jianguoyun.com/dav/" value="${escapeHtml(storage.getSetting('webdavUrl')||'')}" style="width:100%;">
     <label>用户名</label>
-    <input type="text" id="set-webdav-user" placeholder="邮箱或用户名" value="${escapeHtml(storage.getSetting('webdavUser')||'')}" style="width:100%;">
+    <input type="text" id="set-webdav-user" placeholder="邮箱或用户名" autocomplete="off" value="${escapeHtml(storage.getSetting('webdavUser')||'')}" style="width:100%;">
     <label>密码</label>
     <div class="pass-input-wrap" style="position:relative;">
-      <input type="password" id="set-webdav-pass" placeholder="应用专用密码" style="width:100%;padding-right:36px;">
+      <input type="password" id="set-webdav-pass" placeholder="应用专用密码" autocomplete="new-password" style="width:100%;padding-right:36px;">
       <button type="button" id="set-webdav-pass-eye" class="pass-eye-btn" title="显示/隐藏密码">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
       </button>
@@ -5875,7 +5892,7 @@ function openSettingsModal(initialTab) {
     </details>
     <label style="margin-top:14px;">加密口令（可选）</label>
     <div class="pass-input-wrap" style="position:relative;">
-      <input type="password" id="set-webdav-crypto-pass" placeholder="留空使用内置默认口令" value="${escapeHtml(storage.getSetting('webdavCryptoPass')||'')}" style="width:100%;padding-right:36px;">
+      <input type="password" id="set-webdav-crypto-pass" placeholder="留空使用内置默认口令" autocomplete="new-password" value="${escapeHtml(storage.getSetting('webdavCryptoPass')||'')}" style="width:100%;padding-right:36px;">
       <button type="button" id="set-webdav-crypto-eye" class="pass-eye-btn" title="显示/隐藏口令">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
       </button>
@@ -6002,6 +6019,7 @@ function openSettingsModal(initialTab) {
       </div>
     </div>
     <div id="settings-tab-applock" class="${lastTab!=='applock'?'settings-tab-hidden':''}"></div>
+    <div id="settings-tab-mascot" class="${lastTab!=='mascot'?'settings-tab-hidden':''}"></div>
     <div id="settings-tab-shortcuts" class="${lastTab!=='shortcuts'?'settings-tab-hidden':''}">
       ${(() => {
         const groups = [
@@ -6159,6 +6177,8 @@ function openSettingsModal(initialTab) {
         </div>
       </div>
     </div>
+    </div>
+    </div>
   `;
 
   openModal({
@@ -6242,6 +6262,19 @@ function openSettingsModal(initialTab) {
           }
         }
 
+        // 密码是否真的改了：不能只看「≠ 打开设置时的初值」——网页端浏览器会自动回填密码框
+        // （回填时机晚于初值捕获），导致改任何别的设置（如应用锁）点保存都被误判成改了密码、
+        // 弹出同步策略窗（用户实测反馈）。回填的值与已保存密码一致时视为没改。
+        let effPassChanged = !!(newPass && newPass !== _initialPassValue);
+        if (effPassChanged) {
+          try {
+            const savedEnc = storage.getSetting('webdav_' + selectedMethod + '_pass') || storage.getSetting('webdavPass') || '';
+            if (savedEnc && window.webdavSync?.aesDecrypt) {
+              const savedPlain = await window.webdavSync.aesDecrypt(savedEnc).catch(() => null);
+              if (savedPlain != null && savedPlain === newPass) effPassChanged = false;
+            }
+          } catch (_) {}
+        }
         const syncChanged = (() => {
           if (selectedMethod === 'none') return curSyncMethod !== 'none';
           if (curSyncMethod !== 'webdav') return true;
@@ -6250,7 +6283,7 @@ function openSettingsModal(initialTab) {
           const savedUrl = storage.getSetting('webdavUrl') || '';
           const savedUser = storage.getSetting('webdavUser') || '';
           if (newUrl !== savedUrl || newUser !== savedUser) return true;
-          if (newPass && newPass !== _initialPassValue) return true;
+          if (effPassChanged) return true;
           return false;
         })();
         // 同步未启用时改口令：无云端密文可换，静默保存即可（启用同步后自动生效）
@@ -6265,7 +6298,7 @@ function openSettingsModal(initialTab) {
         const passOnlyChange = cryptoPassChanged && curSyncMethod === 'webdav' && selectedMethod === curProvider
           && newUrl === (storage.getSetting('webdavUrl') || '')
           && newUser === (storage.getSetting('webdavUser') || '')
-          && !(newPass && newPass !== _initialPassValue);
+          && !effPassChanged;
         if (passOnlyChange) {
           const oldCryptoPass = storage.getSetting('webdavCryptoPass') || '';
           try {
@@ -6308,6 +6341,7 @@ function openSettingsModal(initialTab) {
               await storage.switchSyncMethod('none', {});
               toast('已关闭云同步', 'info');
               _setCloudSyncDot('disabled');
+              try { window.realtime?.applyConfig(); } catch (_) {} // 网盘没了 → 即时同步一并断开
             } catch (e) {
               toast('关闭同步失败：' + _zhSyncError(e?.message || e), 'error');
               return;
@@ -6370,6 +6404,9 @@ function openSettingsModal(initialTab) {
               await window.webdavSync.startAutoSync();
               toast(`已保存并切换到 ${providerName} 同步`, 'success');
             }
+            // 账号（服务商/地址/用户名）变了 → 即时同步房间号随之变化，必须立刻换房重连；
+            // 否则沿用旧房间，会和还在旧服务商的设备继续「即时同步」（用户实测：A 坚果云 B Koofr 仍亮紫点）。
+            try { window.realtime?.applyConfig(); } catch (_) {}
           } catch (e) {
             toast(`${providerName} 切换失败：` + e.message, 'error');
             return;
@@ -6385,8 +6422,9 @@ function openSettingsModal(initialTab) {
   });
 
   // ========== 顶级标签页切换（外观 / 同步）==========
-  const SETTINGS_TAB_ORDER = ['appearance', 'sync', 'backup', 'applock', 'shortcuts', 'about'];
+  const SETTINGS_TAB_ORDER = ['appearance', 'sync', 'backup', 'applock', 'mascot', 'shortcuts', 'about'];
   try { window.appLock && window.appLock.mountSettings(body.querySelector('#settings-tab-applock')); } catch (_) {}
+  try { window.mascot && window.mascot.mountSettings(body.querySelector('#settings-tab-mascot')); } catch (_) {}
   function activateSettingsTab(tab) {
     if (!SETTINGS_TAB_ORDER.includes(tab)) return;
     body.querySelectorAll('#settings-tab-seg .settings-tabs-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -7640,6 +7678,9 @@ function initEditorContextMenu() {
     }
 
     const calHit = e.target.closest('[data-calendar-block]');
+    const zcHit = e.target.closest('[data-zhichat-block]');
+    // 对话块的输入框里让位给系统输入菜单（粘贴等）
+    if (zcHit && e.target.closest('.zc-ask')) return;
 
     e.preventDefault();
     document.querySelectorAll('.md-editor-ctx').forEach(m => m.remove());
@@ -7724,7 +7765,60 @@ function initEditorContextMenu() {
       { label: '删除日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: _calDelete },
     ];
 
-    const items = calHit ? _calMenuItems : inSource ? _srcMenuItems : [
+    // 小枝对话块专属右键菜单：内部状态动作派发事件给块（mascot.js 处理），转正文/删除走编辑器。
+    const _zcCmd = (cmd) => { try { zcHit.dispatchEvent(new CustomEvent('zhinote:zc-cmd', { detail: { cmd } })); } catch (_) {} };
+    const _zcNodeRange = () => {
+      const inst = editor.instance?.(); if (!inst) return null;
+      const sel = inst.state.selection;
+      if (sel.node && sel.node.type.name === 'zhichatBlock') return { inst, from: sel.from, to: sel.to, node: sel.node };
+      try {
+        const pos = inst.view.posAtDOM(zcHit, 0);
+        const $p = inst.state.doc.resolve(pos);
+        for (let d = $p.depth; d >= 0; d--) {
+          if ($p.node(d).type.name === 'zhichatBlock') { const p2 = $p.before(d), n = $p.node(d); return { inst, from: p2, to: p2 + n.nodeSize, node: n }; }
+        }
+        // atom 节点 posAtDOM 可能直接落在节点位置上
+        const n2 = inst.state.doc.nodeAt(pos);
+        if (n2 && n2.type.name === 'zhichatBlock') return { inst, from: pos, to: pos + n2.nodeSize, node: n2 };
+      } catch (_) {}
+      return null;
+    };
+    const _zcToText = () => {
+      const r = _zcNodeRange(); if (!r) return;
+      let items2 = [];
+      try { items2 = (JSON.parse(r.node.attrs.data || '{}').items) || []; } catch (_) {}
+      const md = items2.map(it => `**问：${(it.q || '').trim()}**\n\n${(it.a || '').trim()}`).join('\n\n');
+      r.inst.chain().focus().deleteRange({ from: r.from, to: r.to }).run();
+      r.inst.commands.setTextSelection(r.from);
+      if (md) editor.pasteText(md);
+    };
+    const _zcDelete = () => { const r = _zcNodeRange(); if (r) r.inst.chain().focus().deleteRange({ from: r.from, to: r.to }).run(); };
+    const _zcOpen = zcHit && zcHit.classList.contains('zc-open');
+    const _zcMenuItems = [
+      { label: _zcOpen ? '折叠' : '展开', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => _zcCmd('toggle') },
+      { sep: true },
+      { label: '复制问答', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>', title: '复制为纯文本（问答对）', action: () => _zcCmd('copyText') },
+      { label: '复制对话块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></svg>', title: '复制为可粘贴的代码，粘到别处自动还原成对话块', action: () => _zcCmd('copySource') },
+      { label: '转为正文', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg>', title: '把问答变成普通笔记文字，替换掉对话块', action: _zcToText },
+      { sep: true },
+      { label: '小枝设置', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', action: () => { try { openSettingsModal('mascot'); } catch (_) {} } },
+      { sep: true },
+      { label: '删除对话块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: _zcDelete },
+    ];
+
+    // 选中了文字且小枝开启 → 菜单顶部给一个「问小枝」子菜单（只这一项，不铺开占位）
+    const _selForAI = (() => { try { const s = editor.instance?.().state.selection; return s && !s.empty; } catch (_) { return false; } })();
+    const _aiMenu = (_selForAI && window.mascot?.isEnabled?.() && window.aiChat) ? [{
+      label: '问小枝', icon: '🌱',
+      submenu: [
+        { label: '问一问（带上选中内容）', action: () => window.mascot.askSelection('ask') },
+        { sep: true },
+        ...window.aiChat.ACTIONS.map(a => ({ label: a.emoji + ' ' + a.label, action: () => window.mascot.askSelection(a.id) })),
+      ],
+    }, { sep: true }] : [];
+
+    const items = zcHit ? _zcMenuItems : calHit ? _calMenuItems : inSource ? _srcMenuItems : [
+      ..._aiMenu,
       ...(_inCodeBlock && _codeWrapper?._toggleFold ? [{ label: _codeWrapper.classList.contains('code-block-folded') ? '展开代码块' : '折叠代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => { _codeWrapper._toggleFold(); } }] : []),
       ...(_inCodeBlock && _codeWrapper ? [{ label: '复制全部代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>', action: () => { const code = _codeWrapper.querySelector('code'); if (code) navigator.clipboard?.writeText(code.textContent || ''); } }, { label: '删除代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: () => { const inst = editor.instance(); if (!inst) return; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const pos = $from.before(d); const node = $from.node(d); inst.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run(); break; } } } }, { sep: true }] : []),
       { label: '复制', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg>', action: _copyAction },

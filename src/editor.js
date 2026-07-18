@@ -236,6 +236,82 @@ const CalendarBlock = Node.create({
 });
 
 /**
+ * ZhichatBlock — 小枝 AI 对话块（可折叠，含「继续问」）。
+ * 架构与 CalendarBlock 完全一致：atom 节点只存一个 data 字符串（JSON），
+ * 序列化为 ```zhichat 围栏（见 CustomCodeBlock.parseMarkdown 的还原分支），
+ * UI 与 AI 调用全部委托给 mascot.js 的 window.mascot.mountChatBlock。
+ * 流式回复只发生在 NodeView 的显示层，答完才通过 onChange 一次性写回文档，
+ * 因此不污染撤销历史、同步也只看到一次改动。
+ */
+const ZhichatBlock = Node.create({
+  name: 'zhichatBlock',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+  addAttributes() {
+    return { data: { default: '{}' } };
+  },
+  parseHTML() {
+    return [{ tag: 'div[data-zhichat-block]', getAttrs: el => ({ data: el.getAttribute('data-zc') || '{}' }) }];
+  },
+  renderHTML({ node }) {
+    return ['div', { 'data-zhichat-block': '', 'data-zc': (node.attrs && node.attrs.data) || '{}', class: 'zhichat-block' }];
+  },
+  renderMarkdown(node) {
+    const data = (node.attrs && node.attrs.data) || '{}';
+    return '```zhichat\n' + data + '\n```';
+  },
+  addNodeView() {
+    return ({ node, getPos, editor: ed }) => {
+      const dom = document.createElement('div');
+      dom.className = 'zc-shell';
+      dom.setAttribute('data-zhichat-block', '');
+      dom.contentEditable = 'false';
+      dom.addEventListener('dragstart', (e) => e.preventDefault());
+      dom.addEventListener('mousedown', (e) => {
+        if (e.button === 2) {
+          const p = getPos();
+          if (typeof p === 'number') ed.commands.setNodeSelection(p);
+        }
+      });
+      let ctrl = null;
+      if (window.mascot && typeof window.mascot.mountChatBlock === 'function') {
+        ctrl = window.mascot.mountChatBlock(dom, (node.attrs && node.attrs.data) || '{}', (newData) => {
+          const p = getPos();
+          if (typeof p !== 'number') return;
+          ed.chain().command(({ tr }) => {
+            tr.setNodeMarkup(p, undefined, { data: newData });
+            return true;
+          }).run();
+        }, () => {
+          // 空块自删（@ 插入后没提问就离开/Esc）
+          const p = getPos();
+          if (typeof p !== 'number') return;
+          ed.chain().command(({ tr }) => {
+            tr.delete(p, p + 1);
+            return true;
+          }).focus().run();
+        });
+      } else {
+        dom.textContent = '[小枝对话]';
+      }
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'zhichatBlock') return false;
+          if (ctrl && ctrl.update) ctrl.update((updated.attrs && updated.attrs.data) || '{}');
+          return true;
+        },
+        destroy() { if (ctrl && ctrl.destroy) ctrl.destroy(); },
+        ignoreMutation() { return true; },
+        stopEvent() { return true; },
+      };
+    };
+  },
+});
+
+/**
  * CustomTable — 表格序列化为 HTML（而非有损的 GFM 管道表格）
  *
  * 背景：默认 Markdown 序列化把表格转成 GFM，会丢失列宽(colwidth)、
@@ -630,6 +706,10 @@ const CustomCodeBlock = CodeBlock.extend({
     // ```calendar 围栏 → 日历块节点（正文即规范 JSON 串），而非普通代码块。
     if (language === 'calendar') {
       return helpers.createNode('calendarBlock', { data: (token.text || '').trim() || '{}' });
+    }
+    // ```zhichat 围栏 → 小枝对话块（同上）。
+    if (language === 'zhichat') {
+      return helpers.createNode('zhichatBlock', { data: (token.text || '').trim() || '{}' });
     }
     return helpers.createNode(
       'codeBlock',
@@ -1266,6 +1346,13 @@ const editor = (() => {
       _editor.chain().focus().insertContent({ type: 'calendarBlock', attrs: { data } }).run();
       return;
     }
+    // 同理：粘贴 ```zhichat 围栏 → 还原成小枝对话块
+    const _zcFence = text.match(/^\uFEFF?\s*```zhichat[^\n]*\n([\s\S]*?)\r?\n?```\s*$/);
+    if (_zcFence) {
+      const data = (_zcFence[1] || '').trim() || '{}';
+      _editor.chain().focus().insertContent({ type: 'zhichatBlock', attrs: { data } }).run();
+      return;
+    }
     const processed = preprocessMathMarkdown(text);
     const marked = _editor.storage?.markdown?.manager?.markedInstance;
     let parsedHtml = '';
@@ -1408,6 +1495,7 @@ const editor = (() => {
         MathInline,
         MathBlock,
         CalendarBlock,
+        ZhichatBlock,
         // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
         // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
         // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
@@ -1829,7 +1917,10 @@ const editor = (() => {
         if (!btn) return;
         const cmd = btn.dataset.cmd;
         // 触屏点格式按钮是排版而非打字：execCommand 内 .chain().focus() 会聚焦编辑器（键盘交给浏览器）。
-        if (cmd === 'copySelection') {
+        if (cmd === 'askMascot') {
+          // 带着选中文字唤小枝（面板里立刻出现 润色/翻译/总结 快捷动作）
+          try { window.mascot?.askSelection('ask'); } catch (_) {}
+        } else if (cmd === 'copySelection') {
           document.execCommand('copy');
         } else if (cmd === 'setHighlight') {
           const color = btn.dataset.color || '';
