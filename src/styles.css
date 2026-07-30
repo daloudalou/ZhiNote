@@ -5253,15 +5253,27 @@ html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
 #mascot-root.mascot-visible .mascot-avatar { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
 .mascot-avatar:hover { transform: translateY(-2px) scale(1.06); }
 .mascot-avatar:active { transform: scale(0.94); }
-/* 漂浮动画只挂外层 fallback 一层：动图盒是它的子元素、跟着一起浮。
-   曾经两层都挂 mascotFloat（本规则曾同时命中二者）→ 动图插入瞬间从零相位再浮一遍，
-   与外层错拍叠加 = 用户报的"抽搐闪烁"（20260730 实测取证）。 */
+/* 漂浮只挂 fallback 一层；内部双层叠放：.mascot-base 底图、.mascot-fx 动图盖上（播完只拆上层）。 */
 .mascot-avatar .mascot-fallback {
-  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  position: relative; width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
   font-size: 38px; line-height: 1;
   animation: mascotFloat 3.6s ease-in-out infinite;
 }
-/* 动图与静态矢量图同尺寸（38px = fallback 字号的 1em）：开演/收场不再一大一小跳变 */
+/* 演动图：硬切独占（无交叉淡变）。同时淡变会让「静态矢量」和「动图首/末帧」叠半拍 → 起止闪一下。
+   动图 DOM 就绪后再加 is-playing，同一帧底隐、动显，任意时刻只一层。 */
+.mascot-avatar .mascot-base {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  font-size: 38px; line-height: 1;
+}
+.mascot-avatar .mascot-fx {
+  position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none; opacity: 0; visibility: hidden;
+}
+.mascot-avatar .mascot-fallback.is-playing .mascot-base { opacity: 0; visibility: hidden; }
+.mascot-avatar .mascot-fallback.is-playing .mascot-fx { opacity: 1; visibility: visible; }
+/* 动图与静态矢量图同尺寸（38px） */
 .mascot-avatar .mascot-lottie { width: 38px; height: 38px; }
 .mascot-avatar .mascot-lottie svg { display: block; }
 @keyframes mascotFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }

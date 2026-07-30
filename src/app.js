@@ -42,7 +42,7 @@ async function bootstrap() {
   // 显眼的版本水印——在控制台第一行就能看到，确认 cache 是否刷新
   // 这行是「当前跑的是哪一次构建」的唯一可靠标记（__MD_VER__ 打包后恒为 vX.Y.Z-dev 分不出轮次）。
   // 每轮改动随 index.html 的 ?v= 一起更新，否则没法判断 Quicker 常驻窗口里跑的是不是新包。
-  console.log('%c[ZhiNote] build 20260730t6 ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
+  console.log('%c[ZhiNote] build 20260730t10 ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
   console.log('[ZhiNote] 调试开关：在控制台运行 window.__MD_DEBUG__=true 后再输入 / 或 ;; 可看判定过程');
 
   // 宿主标记：非 Quicker 宿主（浏览器/PWA）→ body.host-web，CSS 据此隐藏窗口控制等桌面专属 UI。

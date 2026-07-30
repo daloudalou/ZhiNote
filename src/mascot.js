@@ -154,10 +154,11 @@
       + '</div>'
       + '</div>'
       + '<button type="button" class="mascot-avatar" id="mascot-avatar" aria-label="小枝">' // 不放 title：原生提示框会遮住碎碎念气泡
-      + '<span class="mascot-fallback">' + avatarGlyph() + '</span></button>';
+      // 双层：.mascot-base 永远是完整矢量图；.mascot-fx 叠放动图，播完只清上层、底图不动（防 ZWJ 表情拆开闪烁）
+      + '<span class="mascot-fallback"><span class="mascot-base"></span><span class="mascot-fx" aria-hidden="true"></span></span></button>';
     _avatar = _root.querySelector('#mascot-avatar');
     _panel = _root.querySelector('#mascot-panel');
-    renderAvatar(_avatar.querySelector('.mascot-fallback')); // 静态字形 → 谷歌矢量图（防空框）
+    renderAvatar(_avatar.querySelector('.mascot-base'));
     _avatar.addEventListener('click', function () {
       if (_dragMoved) { _dragMoved = false; return; } // 刚拖完松手的那下不算点击
       var opening = !_panelOpen;
@@ -371,18 +372,32 @@
     }
     return _cpByChar[ch] || _cpByChar[String(ch).replace(/\uFE0F/g, '')] || '';
   }
-  /** 把当前常驻形象画进元素：优先谷歌矢量图（防空框），不在动图集/离线/加载失败就停在系统字形 */
+  /** 把当前常驻形象画进 .mascot-base：优先谷歌矢量图。
+   *  含连接符的复合表情（如藏云脸）绝不先写系统文字——会拆成黄脸+雾；等整图就绪再挂上。
+   *  已是同一张图则不动，避免表演结束时无意义重绘。 */
   function renderAvatar(el) {
     if (!el) return;
     var ch = avatarGlyph(), cp = notoCp(ch);
-    el.textContent = ch;
-    if (!cp) return;
+    if (!cp) {
+      el.textContent = ch; // 不在动图集：只能系统字形（多为单段）
+      return;
+    }
+    var url = EMO_HOST + cp + '/emoji.svg';
+    var existing = el.querySelector('img.mascot-avaimg');
+    if (existing && existing.getAttribute('data-cp') === cp) return;
+    var isZwj = cp.split(/[-_]/).indexOf('200d') >= 0;
     var img = new Image();
     img.className = 'mascot-avaimg';
-    img.alt = ch; img.draggable = false;
-    img.onload = function () { if (el.isConnected && el.textContent === ch) { el.textContent = ''; el.appendChild(img); } };
-    img.src = EMO_HOST + cp + '/emoji.svg';
-    // 快路：矢量图已在浏览器缓存（首次渲染就拉过）→ 立即换上，消掉"系统字符闪一帧再变图"的抖动
+    img.alt = ''; img.draggable = false;
+    img.setAttribute('data-cp', cp);
+    img.onload = function () {
+      if (!el.isConnected) return;
+      el.textContent = '';
+      el.appendChild(img);
+    };
+    // 复合表情：保留旧图直到新图就绪，绝不写入会被拆开的文字；单段可暂用字形占位
+    if (!existing && !isZwj) el.textContent = ch;
+    img.src = url;
     if (img.complete) { try { img.onload(); } catch (_) {} img.onload = null; }
   }
   var _avaPop = null, _avaPrev = null, _avaPrevTimer = null, _avaTab = 0;
@@ -473,8 +488,8 @@
       var c = e.target.closest('.mascot-avapick-cell'); if (!c) return;
       lset(K.avatar, cpToGlyph(c.dataset.cp));
       closeAvaPick();
-      var fb = _root && _root.querySelector('#mascot-avatar .mascot-fallback');
-      if (fb) renderAvatar(fb);
+      var base = _root && _root.querySelector('#mascot-avatar .mascot-base');
+      if (base) renderAvatar(base);
       if (isResident()) showAvatar();
       if (onPicked) onPicked();
     });
@@ -1905,23 +1920,174 @@
   }
 
   // ===== 常驻小动作：闲时偶尔换个表情，悬浮冒一句闲话（让它更像个活物）=====
-  /** 常驻按钮临时演一个表情（不传名字 = 随机），几秒后回到用户选的常驻形象。点击/右键/碎碎念/闲时都用它。 */
   var _avatarAnim = null, _avatarAnimTimer = null;
-  function playAvatarMood(name, ms) {
-    var fb = _avatar && _avatar.querySelector('.mascot-fallback');
-    if (!fb) return;
+  // 少数谷歌动图是「两层硬拼」，整圈循环会在接缝闪（demo G 已证实）。这些 cp「演自己」时
+  // 只播 rest→末帧 再倒回 rest（后半段来回），不跨接缝。名单按实测追加，勿对全体套用。
+  var SEAM_PINGPONG_CPS = { '1f636_200d_1f32b_fe0f': 1 }; // 藏云脸 😶‍🌫️
+  function restFrameOf(data) {
+    var ms = data && data.markers, i;
+    if (ms) for (i = 0; i < ms.length; i++) {
+      if (String(ms[i].cm || '').toLowerCase() === 'rest') return ms[i].tm || 0;
+    }
+    return 0;
+  }
+  /** Lottie 半段来回：from→to→from（反向仍用同一区间 + setDirection(-1)） */
+  function playLottiePingPong(anim, from, to) {
+    return new Promise(function (resolve) {
+      var phase = 0;
+      function onComplete() {
+        if (phase === 0) {
+          phase = 1;
+          try { anim.setDirection(-1); anim.playSegments([from, to], true); } catch (_) { resolve(); }
+          return;
+        }
+        try { anim.removeEventListener('complete', onComplete); } catch (_) {}
+        try { anim.setDirection(1); anim.goToAndStop(from, true); } catch (_) {}
+        resolve();
+      }
+      try {
+        anim.loop = false;
+        anim.setDirection(1);
+        anim.addEventListener('complete', onComplete);
+        anim.playSegments([from, to], true);
+      } catch (_) { resolve(); }
+    });
+  }
+  /** 藏云脸等接缝表情：闲时底图不动；演出时上层进 rest、后半段来回、结束硬切回底图 */
+  function playAvatarSelfSeamless(cp, ms) {
+    if (!_avatar) return;
+    var wrap = _avatar.querySelector('.mascot-fallback');
+    var base = _avatar.querySelector('.mascot-base');
+    var fx = _avatar.querySelector('.mascot-fx');
+    if (!wrap || !base || !fx) return;
     clearTimeout(_avatarAnimTimer);
-    // 接续场：先把上一场收干净、回到形象本体（矢量图有缓存 → 单跳瞬回），再备下一场
-    if (_avatarAnim) { _avatarAnim.stop(false); _avatarAnim = null; renderAvatar(fb); }
-    // defer：动图数据备好才登台，就绪前形象纹丝不动；加载失败整场取消（防"抽搐闪烁/卡随机静态表情"）
-    _avatarAnim = animEmoji(fb, name || IDLE_SET[Math.floor(Math.random() * IDLE_SET.length)], { defer: true });
+    if (_avatarAnim) { _avatarAnim.stop(true); _avatarAnim = null; }
+    renderAvatar(base);
+    var stopped = false, anim = null, shown = false, started = false;
+    wrap.classList.remove('is-playing');
+    fx.textContent = '';
+    function showFx() {
+      if (stopped || shown || !wrap.isConnected) return;
+      shown = true;
+      wrap.classList.add('is-playing');
+    }
+    Promise.all([loadLottie(), getData(cp)]).then(function (r) {
+      if (stopped || !fx.isConnected) return;
+      var data = r[1];
+      var rest = restFrameOf(data);
+      var to = Math.max(rest + 1, Math.floor(data.op || 0) - 1);
+      var box = document.createElement('div');
+      box.className = 'mascot-lottie';
+      fx.textContent = '';
+      fx.appendChild(box);
+      try {
+        anim = r[0].loadAnimation({ container: box, renderer: 'svg', loop: false, autoplay: false, animationData: data });
+        function arm() {
+          if (started || stopped) return;
+          started = true;
+          try { anim.goToAndStop(rest, true); } catch (_) {}
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              if (stopped) return;
+              showFx();
+              playLottiePingPong(anim, rest, to).then(function () {
+                if (stopped) return;
+                wrap.classList.remove('is-playing');
+                requestAnimationFrame(function () {
+                  try { if (anim) { anim.destroy(); anim = null; } } catch (_) {}
+                  fx.textContent = '';
+                  _avatarAnim = null;
+                });
+              });
+            });
+          });
+        }
+        try { anim.addEventListener('DOMLoaded', arm); } catch (_) {}
+        setTimeout(arm, 80);
+      } catch (_) { fx.textContent = ''; }
+    }).catch(function () { /* 失败：底图一直可见 */ });
+    _avatarAnim = {
+      stop: function (immediate) {
+        stopped = true;
+        wrap.classList.remove('is-playing');
+        var finish = function () {
+          try { if (anim) { anim.destroy(); anim = null; } } catch (_) {}
+          fx.textContent = '';
+        };
+        if (immediate) finish();
+        else requestAnimationFrame(finish);
+      },
+    };
     _avatarAnimTimer = setTimeout(function () {
-      if (_avatarAnim) { _avatarAnim.stop(false); _avatarAnim = null; }
-      if (fb.isConnected) renderAvatar(fb);
+      if (_avatarAnim) { _avatarAnim.stop(); _avatarAnim = null; }
+    }, ms || 10000);
+  }
+  /** 常驻按钮临时演一个表情（不传名字 = 随机）。
+   *  双层硬切：底图内容不动；动图进 .mascot-fx。等 Lottie 首帧画好后同一帧切换
+   *  （底隐+动显），结束同样硬切回底图再拆上层——不用交叉淡变（半透明叠半拍会闪）。
+   *  绝不往底图写系统文字 → 复合表情不拆开。 */
+  function playAvatarMood(name, ms) {
+    if (!_avatar) return;
+    var wrap = _avatar.querySelector('.mascot-fallback');
+    var base = _avatar.querySelector('.mascot-base');
+    var fx = _avatar.querySelector('.mascot-fx');
+    if (!wrap || !base || !fx) return;
+    clearTimeout(_avatarAnimTimer);
+    if (_avatarAnim) { _avatarAnim.stop(true); _avatarAnim = null; }
+    renderAvatar(base);
+    var moodOrCp = name || IDLE_SET[Math.floor(Math.random() * IDLE_SET.length)];
+    var cp = MOODS[moodOrCp] || (/^[0-9a-f_-]+$/i.test(moodOrCp) ? moodOrCp : MOODS.idle);
+    var stopped = false, anim = null, shown = false;
+    wrap.classList.remove('is-playing');
+    fx.textContent = '';
+    function showFx() {
+      if (stopped || shown || !wrap.isConnected) return;
+      shown = true;
+      wrap.classList.add('is-playing'); // 同步硬切：底隐、动显
+    }
+    Promise.all([loadLottie(), getData(cp)]).then(function (r) {
+      if (stopped || !fx.isConnected) return;
+      var box = document.createElement('div');
+      box.className = 'mascot-lottie';
+      fx.textContent = '';
+      fx.appendChild(box);
+      try {
+        anim = r[0].loadAnimation({ container: box, renderer: 'svg', loop: true, autoplay: true, animationData: r[1] });
+        // 等矢量首帧进 DOM 再切层，避免「空层闪一下」
+        var armed = false;
+        function arm() {
+          if (armed || stopped) return;
+          armed = true;
+          requestAnimationFrame(function () { requestAnimationFrame(showFx); });
+        }
+        try { anim.addEventListener('DOMLoaded', arm); } catch (_) {}
+        // 个别环境不触发 DOMLoaded：超时兜底
+        setTimeout(arm, 80);
+      } catch (_) { fx.textContent = ''; }
+    }).catch(function () { /* 加载失败：底图一直可见 */ });
+    _avatarAnim = {
+      stop: function (immediate) {
+        stopped = true;
+        wrap.classList.remove('is-playing'); // 先硬切回底图
+        var finish = function () {
+          try { if (anim) { anim.destroy(); anim = null; } } catch (_) {}
+          fx.textContent = '';
+        };
+        if (immediate) finish();
+        else requestAnimationFrame(finish); // 下一帧再拆，避免与硬切抢同一绘制
+      },
+    };
+    _avatarAnimTimer = setTimeout(function () {
+      if (_avatarAnim) { _avatarAnim.stop(); _avatarAnim = null; }
     }, ms || 5200);
   }
-  /** 演常驻形象「自己」的动图（选了 😺 就动 😺）；形象不在动图集里时退回随机小表情 */
-  function playAvatarSelf(ms) { playAvatarMood(notoCp(avatarGlyph()) || null, ms); }
+  /** 演常驻形象「自己」的动图（选了 😺 就动 😺）；形象不在动图集里时退回随机小表情。
+   *  接缝名单内（如藏云脸）走后半段来回，避免整圈循环闪一下。 */
+  function playAvatarSelf(ms) {
+    var cp = notoCp(avatarGlyph());
+    if (cp && SEAM_PINGPONG_CPS[cp]) { playAvatarSelfSeamless(cp, ms); return; }
+    playAvatarMood(cp || null, ms);
+  }
   var _idlePlayTimer = null;
   function scheduleIdlePlay() {
     clearTimeout(_idlePlayTimer);

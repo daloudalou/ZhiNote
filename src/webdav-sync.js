@@ -1075,12 +1075,31 @@
     return /abort|failed to fetch|networkerror|network error|load failed|timed? ?out/i.test(s);
   }
 
+  // 回前台宽限：刚从后台回来的几秒内，网络味失败（Failed to fetch）不计熔断——
+  // 浏览器/代理醒神期的空枪不该弹「连续多次失败」（用户实测：放后台再开就误报，关掉后徽标又绿）。
+  let _wakeGraceUntil = 0;
+  const WAKE_GRACE_MS = 5000;
+  const WAKE_GET_DELAY_MS = 1000;
+
   function _handleTransient(e, kind, retryFn) {
     // 断网期间失败是预期行为：不计熔断、不报错。恢复时 online 事件会强拉一次并 drain 待传数据。
     if (!navigator.onLine) {
       _transientFailStreak = 0;
       _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'retry-transient', silent: true });
       console.warn(`[webdav] ${kind}失败但当前离线，等待网络恢复:`, e.message);
+      return;
+    }
+    // 页在后台：不计熔断、不弹错、不排队重试（回前台由 _wakeGet 统一拉一次）
+    if (typeof document !== 'undefined' && document.hidden) {
+      console.warn(`[webdav] ${kind}失败但页面在后台，不计熔断、等回前台再拉:`, e.message);
+      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'retry-transient', silent: true });
+      return;
+    }
+    // 回前台宽限期内的网络味错误：静默短延迟重试，不累计熔断
+    if (Date.now() < _wakeGraceUntil && _isNetFlavorError(e)) {
+      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'retry-transient', silent: true });
+      console.warn(`[webdav] ${kind}失败仍在回前台宽限内，不计熔断:`, e.message);
+      setTimeout(retryFn, 1500);
       return;
     }
     _transientFailStreak++;
@@ -2212,13 +2231,22 @@
 
   // 窗口被唤起 / 获焦 / 恢复网络时：强制拉一次云端，确保"切回来就能看到最新"。
   // 用 2 秒去重，避免 focus + visibilitychange 同时触发导致重复请求。
+  // 延迟 1s 再拉 + 清空熔断计数 + 开宽限：避开浏览器/代理刚醒时的 Failed to fetch 误报。
   let _lastWakeGetTime = 0;
+  let _wakeGetTimer = null;
   function _wakeGet() {
     const now = Date.now();
     if (now - _lastWakeGetTime < 2000) return;
     _lastWakeGetTime = now;
     _resetSilenceTimer();
-    doGet({ force: true });
+    _transientFailStreak = 0;
+    _wakeGraceUntil = now + WAKE_GRACE_MS;
+    if (_wakeGetTimer) clearTimeout(_wakeGetTimer);
+    _wakeGetTimer = setTimeout(() => {
+      _wakeGetTimer = null;
+      if (_stopped || (typeof document !== 'undefined' && document.hidden)) return;
+      doGet({ force: true });
+    }, WAKE_GET_DELAY_MS);
   }
 
   // ─── 事件监听器管理 ──────────────────────────────────────────────────────────
@@ -2230,7 +2258,12 @@
       visibility: () => {
         if (_stopped) return;
         if (!document.hidden) _wakeGet();
-        else flushPutOnHide();
+        else {
+          // 进后台：取消尚未发出的回前台拉取，瞬时熔断计数清零（后台空枪不攒阈值）
+          if (_wakeGetTimer) { clearTimeout(_wakeGetTimer); _wakeGetTimer = null; }
+          _transientFailStreak = 0;
+          flushPutOnHide();
+        }
       },
       blur: () => { if (!_stopped) flushPutOnBlur(); },
       focus: () => { if (!_stopped) _wakeGet(); },
