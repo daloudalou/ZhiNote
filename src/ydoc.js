@@ -36,7 +36,8 @@
     return btoa(s);
   }
   function b64ToBytes(b64) {
-    const bin = atob(b64);
+    // 容错：有些网盘/代理会给 base64 掺进换行或空白，先剥掉再解（否则 atob 直接抛错、整轮同步失败）
+    const bin = atob(String(b64 || '').replace(/\s+/g, ''));
     const u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     return u8;

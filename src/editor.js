@@ -1918,8 +1918,8 @@ const editor = (() => {
         const cmd = btn.dataset.cmd;
         // 触屏点格式按钮是排版而非打字：execCommand 内 .chain().focus() 会聚焦编辑器（键盘交给浏览器）。
         if (cmd === 'askMascot') {
-          // 带着选中文字唤小枝（面板里立刻出现 润色/翻译/总结 快捷动作）
-          try { window.mascot?.askSelection('ask'); } catch (_) {}
+          // 弹常用语层级菜单（问一问 / 润色 / 翻译…点了才带着选中文字执行）
+          try { (window.mascot?.openCmdTree || window.mascot?.askSelection)?.call(window.mascot, btn, {}); } catch (_) {}
         } else if (cmd === 'copySelection') {
           document.execCommand('copy');
         } else if (cmd === 'setHighlight') {
@@ -1948,8 +1948,12 @@ const editor = (() => {
     }
 
     const pm = editorEl.querySelector('.ProseMirror');
+    // 粘贴/复制目标在 NodeView 内的原生输入框（日历汇总记事、对话块输入等）时，
+    // 下面这些编辑器级剪贴板处理一律不许插手——否则捕获阶段抢走事件，
+    // 粘贴内容会跑进笔记正文而不是输入框（用户实测踩过，且因剪贴板有无 HTML/公式而时灵时不灵）
+    const inNativeInput = (e) => !!(e.target && e.target.closest && e.target.closest('input, textarea'));
     (pm || editorEl).addEventListener('paste', (e) => {
-      if (!_editor) return;
+      if (!_editor || inNativeInput(e)) return;
       const { $from } = _editor.state.selection;
       if ($from.parent.type.name === 'codeBlock') return;
       const items = e.clipboardData?.items;
@@ -1969,7 +1973,7 @@ const editor = (() => {
       pasteText(text);
     }, true);
     const handleCopyEvent = (e) => {
-      if (!_editor || !e.clipboardData) return;
+      if (!_editor || !e.clipboardData || inNativeInput(e)) return;
       const sel = _editor.state.selection;
       if (sel.empty) return;
       e.preventDefault();
@@ -1995,12 +1999,13 @@ const editor = (() => {
     };
     editorEl.addEventListener('copy', handleCopyEvent);
     editorEl.addEventListener('cut', (e) => {
+      if (inNativeInput(e)) return;
       handleCopyEvent(e);
       if (_editor) _editor.commands.deleteSelection();
     });
     editorEl.addEventListener('paste', (e) => {
       const cd = e.clipboardData;
-      if (!cd) return;
+      if (!cd || inNativeInput(e)) return;
       // 代码块内不做数学公式处理，保持原始文本
       if (_editor) {
         const { $from } = _editor.state.selection;
@@ -2609,6 +2614,8 @@ const editor = (() => {
 
   async function handleFilePaste(e) {
     if (!window.host?.caps.file) return;
+    // 目标在 NodeView 内的原生输入框（日历汇总/对话块输入）：交给输入框自己，不往正文插
+    if (e.target && e.target.closest && e.target.closest('input, textarea')) return;
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of items) {

@@ -3266,8 +3266,10 @@ body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg
 }
 .modal-title { padding: 16px 20px 4px; font-size: 15px; font-weight: 600; }
 .modal-body { padding: 16px 20px; flex: 1; overflow-y: auto; font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
-.modal-body .settings-section { font-size: 12px; color: var(--text-tertiary); font-weight: 500; letter-spacing: 0.5px; margin: 18px 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border); text-transform: uppercase; }
-.modal-body .settings-section:first-child { margin-top: 0; }
+/* 小节标题（全设置面板统一，与小枝页 .mascot-sec 同一套视觉）：
+   原 12px 灰色大写字太不显眼（用户实测找不到「速记」「常用语」），加大加粗加深 + 顶部细分隔线 */
+.modal-body .settings-section { font-size: 13.5px; color: var(--text); font-weight: 700; margin: 22px 0 6px; padding-top: 14px; border-top: 1px solid var(--border); }
+.modal-body .settings-section:first-child, .modal-body div:first-child > .settings-section { margin-top: 0; padding-top: 0; border-top: none; }
 .modal-body .settings-switch { display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 10px 4px; user-select: none; margin-top: 4px; }
 .modal-body .sync-panel .settings-switch:first-child { margin-top: 0; padding-top: 0; }
 .modal-body .trash-badge-switch { background: var(--bg-tertiary); border: 1px solid var(--border); padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; }
@@ -3498,6 +3500,9 @@ body.theme-dark .donate-card img { background: #fff; padding: 6px; }
 .md-select-item { height: 30px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-radius: 6px; font-size: 13px; color: var(--text); cursor: pointer; transition: background 0.1s ease; user-select: none; }
 .md-select-item:hover, .md-select-item.is-active { background: var(--bg-hover); }
 .md-select-item.is-active { color: var(--accent); font-weight: 500; }
+/* 本机已卸载的字体等：灰显不可点（upgradeSelect 读 option[disabled]） */
+.md-select-item.is-disabled { opacity: 0.42; color: var(--text-tertiary); cursor: not-allowed; }
+.md-select-item.is-disabled:hover { background: transparent; }
 
 /* 按钮按下/hover 反馈 */
 .icon-btn { transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease; }
@@ -4023,6 +4028,9 @@ body.theme-is-dark .md-float-turn-sep {
   margin: 4px 10px;
   background: var(--border, #e8e8e8);
 }
+/* 子菜单里的分组小标题（不可点，如「问小枝」的常用语分组）；条目多时子菜单内部滚动 */
+.md-ctx-subhead { padding: 6px 12px 2px; font-size: 11px; color: var(--text-tertiary, #999); user-select: none; cursor: default; }
+.md-ctx-submenu { max-height: min(430px, 72vh); overflow-y: auto; }
 
 /* 暗色主题 - 右键菜单 */
 body.theme-dark .md-editor-ctx,
@@ -5257,6 +5265,7 @@ html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
 .mascot-avatar {
   position: relative; width: 48px; height: 48px; padding: 0; border: none; background: transparent;
   cursor: pointer; display: block; -webkit-tap-highlight-color: transparent;
+  touch-action: none; /* 触屏也能按住拖走（常驻位置随意拖、记住） */
   opacity: 0; transform: translateY(10px) scale(0.5); transform-origin: bottom right;
   transition: opacity .2s ease, transform .24s cubic-bezier(0.2,0.9,0.3,1.2);
   pointer-events: none;
@@ -5264,11 +5273,16 @@ html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
 #mascot-root.mascot-visible .mascot-avatar { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
 .mascot-avatar:hover { transform: translateY(-2px) scale(1.06); }
 .mascot-avatar:active { transform: scale(0.94); }
-.mascot-avatar .mascot-lottie, .mascot-avatar .mascot-fallback {
+/* 漂浮动画只挂外层 fallback 一层：动图盒是它的子元素、跟着一起浮。
+   曾经两层都挂 mascotFloat（本规则曾同时命中二者）→ 动图插入瞬间从零相位再浮一遍，
+   与外层错拍叠加 = 用户报的"抽搐闪烁"（20260730 实测取证）。 */
+.mascot-avatar .mascot-fallback {
   width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  font-size: 38px; line-height: 1;
   animation: mascotFloat 3.6s ease-in-out infinite;
 }
-.mascot-avatar .mascot-fallback { font-size: 38px; line-height: 1; }
+/* 动图与静态矢量图同尺寸（38px = fallback 字号的 1em）：开演/收场不再一大一小跳变 */
+.mascot-avatar .mascot-lottie { width: 38px; height: 38px; }
 .mascot-avatar .mascot-lottie svg { display: block; }
 @keyframes mascotFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
 
@@ -5314,6 +5328,40 @@ html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
 .mascot-model:focus-visible, .zc-model:focus-visible { border-color: var(--accent); }
 /* 「AI / 模型」两级菜单：服务商分组可展开，点模型行同时切服务商+模型 */
 .mascot-modelmenu { width: 252px; }
+/* 自定义常用语菜单（面板 ⚡ / 对话块 ⚡ 共用） */
+.mascot-cmdmenu { width: 262px; }
+.mascot-picker-ghead { padding: 5px 8px 2px; font-size: 11px; color: var(--text-tertiary); user-select: none; }
+
+/* 常用语层级菜单（常驻小枝悬浮 / 悬浮工具栏 🌱）：竖列 + 分组飞出 */
+.mascot-tree {
+  position: fixed; z-index: 3000; min-width: 148px; padding: 5px;
+  background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 11px;
+  box-shadow: 0 2px 6px rgba(15,15,15,0.10), 0 10px 28px rgba(15,15,15,0.16);
+  font-size: 12.5px; color: var(--text); user-select: none;
+}
+.mascot-tree-row {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  padding: 6px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap;
+}
+.mascot-tree-row:hover { background: var(--bg-hover); }
+.mascot-tree-ico { flex: none; width: 17px; text-align: center; font-size: 13.5px; line-height: 1; }
+.mascot-tree-lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mascot-tree-caret { flex: none; font-size: 10px; color: var(--text-tertiary); }
+.mascot-tree-sep { height: 1px; margin: 4px 6px; background: var(--border); }
+.mascot-tree-dim { color: var(--text-secondary); }
+/* 分组的飞出子菜单：hover 展开；朝向由 JS 按空间加类决定 */
+.mascot-tree-sub {
+  position: absolute; top: -6px; display: none; min-width: 148px; max-height: 60vh; overflow: auto;
+  padding: 5px; background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 11px;
+  box-shadow: 0 2px 6px rgba(15,15,15,0.10), 0 10px 28px rgba(15,15,15,0.16);
+}
+.mascot-tree-grp:hover > .mascot-tree-sub { display: block; }
+.mascot-tree-flyleft .mascot-tree-sub { right: calc(100% + 2px); }
+.mascot-tree-flyright .mascot-tree-sub { left: calc(100% + 2px); }
+
+/* 常用语图标选择复用全项目统一的 .icon-picker-popover（openIconPicker），不再单独建网格 */
+.mascot-cmdbtn { font-size: 13px; }
+.zc-cmd { padding: 2px 7px; }
 .mascot-mm-caret { flex: none; width: 14px; text-align: center; font-size: 10px; color: var(--text-tertiary); line-height: 1.7; }
 .mascot-mm-prov .mascot-picker-t { font-weight: 600; }
 .mascot-mm-prov.cur .mascot-picker-t { color: var(--accent); }
@@ -5399,19 +5447,45 @@ html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
 .mascot-btn:hover { background: var(--bg-hover); }
 .mascot-hint { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text-tertiary); flex-wrap: wrap; justify-content: flex-end; }
 .mascot-kbd { display: inline-block; min-width: 20px; padding: 2px 6px; border-radius: 6px; font-size: 11.5px; text-align: center; background: var(--bg-tertiary); border: 1px solid var(--border-strong); color: var(--text-secondary); }
-.mascot-em-pick { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-/* 竖排设置行（label 在上、控件铺开在下；用于常驻形象挑选等宽控件） */
+/* 竖排设置行（label 在上、控件铺开在下） */
 .mascot-row-col { flex-direction: column; align-items: stretch; gap: 10px; }
-.mascot-row-col .mascot-em-pick { justify-content: flex-start; }
-.mascot-em-opt { width: 34px; height: 34px; font-size: 19px; line-height: 1; border-radius: 9px; border: 1px solid var(--border-strong); background: var(--bg-tertiary); cursor: pointer; display: flex; align-items: center; justify-content: center; }
-.mascot-em-opt:hover { background: var(--bg-hover); }
-.mascot-em-opt.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
-/* 常驻形象挑选：折叠收纳（默认只占一行，展开才铺出全部选项） */
+/* 常驻形象：谷歌矢量图渲染（防空框）；尺寸随宿主字号 */
+.mascot-avaimg { width: 1em; height: 1em; display: inline-block; vertical-align: -0.12em; pointer-events: none; }
+/* 形象选择器：动图全集，分类 + 搜索 + 悬停动画预览 */
+.mascot-avapick {
+  position: fixed; z-index: 3000; width: 326px; max-width: calc(100vw - 16px);
+  display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  background: var(--bg-elevated); border: 1px solid var(--border-strong); border-radius: 12px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.16); animation: mdPopIn 0.14s ease;
+}
+.mascot-avapick-q { width: 100%; box-sizing: border-box; }
+/* 分类标签单行：滚轮横滚 + 按住拖动（JS 里接管），滚动条隐藏 */
+.mascot-avapick-tabs { display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; user-select: none; }
+.mascot-avapick-tabs::-webkit-scrollbar { display: none; }
+.mascot-avapick-tab { flex: 0 0 auto; border: none; background: none; padding: 4px 9px; border-radius: 999px; font-size: 12px; color: var(--text-secondary); cursor: pointer; white-space: nowrap; }
+.mascot-avapick-tab:hover { background: var(--bg-hover); }
+.mascot-avapick-tab.on { background: var(--accent-bg); color: var(--accent); font-weight: 600; }
+.mascot-avapick-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 2px; overflow-y: auto; max-height: 244px; min-height: 118px; align-content: start; }
+.mascot-avapick-cell { border: none; background: none; border-radius: 8px; padding: 4px 0; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 19px; line-height: 1; }
+.mascot-avapick-cell:hover { background: var(--bg-hover); }
+.mascot-avapick-cell.on { background: var(--accent-bg); box-shadow: inset 0 0 0 1px var(--accent); }
+.mascot-avapick-cell img { width: 23px; height: 23px; pointer-events: none; }
+.mascot-avapick-foot { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--border); padding-top: 8px; min-height: 40px; }
+.mascot-avapick-pv { flex: 0 0 auto; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 30px; line-height: 1; }
+.mascot-avapick-pv .mascot-lottie { width: 38px; height: 38px; }
+.mascot-avapick-pn { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 折叠收纳行（常用语等用） */
 details.mascot-avafold > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; user-select: none; }
 details.mascot-avafold > summary::-webkit-details-marker { display: none; }
 details.mascot-avafold > summary .mascot-lbl { flex: 1; min-width: 0; }
 .mascot-ava-cur { font-size: 20px; line-height: 1; }
+/* 折叠行右侧的小计数（如「3 条」）：小字灰色，别用表情的大字号 */
+.mascot-fold-n { flex: none; font-size: 11.5px; color: var(--text-tertiary); white-space: nowrap; }
+/* 折叠展开的抓手：跟在标题描述下面另起一行、左对齐（末尾的小箭头太隐蔽，用户实测找不到） */
+.mascot-fold-x { display: inline-flex; align-items: center; gap: 4px; margin-top: 5px; align-self: flex-start; font-size: 12px; color: var(--accent); white-space: nowrap; }
+.mascot-avafold > summary:hover .mascot-fold-x { text-decoration: underline; }
 .mascot-avafold-caret { color: var(--text-tertiary); font-size: 11px; transition: transform .15s; }
+.mascot-fold-x .mascot-avafold-caret { font-size: 13px; color: inherit; }
 details.mascot-avafold[open] .mascot-avafold-caret { transform: rotate(180deg); }
 details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .mascot-sw { flex: none; position: relative; width: 40px; height: 22px; border-radius: 11px; background: var(--border-strong); cursor: pointer; transition: background .15s; }
@@ -5421,7 +5495,8 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .mascot-sw:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* 设置面板：小枝 → 接入模型 */
-.mascot-sec { font-size: 12px; font-weight: 600; color: var(--text-tertiary); letter-spacing: .02em; margin: 18px 0 2px; }
+/* 小节标题：与全局 .settings-section 同一套视觉（13.5px 加粗 + 细分隔线） */
+.mascot-sec { font-size: 13.5px; font-weight: 700; color: var(--text); margin: 22px 0 2px; padding-top: 14px; border-top: 1px solid var(--border); }
 .mascot-frow { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 .mascot-frow > label { flex: 0 0 72px; color: var(--text-secondary); }
 .mascot-frow-end { justify-content: space-between; border-bottom: none; padding-top: 6px; }
@@ -5462,15 +5537,21 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .mascot-md img { max-width: 100%; height: auto; }
 .mascot-md hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
 
-/* ===== 编辑器内「小枝对话块」（风格对齐代码块：低调折叠卡片） ===== */
-/* 注意：不能加 overflow:hidden，否则 .zc-head 的 sticky 吸顶失效 */
-.zc-shell { margin: 10px 0; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--bg-tertiary); user-select: none; }
+/* ===== 编辑器内「小枝对话块」（对齐日历块的做法：纯 border-radius，不用任何裁切） ===== */
+/* clip-path 方案两版都在用户机器上出四角缺损（非整数 DPI 缩放下裁切线与边框弧对不齐），弃用。
+   现在照日历块：外框 border-radius + 块头自画内圆角（外 10px − 边框 1px = 9px）；
+   底色也从 tertiary 换成 elevated（与日历一致），和编辑区更融、不那么突兀 */
+.zc-shell { margin: 12px 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elevated); user-select: none; }
 .ProseMirror-selectednode.zc-shell, .ProseMirror .zc-shell.ProseMirror-selectednode { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* 展开且内容长时，顶栏吸在编辑区顶部（与日历汇总同法）；背景须不透明盖住滚过的内容。
-   top 取负的编辑区内边距：#editor 的 padding-top 会让 top:0 的吸附点低一截、上方漏内容缝 */
-.zc-head { position: sticky; top: calc(0px - var(--editor-pad, 1em)); z-index: 3; display: flex; align-items: center; gap: 7px; padding: 7px 12px; cursor: pointer; font-size: 12.5px; color: var(--text-secondary); background: var(--bg-tertiary); border-radius: 9px; }
+   top 取负的编辑区内边距。必须用 app.js 算好的像素变量：若直接用 em 变量，em 按 .zc-head
+   自身 12.5px 字号解析，而 #editor 的 padding 按 14px 解析，吸附点偏低、上方漏一条内容缝 */
+.zc-head { position: sticky; top: calc(0px - var(--editor-pad-px, 14px)); z-index: 3; display: flex; align-items: center; gap: 7px; padding: 7px 12px; cursor: pointer; font-size: 12.5px; color: var(--text-secondary); background: var(--bg-elevated); border-radius: 9px; }
 .zc-shell.zc-open > .zc-head { border-radius: 9px 9px 0 0; border-bottom: 1px solid var(--border); }
-.zc-head:hover { background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-tertiary); }
+/* 吸顶进行中（JS 检测加 .zc-stuck）：变成浮在内容上的圆角胶囊——描边圈+轻投影，
+   四角保持圆润；否则 sticky 吸顶时块头是直角，与静止态观感割裂（用户反馈） */
+.zc-shell.zc-open > .zc-head.zc-stuck { border-radius: 9px; border-bottom-color: transparent; box-shadow: 0 0 0 1px var(--border), 0 3px 10px rgba(15, 15, 15, 0.12); }
+.zc-head:hover { background: linear-gradient(var(--bg-hover), var(--bg-hover)) var(--bg-elevated); }
 .zc-caret { font-size: 10px; color: var(--text-tertiary); width: 10px; flex: none; }
 .zc-ico { flex: none; font-size: 13px; }
 .zc-t { font-weight: 600; color: var(--text); flex: none; }
@@ -5518,6 +5599,9 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 /* 阅读模式 / 同步保护：对话块只能看不能问 */
 body.readonly-mode .zc-ask, body.sync-protection-mode .zc-ask { display: none; }
 
+/* 速记首次设置弹窗：三个大按钮选存法 */
+/* 速记设置改为 设置→本地 里的下拉框（20260728t5），原首次设置弹窗（.qc-setup/.qc-opt）已删 */
+
 /* 「选择笔记」上下文（输入栏左侧小胶囊：📄 + 所选笔记名） */
 .mascot-ctx { flex: none; height: 34px; padding: 0 8px; border: none; border-radius: 8px; background: transparent; color: var(--text-tertiary); cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
 .mascot-ctx:hover { background: var(--bg-hover); color: var(--text); }
@@ -5543,6 +5627,11 @@ body.readonly-mode .zc-ask, body.sync-protection-mode .zc-ask { display: none; }
 .mascot-picker-t { font-size: 12.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mascot-picker-s { font-size: 11px; color: var(--text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mascot-picker-none { padding: 12px; text-align: center; color: var(--text-tertiary); font-size: 12px; line-height: 1.7; }
+/* 层级选笔记：笔记本行（可展开）+ 缩进的笔记行 */
+.mascot-picker-ws { align-items: center; }
+.mascot-picker-wst { font-weight: 600; }
+.mascot-picker-n { flex: none; font-size: 10.5px; color: var(--text-tertiary); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; align-self: center; }
+.mascot-picker-ind { padding-left: 30px; }
 .mascot-picker-clr { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 7px; }
 .mascot-picker-clr .mascot-picker-t { color: var(--text-tertiary); }
 
@@ -5556,6 +5645,17 @@ body.readonly-mode .zc-ask, body.sync-protection-mode .zc-ask { display: none; }
 .mascot-memrow .mascot-meminp { font-size: 12.5px; padding: 5px 9px; }
 .mascot-memdel { flex: none; border: none; background: transparent; color: var(--text-tertiary); cursor: pointer; padding: 4px; border-radius: 6px; display: flex; }
 .mascot-memdel:hover { background: var(--bg-hover); color: #d05a4e; }
+.mascot-memdel.arm { color: #d05a4e; background: var(--bg-hover); }
+
+/* 设置 → 常用语分组卡片 */
+.mascot-cmdg { margin: 6px 0 10px; padding: 2px 10px 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.mascot-cmdg-head { display: flex; align-items: center; gap: 8px; padding: 6px 0 4px; }
+.mascot-cmdg-name { flex: 0 1 150px; min-width: 0; font-size: 12.5px; font-weight: 600; padding: 4px 8px; }
+.mascot-cmdg-head .mascot-fold-n { flex: 1; }
+.mascot-emobtn { flex: none; width: 28px; height: 28px; border: 1px solid var(--border); background: var(--bg-tertiary); border-radius: 7px; font-size: 15px; line-height: 1; cursor: pointer; padding: 0; }
+.mascot-emobtn:hover { background: var(--bg-hover); }
+.mascot-cmdname { flex: 0 0 76px; font-size: 12.5px; padding: 5px 8px; }
+@media (max-width: 480px) { .mascot-cmdname { flex-basis: 60px; } }
 
 </style>
   <style>body:not(.app-ready) { opacity: 0; }</style>
@@ -5729,7 +5829,7 @@ body.readonly-mode .zc-ask, body.sync-protection-mode .zc-ask { display: none; }
             <button data-cmd="undo" class="bubble-touch-only" title="撤销"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6.2 2.5L3 13"/></svg></button>
             <button data-cmd="redo" class="bubble-touch-only" title="重做"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6.2 2.5L21 13"/></svg></button>
             <span class="bubble-sep bubble-touch-only"></span>
-            <button data-cmd="askMascot" class="bubble-mascot" title="问小枝（润色/翻译/总结…）">🌱</button>
+            <button data-cmd="askMascot" class="bubble-mascot">🌱</button>
             <span class="bubble-sep"></span>
             <button data-cmd="copySelection"><svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z"/></svg></button>
             <span class="bubble-sep"></span>
@@ -5868,7 +5968,7 @@ body.readonly-mode .zc-ask, body.sync-protection-mode .zc-ask { display: none; }
   <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
 
   <script>
-    window.__MD_VER__ = 'v1.1.8';
+    window.__MD_VER__ = 'v1.1.9';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -74270,6 +74370,9 @@ const storage = (() => {
       const s = Object.assign({}, _data.settings);
       delete s.webdavCryptoPass;
       for (const k in s) { if (k.indexOf('webdav_') === 0) delete s[k]; }
+      // 本机同步状态（'_webdav' 前缀：设备号/三方基准/世代标记/覆盖留底，见 webdav-sync.js _ssGet）：
+      // 纯本机运行态、留底可达 1.5MB，进备份既泄露无关状态又白白撑大文件 → 一律剔除。
+      for (const k in s) { if (k.indexOf('_webdav') === 0) delete s[k]; }
       clone.settings = s;
     }
     return JSON.stringify(clone, null, 2);
@@ -75131,8 +75234,13 @@ window.storage = storage;
   // 同一用户的多台设备账号/口令/笔记编号都相同 → 进同一房间。不可逆、不可猜。
   async function rtRoomId(seed) {
     const pass = _userCryptoPass() || AES_PASSPHRASE;
-    let acct = '';
-    try { if (_config) acct = (_config.url || '') + '|' + (_config.user || ''); } catch (_) {}
+    // 【闸】配置未加载完（启动竞态：realtime 先跑 / aesDecrypt 慢 / 解密失败）时绝不派生房间号：
+    //   否则账号按空串参与哈希 → 不同网盘账号（坚果云 vs Koofr）甚至不同用户（都用内置口令时
+    //   密文互可解！）会落进同一"默认房间"，互亮紫点、互收结构直推——正是用户报过的
+    //   "两台设备服务商不同还进即时同步"。抛错让调用方（_ensureSignal/_ensureRoom 均 catch）
+    //   本轮放弃连接；配置就绪后由 applyConfig / 看门狗（6s 周期）自动重连，只慢几秒、不落错房。
+    if (!_config) throw new Error('WebDAV 配置未加载，拒绝派生房间号');
+    const acct = (_config.url || '') + '|' + (_config.user || '');
     const data = new TextEncoder().encode('zhinote-room:' + acct + ':' + pass + ':' + (seed || ''));
     const digest = await crypto.subtle.digest('SHA-256', data);
     const u8 = new Uint8Array(digest);
@@ -75688,20 +75796,46 @@ window.storage = storage;
     return btoa(binary);
   }
   function _base64ToBuf(b64) {
-    const binary = atob(b64);
+    // 容错：剥掉 base64 里可能混入的换行/空白（部分网盘/代理传输会加），防 atob 抛错
+    const binary = atob(String(b64 || '').replace(/\s+/g, ''));
     const buf = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
     return buf;
+  }
+
+  // ─── 本机同步状态持久化（双存）──────────────────────────────────────────────
+  // clientId / 三方基准 / 已采纳世代 / 覆盖留底原先只存 localStorage：Quicker 端网页缓存
+  // 不可靠（预热建窗/进程被杀可能整体清空——小枝设置曾因此重置，20260729t1）。这些状态一旦丢：
+  //   基准缺失 → 上传防护 _guardUploadConflicts "无基准保守放行"，防裸覆盖的闸门失效；
+  //   世代标记缺失 → 错过采纳模式，被权威淘汰的本地笔记会涌回云端复活；
+  //   留底蒸发 → "误覆盖 100% 可找回"的终极兜底不成立；clientId 重生 → 误弹他机保护条。
+  // 故改为主存 storage 设置（'_webdav…'，'_' 前缀=只存本机不上云；Quicker 端随动作状态
+  // 变量 zhinote_data 落盘，重启/清缓存不丢）。localStorage 保留为旧值迁移来源 + 兜底双写。
+  // 注意：这些键已在 storage.exportJSON 里排除（'_webdav' 前缀），不进备份文件。
+  function _ssGet(key, lsKey) {
+    try {
+      const v = window.storage && window.storage.getSetting ? window.storage.getSetting(key) : undefined;
+      if (v !== undefined && v !== null) return String(v);
+    } catch (_) {}
+    let lv = null;
+    try { lv = localStorage.getItem(lsKey); } catch (_) {}
+    // 旧数据一次性迁移（storage 未就绪时其内部为 no-op，下次读到再迁）
+    if (lv !== null) { try { window.storage && window.storage.setSetting && window.storage.setSetting(key, lv); } catch (_) {} }
+    return lv;
+  }
+  function _ssSet(key, lsKey, val) {
+    try { window.storage && window.storage.setSetting && window.storage.setSetting(key, val); } catch (_) {}
+    try { localStorage.setItem(lsKey, val); } catch (_) {}
   }
 
   // ─── clientId 管理 ──────────────────────────────────────────────────────────
   function _ensureClientId() {
     if (_clientId) return _clientId;
     const key = 'zhinote-webdav-clientId';
-    _clientId = localStorage.getItem(key);
+    _clientId = _ssGet('_webdavClientId', key);
     if (!_clientId) {
       _clientId = 'dev-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      localStorage.setItem(key, _clientId);
+      _ssSet('_webdavClientId', key, _clientId);
     }
     return _clientId;
   }
@@ -75721,7 +75855,7 @@ window.storage = storage;
     if (_syncBase) return _syncBase;
     _syncBase = {};
     try {
-      const raw = localStorage.getItem(SYNC_BASE_KEY);
+      const raw = _ssGet('_webdavSyncBase', SYNC_BASE_KEY);
       if (raw) {
         const obj = JSON.parse(raw);
         // 账号不一致（切换了服务商/账号）→ 丢弃旧基准，从零开始（安全：退回时间戳逻辑）
@@ -75733,7 +75867,7 @@ window.storage = storage;
   function _flushSyncBase() {
     if (!_syncBaseDirty) return;
     _syncBaseDirty = false;
-    try { localStorage.setItem(SYNC_BASE_KEY, JSON.stringify({ account: _accountTag(), map: _syncBase || {} })); } catch (_) {}
+    try { _ssSet('_webdavSyncBase', SYNC_BASE_KEY, JSON.stringify({ account: _accountTag(), map: _syncBase || {} })); } catch (_) {}
   }
   function _getBase(id) { return _loadSyncBase()[id] || null; }
   function _setBase(id, hash, ts) { _loadSyncBase(); _syncBase[id] = { h: hash, t: ts || 0 }; _syncBaseDirty = true; }
@@ -75748,13 +75882,13 @@ window.storage = storage;
   const ADOPTED_EPOCH_KEY = 'zhinote-webdav-epoch';
   function _getAdoptedEpoch() {
     try {
-      const raw = localStorage.getItem(ADOPTED_EPOCH_KEY);
+      const raw = _ssGet('_webdavEpoch', ADOPTED_EPOCH_KEY);
       if (raw) { const o = JSON.parse(raw); if (o && o.account === _accountTag() && typeof o.epoch === 'number') return o.epoch; }
     } catch (_) {}
     return null; // null = 本账号从未记录过（首次遇到）
   }
   function _setAdoptedEpoch(epoch) {
-    try { localStorage.setItem(ADOPTED_EPOCH_KEY, JSON.stringify({ account: _accountTag(), epoch: epoch || 1 })); } catch (_) {}
+    try { _ssSet('_webdavEpoch', ADOPTED_EPOCH_KEY, JSON.stringify({ account: _accountTag(), epoch: epoch || 1 })); } catch (_) {}
   }
 
   // cyrb53：快速、低碰撞的字符串哈希
@@ -75857,14 +75991,14 @@ window.storage = storage;
   const BACKUP_MAX_BYTES = 1_500_000;
 
   function _readBackups() {
-    try { const raw = localStorage.getItem(BACKUP_KEY); return raw ? JSON.parse(raw) : []; }
+    try { const raw = _ssGet('_webdavBackups', BACKUP_KEY); return raw ? JSON.parse(raw) : []; }
     catch (_) { return []; }
   }
   function _writeBackups(list) {
     // 先按条数截断，再按总体积截断（都保留最新的，丢最旧的）
     let arr = list.slice(0, BACKUP_MAX_ENTRIES);
     while (arr.length > 1 && JSON.stringify(arr).length > BACKUP_MAX_BYTES) arr.pop();
-    try { localStorage.setItem(BACKUP_KEY, JSON.stringify(arr)); } catch (_) {}
+    try { _ssSet('_webdavBackups', BACKUP_KEY, JSON.stringify(arr)); } catch (_) {}
   }
   /** 覆盖/删除本地笔记前留底。note 为本地旧笔记对象，reason 说明触发原因。 */
   function _backupBeforeOverwrite(id, note, reason) {
@@ -75919,7 +76053,10 @@ window.storage = storage;
       return newId;
     } catch (e) { console.warn('[webdav] 还原留底失败', e); return null; }
   }
-  function clearLocalBackups() { try { localStorage.removeItem(BACKUP_KEY); } catch (_) {} }
+  function clearLocalBackups() {
+    try { _ssSet('_webdavBackups', BACKUP_KEY, ''); } catch (_) {}
+    try { localStorage.removeItem(BACKUP_KEY); } catch (_) {}
+  }
 
   // ─── 配置加载 ────────────────────────────────────────────────────────────────
   async function loadConfig() {
@@ -77403,8 +77540,13 @@ window.storage = storage;
     const match = dataUrl.match(/^data:image\/([a-z+]+);base64,(.+)$/i);
     if (!match) return { ext: 'bin', binary: new Uint8Array(0) };
     const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-    const binary = _base64ToBuf(match[2]);
-    return { ext, binary };
+    try {
+      return { ext, binary: _base64ToBuf(match[2]) };
+    } catch (e) {
+      // 坏图（base64 残缺，曾见速记录入被截断的图片）：跳过这一张继续传，绝不拖垮整轮 PUT
+      console.warn('[webdav] 图片 base64 损坏，跳过上传:', String(dataUrl).slice(0, 48) + '…', e && e.message);
+      return { ext: 'bin', binary: new Uint8Array(0) };
+    }
   }
 
   function _extToMime(ext) {
@@ -81039,8 +81181,9 @@ const palette = (() => {
     { id: 'cmd-toggle-sidebar', label: '切换侧边栏', kbd: 'Ctrl+\\', icon: '⊟', run: () => window.toggleSidebar?.() },
     { id: 'cmd-trash', label: '打开回收站', icon: '🗑', run: () => tree.showTrash() },
     { id: 'cmd-templates', label: '管理模板', icon: '⌗', run: () => template.openManager() },
-    { id: 'cmd-mascot', label: '问小枝（AI 助手）', kbd: 'Alt+A', icon: '🌱', run: () => { try { window.mascot && window.mascot.openPanel(); } catch (_) {} } },
+    { id: 'cmd-mascot', label: '问小枝（AI 助手）', kbd: 'Alt+A', icon: '🌱', run: () => { try { (window.mascot.summon || window.mascot.openPanel)(); } catch (_) {} } },
     { id: 'cmd-mascot-block', label: '插入小枝对话块', icon: '💬', run: () => { try { window.mascot && window.mascot.insertChatBlock('', ''); } catch (_) {} } },
+    { id: 'cmd-quick-capture', label: '速记设置（剪贴板存到哪）', icon: '⚡', run: () => { try { window.quickCaptureSetup?.(); } catch (_) {} } },
     { id: 'cmd-export', label: '导出为 Markdown 文件夹', icon: '⇣', run: () => window.requestExport?.() },
     { id: 'cmd-import', label: '从 Markdown 文件夹导入', icon: '⇡', run: () => window.requestImport?.() },
     { id: 'cmd-collapse', label: '折叠所有笔记节点', icon: '◢', run: () => { tree.collapseAllAnimated(); } },
@@ -82826,7 +82969,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     return btoa(s);
   }
   function b64ToBytes(b64) {
-    const bin = atob(b64);
+    // 容错：有些网盘/代理会给 base64 掺进换行或空白，先剥掉再解（否则 atob 直接抛错、整轮同步失败）
+    const bin = atob(String(b64 || '').replace(/\s+/g, ''));
     const u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     return u8;
@@ -82939,7 +83083,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     return btoa(s);
   }
   function b64ToBytes(b64) {
-    const bin = atob(b64);
+    // 容错：剥掉 base64 里可能混入的换行/空白（同 ydoc.js，防 atob 抛错拖垮整轮同步）
+    const bin = atob(String(b64 || '').replace(/\s+/g, ''));
     const u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     return u8;
@@ -84997,6 +85142,9 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       var sumEl = dom.querySelector('.cal-summary');
       var calCard = dom.querySelector('.calendar-block');
       if (!sumEl || !calCard) { dom.classList.remove('has-summary', 'side', 'below'); return; }
+      // 保住滚动位置：下面把 height 清空的一瞬间容器不可滚、scrollTop 归零——
+      // 聚焦记事会触发 refreshCalOnly→本函数，列表若被弹回顶部，正在编辑的那条就跑出视野
+      var st = sumEl.scrollTop || 0;
       dom.classList.add('has-summary');
       dom.classList.remove('side');
       sumEl.style.width = '';
@@ -85010,6 +85158,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       // 右侧：固定为日历高度（内容多则内部滚动），与日历齐平；下方：只锁宽度、不限高度。
       if (side) sumEl.style.height = (calCard.offsetHeight || 0) + 'px';
       else sumEl.style.width = (calCard.offsetWidth || 0) + 'px';
+      if (st) sumEl.scrollTop = st;
     }
 
     // 只构建日历卡内部（头部 + 网格）HTML；外层 .calendar-block 由 render/refreshCalOnly 提供。
@@ -85613,8 +85762,9 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       document.body.appendChild(cardMask);
       cardMask.addEventListener('mousedown', function (ev) { if (ev.target === cardMask) closeCard(); });
       document.addEventListener('keydown', cardEsc, true);
-      // 触屏/iOS：输入框获得焦点时滚到可见位置，避免被软键盘遮挡
+      // 触屏/iOS：输入框获得焦点时滚到可见位置，避免被软键盘遮挡（仅触屏；桌面 scrollIntoView 会滚外层容器造成跳动）
       card.addEventListener('focusin', function (ev) {
+        if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
         var t = ev.target; if (!t || !t.matches || !t.matches('input,textarea')) return;
         setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
       });
@@ -85989,8 +86139,11 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       else if (cmd === 'copyText') { try { navigator.clipboard.writeText(buildSummaryText()); } catch (_) {} }
       else if (cmd === 'copySource') { try { navigator.clipboard.writeText('```calendar\n' + canon(toObj(S)) + '\n```'); } catch (_) {} }
     });
-    // 触屏/iOS：汇总/日程里输入框获得焦点时滚到可见位置，避免被软键盘遮挡（挂在常驻容器上、只挂一次）
+    // 触屏/iOS：汇总/日程里输入框获得焦点时滚到可见位置，避免被软键盘遮挡（挂在常驻容器上、只挂一次）。
+    // 必须仅触屏生效：scrollIntoView 会连外层 overflow:hidden 容器一起滚，桌面端点记事时
+    // 造成滚轮跳动、甚至整窗内容被顶上去且不复原（用户实测踩过）
     dom.addEventListener('focusin', function (ev) {
+      if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
       var t = ev.target; if (!t || !t.matches || !t.matches('.cal-summary input, .cal-summary textarea')) return;
       setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
     });
@@ -86565,6 +86718,86 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     _memSave(cards);
     ss(v ? '_aiMemory' : 'aiMemory', '');
   }
+  // ===== 自定义常用语（分组 + 图标）=====
+  // 一句话指令（如「总结一下」「帮我润色」），一键调用省打字。数据随设置云同步（aiQuickCmds）。
+  // v2 结构：{ v:2, groups:[{ n:分组名, items:[{ e:图标emoji, n:短名(可空), t:指令文本 }] }] }。
+  // 预置组来自原「问小枝」右键菜单的动作（润色/续写/总结/整理/翻译），当普通常用语一样可删可改。
+  var CMD_GMAX = 20, CMD_MAX = 200, MY_GROUP = '我的常用语';
+  function _cmdDefaults() {
+    return [
+      { n: '写作', items: [
+        { e: '✨', n: '润色', t: '请在保持原意和语言的前提下润色下面这段文字，使其更通顺自然、简洁得体，只输出润色后的文本' },
+        { e: '✍️', n: '续写', t: '请顺着下面这段文字的语气和主题自然续写一段，只输出续写的内容' },
+      ] },
+      { n: '整理', items: [
+        { e: '📌', n: '总结', t: '请用简洁的要点总结下面这段内容，只输出总结' },
+        { e: '🧭', n: '整理', t: '请把下面这段内容整理成条理清晰的结构（标题+要点/列表），用 Markdown 输出' },
+      ] },
+      { n: '翻译', items: [
+        { e: '🌐', n: '翻译', t: '请翻译下面这段文字：中文译为英文，其它语言译为中文。只输出译文' },
+      ] },
+    ];
+  }
+  function _cmdClean(it) {
+    return { e: String(it.e || '⚡').slice(0, 8), n: String(it.n || '').replace(/\s+/g, ' ').trim().slice(0, 20), t: String(it.t || '').replace(/\s+/g, ' ').trim().slice(0, 300) };
+  }
+  function cmdGroups() {
+    var raw = gs('aiQuickCmds', '');
+    if (!raw) { var d = _cmdDefaults(); _cmdSaveGroups(d); return d; } // 首次：写入预置，之后随便删改
+    try {
+      var o = JSON.parse(raw);
+      if (Array.isArray(o)) { // v1 平铺数组 → 预置组 + 归入「我的常用语」
+        var g = _cmdDefaults();
+        var mine = o.map(function (c) { return _cmdClean({ e: '⚡', t: c.t }); }).filter(function (i) { return i.t; });
+        if (mine.length) g.push({ n: MY_GROUP, items: mine });
+        _cmdSaveGroups(g); return g;
+      }
+      if (o && o.v === 2 && Array.isArray(o.groups)) return o.groups;
+    } catch (_) {}
+    return _cmdDefaults();
+  }
+  function _cmdSaveGroups(g) {
+    g = (g || []).slice(0, CMD_GMAX);
+    var total = 0;
+    g.forEach(function (grp) { grp.items = (grp.items || []).filter(function (it) { total++; return total <= CMD_MAX; }); });
+    ss('aiQuickCmds', JSON.stringify({ v: 2, groups: g }));
+  }
+  /** 平铺所有词条（带组内定位），给快捷条/右键菜单等用 */
+  function cmdItems() {
+    var out = [];
+    cmdGroups().forEach(function (grp, gi) {
+      (grp.items || []).forEach(function (it, ii) { out.push({ e: it.e || '⚡', n: it.n || '', t: it.t || '', gi: gi, ii: ii }); });
+    });
+    return out;
+  }
+  /** 快存一条（面板/块的「把当前输入存为常用语」）：进「我的常用语」组，没有就建 */
+  function cmdAdd(t) {
+    var it = _cmdClean({ e: '⚡', t: t }); if (!it.t) return false;
+    var g = cmdGroups();
+    for (var i = 0; i < g.length; i++) for (var j = 0; j < (g[i].items || []).length; j++) if (g[i].items[j].t === it.t) return false;
+    var mine = null;
+    for (var k = 0; k < g.length; k++) if (g[k].n === MY_GROUP) { mine = g[k]; break; }
+    if (!mine) { mine = { n: MY_GROUP, items: [] }; g.push(mine); }
+    mine.items.push(it);
+    _cmdSaveGroups(g); return true;
+  }
+  function cmdAddItem(gi, it) { var g = cmdGroups(); if (!g[gi]) return; it = _cmdClean(it); if (!it.t) return; (g[gi].items = g[gi].items || []).push(it); _cmdSaveGroups(g); }
+  function cmdUpdateItem(gi, ii, patch) {
+    var g = cmdGroups(); var grp = g[gi]; if (!grp || !grp.items || !grp.items[ii]) return;
+    var it = grp.items[ii];
+    var merged = _cmdClean({ e: patch.e != null ? patch.e : it.e, n: patch.n != null ? patch.n : it.n, t: patch.t != null ? patch.t : it.t });
+    if (!merged.t) grp.items.splice(ii, 1); else grp.items[ii] = merged;
+    _cmdSaveGroups(g);
+  }
+  function cmdRemoveItem(gi, ii) { var g = cmdGroups(); if (g[gi] && g[gi].items && g[gi].items[ii]) { g[gi].items.splice(ii, 1); _cmdSaveGroups(g); } }
+  function cmdAddGroup(name) {
+    name = String(name || '').trim().slice(0, 12) || '新分组';
+    var g = cmdGroups(); if (g.length >= CMD_GMAX) return -1;
+    g.push({ n: name, items: [] }); _cmdSaveGroups(g); return g.length - 1;
+  }
+  function cmdRenameGroup(gi, name) { var g = cmdGroups(); if (!g[gi]) return; g[gi].n = String(name || '').trim().slice(0, 12) || g[gi].n; _cmdSaveGroups(g); }
+  function cmdRemoveGroup(gi) { var g = cmdGroups(); if (g[gi]) { g.splice(gi, 1); _cmdSaveGroups(g); } }
+
   // 回复末尾的「想记住」标记：[[记住: 内容]]。stripMemoryMarks 把它从显示文本剥掉并取出内容。
   var _memRe = /\s*\[\[记住[:：]\s*([\s\S]*?)\]\]\s*/g;
   function stripMemoryMarks(text) {
@@ -86686,6 +86919,11 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       }
     }
     var body = { model: c.model, messages: messages, stream: true, temperature: c.temp };
+    // 联网检索：有服务端开关的服务商默认打开（能用就用，不做开关——用户拍板）。
+    // 通义兼容口用 enable_search；智谱用 web_search 工具。其它家没有这种"一个参数就联网"的
+    // 服务端开关（Kimi 的要多轮工具调用），乱塞参数会被严格接口拒收，所以不加。
+    if (c.providerId === 'qwen') body.enable_search = true;
+    else if (c.providerId === 'glm') body.tools = [{ type: 'web_search', web_search: { enable: true } }];
 
     fetch(requestUrl(c.base), {
       method: 'POST',
@@ -86765,15 +87003,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     return e instanceof Error ? e : new Error(String(m || '未知错误'));
   }
 
-  // ===== 选中文字动作 =====
-  var ACTIONS = [
-    { id: 'polish',    label: '润色',   emoji: '✨', mood: 'focus', prompt: '请在保持原意和语言的前提下润色下面这段文字，使其更通顺自然、简洁得体，只输出润色后的文本：\n\n' },
-    { id: 'continue',  label: '续写',   emoji: '✍️', mood: 'idea',  prompt: '请顺着下面这段文字的语气和主题自然续写一段，只输出续写的内容：\n\n' },
-    { id: 'translate', label: '翻译',   emoji: '🌐', mood: 'think', prompt: '请翻译下面这段文字：中文译为英文，其它语言译为中文。只输出译文：\n\n' },
-    { id: 'summary',   label: '总结',   emoji: '📌', mood: 'think', prompt: '请用简洁的要点总结下面这段内容，只输出总结：\n\n' },
-    { id: 'structure', label: '整理',   emoji: '🧭', mood: 'focus', prompt: '请把下面这段内容整理成条理清晰的结构（标题+要点/列表），用 Markdown 输出：\n\n' },
-  ];
-  function actionOf(id) { for (var i = 0; i < ACTIONS.length; i++) if (ACTIONS[i].id === id) return ACTIONS[i]; return null; }
+  // （原「选中文字动作」ACTIONS 已并入常用语预置组 _cmdDefaults：润色/续写/翻译/总结/整理，可删可改）
 
   /** 读取编辑器当前选中的纯文本（没有则空串）。只读，不改文档。 */
   function getSelectionText() {
@@ -86792,8 +87022,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   }
 
   window.aiChat = {
-    PROVIDERS: PROVIDERS, ACTIONS: ACTIONS,
-    provOf: provOf, actionOf: actionOf,
+    PROVIDERS: PROVIDERS, provOf: provOf,
     getConfig: getConfig, isConfigured: isConfigured, hasKey: hasKey,
     getKey: getKey, getKeyFor: getKeyFor, setKey: setKey, trySyncKeyDown: trySyncKeyDown,
     setProvider: setProvider, setModel: setModel, setBase: setBase,
@@ -86806,10 +87035,22 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     memEnabled: memEnabled, memSetEnabled: memSetEnabled,
     memCloud: memCloud, memSetCloud: memSetCloud,
     memList: memList, memAdd: memAdd, memUpdate: memUpdate, memRemove: memRemove, memClear: memClear,
+    cmdGroups: cmdGroups, cmdItems: cmdItems, cmdAdd: cmdAdd,
+    cmdAddItem: cmdAddItem, cmdUpdateItem: cmdUpdateItem, cmdRemoveItem: cmdRemoveItem,
+    cmdAddGroup: cmdAddGroup, cmdRenameGroup: cmdRenameGroup, cmdRemoveGroup: cmdRemoveGroup,
     stripMemoryMarks: stripMemoryMarks,
     stripMoodMark: stripMoodMark, MOOD_WORDS: MOOD_WORDS,
   };
 })();
+
+</script>
+  <script>
+/* 谷歌 Noto 动图 emoji 全集索引（由 tools/gen-emoji-index.mjs 生成，勿手改）
+ * 每项 [码点, 分类下标, "中文名 关键词…"]；码点即 fonts.gstatic.com/s/e/notoemoji/latest/<码点>/ 的目录名 */
+window.NOTO_EMOJI = {
+  cats: ["表情","人物","动物自然","食物","出行","活动","物品","符号","旗帜"],
+  items: [["1f600",0,"嘿嘿 笑脸 脸 高兴 smile"],["1f603",0,"哈哈 太棒了 开口笑 开口笑脸 smile-with-big-eyes"],["1f604",0,"大笑 哈哈 开口而笑的脸 开心 grin"],["1f601",0,"嘻嘻 笑脸 笑颜 脸 grinning"],["1f606",0,"斜眼笑 lol 咧嘴笑 哈哈 开心 laughing"],["1f605",0,"苦笑 冷汗 出汗 开口冒冷汗的脸 汗 grin-sweat"],["1f602",0,"笑哭了 lol 喜极而泣 大笑 眼泪 joy"],["1f923",0,"笑得满地打滚 lolol 乐翻了 哈哈 地板 rofl"],["1f62d",0,"放声大哭 哭 大哭 放声大哭的脸 loudly-crying"],["1f609",0,"眨眼 媚眼 撩拨 眨眼的脸 wink"],["1f617",0,"亲亲 亲吻 吻 脸 kissing"],["1f619",0,"微笑亲亲 亲亲 吻 微笑 kissing-smiling-eyes"],["1f61a",0,"羞涩亲亲 亲亲 吻 我爱你 羞涩 kissing-closed-eyes"],["1f618",0,"飞吻 亲亲 想你 我爱你 眨眼 kissing-heart"],["1f970",0,"喜笑颜开 三颗爱心的笑脸 心 我爱你 heart-face 3-hearts"],["1f60d",0,"花痴 我爱你 爱 红心 脸 heart-eyes"],["1f929",0,"好崇拜哦 兴奋 咧嘴笑 满天星 star-struck"],["1f973",0,"聚会笑脸 号角 喝彩 帽子 庆祝 partying-face"],["1fae0",0,"融化 冷笑 哈哈 尴尬 微笑 melting"],["1f643",0,"倒脸 好玩 好笑 脸 upside-down-face"],["1f642",0,"呵呵 开心 浅笑的脸 笑 slightly-happy"],["1f972",0,"含泪的笑脸 喜悦 喜极而泣 幸福 happy-cry"],["1f979",0,"忍住泪水 哭泣 喜极而泣 尴尬 holding-back-tears"],["1f60a",0,"羞涩微笑 害羞 微笑 满意 笑脸相迎 blush"],["263a_fe0f",0,"微笑 呵呵 开心 放松 warm-smile"],["1f60c",0,"松了口气 如释重负 松口气 脸 relieved"],["1f642_200d_2195_fe0f",0,"上下点头 点头，肯定 head-nod"],["1f642_200d_2194_fe0f",0,"左右摇头 否定 摇头 head-shake"],["1f60f",0,"得意 假笑 冷笑 得意的笑 smirk"],["1f924",0,"流口水 口水 垂涎 垂涎三尺 drool"],["1f60b",0,"好吃 口水 哈喇子 津津有味 yum"],["1f61b",0,"吐舌 吐舌头的脸 太好了 脸 stuck-out-tongue"],["1f61d",0,"眯眼吐舌 可怕 吐舌 尝 眯眼 squinting-tongue"],["1f61c",0,"单眼吐舌 单眼 古怪 吐舌 winky-tongue"],["1f92a",0,"滑稽 大小眼 大眼 小眼 zany-face"],["1faea",0,"distorted-face"],["1f614",0,"沉思 失落 心事重重 忧虑 pensive"],["1f97a",0,"恳求的脸 可怜兮兮的眼神 大眼睛 小狗的脸 怜悯 pleading"],["1f62c",0,"龇牙咧嘴 咬牙切齿 尴尬 牙医 脸 grimacing"],["1f611",0,"无语 没有反应 绷着脸 脸 expressionless"],["1f610",0,"冷漠 无感 脸 表情空洞 neutral-face"],["1f636",0,"沉默 嘴 安静 没嘴 mouth-none"],["1f636_200d_1f32b_fe0f",0,"迷茫 face-in-clouds lost"],["1fae5",0,"虚线脸 内向 无所谓 沮丧 消失 dotted-line-face invisible"],["1f910",0,"闭嘴 住嘴 嘴 封口 秘密 zipper-face"],["1fae1",0,"致敬 军队 好 好的 收到 salute"],["1f914",0,"想一想 思考 想 想事情 thinking-face"],["1f92b",0,"安静的脸 嘘 嘘声手势的脸 安静 shushing-face"],["1fae2",0,"睁眼捂嘴 哇塞 哑口无言 害怕 尴尬 hand-over-mouth"],["1f92d",0,"不说 不可说 傻笑 吃吃傻笑 smiling-eyes-with-hand-over-mouth chuckling"],["1f971",0,"打呵欠 呵欠 哈欠 困 困倦 yawn"],["1f917",0,"抱抱 抱 拥抱 笑 hug-face"],["1fae3",0,"偷看 偷窥 凝视 害怕 peeking"],["1f631",0,"吓死了 吓死 害怕 尖叫 screaming"],["1f928",0,"挑眉 不信任 不敢置信 不赞同 怀疑 raised-eyebrow"],["1f9d0",0,"带单片眼镜的脸 单眼镜 古板 奢华 富有 monocle"],["1f612",0,"不高兴 不屑 不服 不爽的脸 unamused"],["1f644",0,"翻白眼 不敢苟同 无语 白眼 rolling-eyes"],["1f62e_200d_1f4a8",0,"呼气 叹息 叹气 吹气 exhale"],["1f624",0,"傲慢 不爽 愤怒 气炸了 triumph"],["1f620",0,"生气 不爽 不高兴 怒 愤怒 angry"],["1f621",0,"怒火中烧 发火 发飙 怒 rage"],["1f92c",0,"嘴上有符号的脸 不爽 发誓 咒骂 cursing"],["1f61e",0,"失望 不高兴 失望的脸 脸 sad"],["1f613",0,"汗 冒冷汗 冒汗 冷 尴尬 sweat downcast"],["1f61f",0,"担心 不高兴 伤心 忧心的脸 意外 worried"],["1f625",0,"失望但如释重负 下次吧 出冷汗 失望 concerned"],["1f622",0,"哭 伤心 哀伤 哭脸 cry"],["2639_fe0f",0,"不满 不爽 不高兴 委屈 big-frown"],["1f641",0,"微微不满 不开心 不高兴 不高兴的脸 委屈 frown"],["1fae4",0,"郁闷 不相信 不确定 困惑 失望 diagonal-mouth"],["1f615",0,"困扰 不懂 不确定 困惑 slightly-frowning"],["1f630",0,"冷汗 张嘴冒冷汗的脸 惊讶 无语 anxious-with-sweat"],["1f628",0,"害怕 不安 怕 恐怖 scared"],["1f627",0,"极度痛苦 痛 痛啊 痛苦 anguished"],["1f626",0,"啊 惊讶 意外 目瞪口呆 gasp"],["1f62e",0,"吃惊 同情 啊 忘记 mouth-open"],["1f62f",0,"缄默 吃惊 哦 我的天 surprised hushed"],["1f632",0,"震惊 不可以 惊 惊讶 惊讶的脸 astonished"],["1f633",0,"脸红 困惑 天呀 害羞 羞涩 flushed"],["1f92f",0,"爆炸头 不可能 印象深刻 吓到了 惊吓 mind-blown exploding-head"],["1f616",0,"困惑 困惑的脸 焦头烂额 纠结 scrunched-mouth confounded"],["1f623",0,"痛苦 专注 入定 头痛 忍耐 scrunched-eyes persevering"],["1f629",0,"累死了 疲倦 疲劳 疲惫 累 weary"],["1f62b",0,"累 倦容 疲倦 疲劳 疲惫 distraught"],["1f635",0,"晕头转向 头晕 头晕眼花 晕头 晕头的脸 x-eyes"],["1f635_200d_1f4ab",0,"晕 哇 哎呀 头晕 dizzy-face"],["1fae8",0,"颤抖 哇 地震 天啊 惊喜 shaking-face"],["1f974",0,"头昏眼花 两眼不平 喝醉 嘴唇颤抖 woozy"],["1f975",0,"脸发烧 中暑 冒汗 出汗 发烧 hot-face sweat-face"],["1f976",0,"冷脸 冰柱 冷 冷冰冰 cold-face"],["1f922",0,"恶心 吐 呕 恶心作呕的脸 sick nauseated"],["1f92e",0,"呕吐 不舒服 吐 呕吐的脸 vomit"],["1fae9",0,"有眼袋 厌倦 困倦 晚睡 熬夜 tired bags-under-eyes"],["1f634",0,"睡着了 呼噜 小睡 想睡 打呼 sleep"],["1f62a",0,"困 哭 想睡 满脸睡容 sleepy"],["1f927",0,"打喷嚏 喷嚏 打喷嚏的脸 生病 sneeze"],["1f912",0,"发烧 体温计 咬着体温计的脸 温度计 thermometer-face"],["1f915",0,"受伤 头绑绷带 打绷带 脸 bandage-face"],["1f637",0,"感冒 医生 口罩 戴口罩 mask"],["1f925",0,"说谎 匹诺曹 脸 长鼻子 liar"],["1f607",0,"微笑天使 光环 天使 天真 幻想 halo innocent"],["1f920",0,"牛仔帽脸 帽 牛仔 脸 cowboy"],["1f911",0,"发财 拜金 脸 见钱眼开 money-face"],["1f913",0,"书呆子脸 专家 书呆子 天才 nerd-face"],["1f60e",0,"墨镜笑脸 太阳镜 眼镜 耶 脸 sunglasses-face"],["1f978",0,"伪装的脸 人物 伪装 眉毛 disguise"],["1f921",0,"小丑脸 小丑 脸 clown"],["1f4a9",0,"大便 好臭 屎 怪物 poop"],["1f608",0,"恶魔微笑 幻想 微笑 犄角 imp-smile"],["1f47f",0,"生气的恶魔 带角的怒容 幻想 恶魔 犄角 imp-frown"],["1f47b",0,"鬼 万圣节 妖怪 幻想 幽灵 ghost"],["1f480",0,"头骨 妖怪 怪兽 死亡 skull"],["1f916",0,"机器人 怪物 脸 robot"],["1f479",0,"食人魔 吓人 妖怪 幻想 日本 ogre"],["2603_fe0f",0,"雪与雪人 泠 雪 雪人 snowman-with-snow"],["26c4",0,"雪人 下雪 泠 snowman"],["1f47d",0,"外星人 ufo 外太空 外星 alien"],["1f47e",0,"外星怪物 ufo 外星 外星人 alien-monster"],["1f31a",0,"微笑的朔月 新月 月亮 朔月 moon-face-new"],["1f31d",0,"微笑的月亮 月亮 望月 满月 moon-face-full"],["1f31e",0,"微笑的太阳 太阳 温暖阳光 阳光明媚 sun-with-face"],["1f31b",0,"微笑的上弦月 上弦月 月亮 蛾眉月 moon-face-first-quarter"],["1f31c",0,"微笑的下弦月 下弦月 月亮 残月 moon-face-last-quarter"],["1f63a",0,"大笑的猫 哈哈 大笑的猫脸 猫脸 smiley-cat"],["1f638",0,"微笑的猫 呵呵 微笑的猫脸 猫脸 smile-cat"],["1f639",0,"笑出眼泪的猫 喜极而泣 快乐 猫脸 眼泪 joy-cat"],["1f63b",0,"花痴的猫 WC 喜欢 心 猫 heart-eyes-cat"],["1f63c",0,"奸笑的猫 嘲讽笑容 奸笑 奸笑的猫脸 smirk-cat"],["1f63d",0,"亲亲猫 亲亲 吻 猫脸 kissing-cat"],["1f640",0,"疲倦的猫 惊讶 猫脸 疲倦 scream-cat"],["1f63f",0,"哭泣的猫 哭 哭泣的猫脸 泪 crying-cat-face"],["1f63e",0,"生气的猫 猫脸 生气 生气的猫脸 pouting-cat"],["1f648",0,"非礼勿视 不许看 别看 尴尬 糗 see-no-evil-monkey"],["1f649",0,"非礼勿听 嘘 堵上耳朵 堵耳 猴子 hear-no-evil-monkey"],["1f64a",0,"非礼勿言 不许说 捂上嘴巴 捂嘴 秘密 speak-no-evil-monkey"],["2b50",0,"星星 五角星 白色星星 star"],["1f31f",0,"闪亮的星星 发光 星星 闪亮 glowing-star"],["2728",0,"闪亮 星星 火花 闪光 sparkles"],["26a1",0,"高压 危险 有电 闪电 electricity zap"],["1f4a5",0,"爆炸 撞 旺 炸 爆 collision"],["1faef",0,"fight"],["1f573_fe0f",0,"洞 井盖 坑 陷阱 hole"],["1f525",0,"火焰 火 烧 燃烧 fire burn"],["1f4af",0,"一百分 100 满分 百分百 one-hundred"],["1f389",0,"拉炮彩带 兴奋 呱呱叫 庆祝 彩带 party-popper"],["1f38a",0,"五彩纸屑球 五彩纸屑 庆祝 彩色纸屑 confetti-ball"],["2764_fe0f",0,"红心 心 爱 red-heart"],["1f9e1",0,"橙心 橘心 橘色 橘色的心 橙 orange-heart"],["1f49b",0,"黄心 我爱你 黄 yellow-heart"],["1f49a",0,"绿心 我爱你 绿 green-heart"],["1fa75",0,"浅蓝色的心 可爱 喜欢 天蓝 心 light-blue-heart"],["1f499",0,"蓝心 我爱你 蓝 blue-heart"],["1f49c",0,"紫心 我爱你 紫 purple-heart"],["1f90e",0,"棕心 心 心形 棕 brown-heart"],["1f5a4",0,"黑心 心 邪恶 黑 black-heart"],["1fa76",0,"灰心 心 感情 我爱你 暗灰 grey-heart"],["1f90d",0,"白心 心 心形 爱心 白 white-heart"],["1fa77",0,"粉红色的心 可爱 喜欢 心 感情 pink-heart"],["1f498",0,"心中箭了 一箭穿心 丘比特 我爱你 cupid"],["1f49d",0,"系有缎带的心 我爱你 爱的礼物 绑丝带的心 gift-heart"],["1f496",0,"闪亮的心 我爱你 激动 红心 闪亮 sparkling-heart"],["1f497",0,"搏动的心 亲亲 吻 我爱你 搏动 heart-grow"],["1f493",0,"心跳 心动 我爱你 爱 beating-heart"],["1f49e",0,"舞动的心 我爱你 旋转 涌动 revolving-hearts"],["1f495",0,"两颗心 我爱你 爱情 two-hearts"],["1f48c",0,"情书 信 心 邮件 love-letter"],["1f49f",0,"心型装饰 心 我爱你 装饰 heart-box"],["2665_fe0f",0,"红桃 扑克 牌 红心 heart"],["2763_fe0f",0,"心叹号 叹号 心动 标点符号 heart-exclamation-point"],["2764_fe0f_200d_1fa79",0,"修复受伤的心灵 修补 恢复 痊愈 bandaged-heart"],["1f494",0,"心碎 伤心 broken-heart"],["2764_fe0f_200d_1f525",0,"火上之心 渴望 燃烧 爱 fire-heart"],["1f48b",0,"唇印 亲吻 吻 唇 kiss"],["1fac2",0,"人的拥抱 再见 友谊 告别 hugging"],["1f5e3_fe0f",0,"说话 剪影 头 脸 讲话 speaking-head"],["1f463",0,"脚印 在路上 赤脚 足迹 footprints"],["1fac6",0,"指纹 侦探 印迹 安全 fingerprint"],["1f9e0",0,"脑 大脑 头脑 智慧 智能 brain"],["1fac0",0,"心脏器官 中心 器官 心率 心脏 anatomical-heart"],["1fa78",0,"血滴 医疗 月经 流血 献血 blood"],["1f9a0",0,"细菌 变形虫 病毒 科学 microbe virus"],["1f9b4",0,"骨头 叉骨 狗 骨骼 bone"],["1f440",0,"双眼 看 眼睛 窥视 eyes"],["1f441_fe0f",0,"眼睛 单眼 看 眼 eye"],["1fae6",0,"咬住嘴唇 不舒服 口红 咬嘴唇 biting-lip"],["1f443",0,"鼻子 嗅 气味 闻 鼻 nose"],["1f443_1f3fb",0,"鼻子: 较浅肤色 嗅 气味 较浅肤色 闻 nose"],["1f443_1f3fc",0,"鼻子: 中等-浅肤色 中等-浅肤色 嗅 气味 闻 nose"],["1f443_1f3fd",0,"鼻子: 中等肤色 中等肤色 嗅 气味 闻 nose"],["1f443_1f3fe",0,"鼻子: 中等-深肤色 中等-深肤色 嗅 气味 闻 nose"],["1f443_1f3ff",0,"鼻子: 较深肤色 嗅 气味 较深肤色 闻 nose"],["1f442",0,"耳朵 仔细听 听 耳 ear"],["1f442_1f3fb",0,"耳朵: 较浅肤色 仔细听 听 耳 耳朵 ear"],["1f442_1f3fc",0,"耳朵: 中等-浅肤色 中等-浅肤色 仔细听 听 耳 ear"],["1f442_1f3fd",0,"耳朵: 中等肤色 中等肤色 仔细听 听 耳 ear"],["1f442_1f3fe",0,"耳朵: 中等-深肤色 中等-深肤色 仔细听 听 耳 ear"],["1f442_1f3ff",0,"耳朵: 较深肤色 仔细听 听 耳 耳朵 ear"],["1f9bb",0,"戴助听器的耳朵 助听器 听力障碍 听障 失聪 hearing-aid"],["1f9bb_1f3fb",0,"戴助听器的耳朵: 较浅肤色 助听器 听力障碍 听障 失聪 hearing-aid"],["1f9bb_1f3fc",0,"戴助听器的耳朵: 中等-浅肤色 中等-浅肤色 助听器 听力障碍 听障 hearing-aid"],["1f9bb_1f3fd",0,"戴助听器的耳朵: 中等肤色 中等肤色 助听器 听力障碍 听障 hearing-aid"],["1f9bb_1f3fe",0,"戴助听器的耳朵: 中等-深肤色 中等-深肤色 助听器 听力障碍 听障 hearing-aid"],["1f9bb_1f3ff",0,"戴助听器的耳朵: 较深肤色 助听器 听力障碍 听障 失聪 hearing-aid"],["1f9b6",0,"脚 足踝 踏 踝 foot"],["1f9b6_1f3fb",0,"脚: 较浅肤色 脚 足踝 踏 踝 foot"],["1f9b6_1f3fc",0,"脚: 中等-浅肤色 中等-浅肤色 脚 足踝 踏 foot"],["1f9b6_1f3fd",0,"脚: 中等肤色 中等肤色 脚 足踝 踏 foot"],["1f9b6_1f3fe",0,"脚: 中等-深肤色 中等-深肤色 脚 足踝 踏 foot"],["1f9b6_1f3ff",0,"脚: 较深肤色 脚 足踝 踏 踝 foot"],["1f9b5",0,"腿 弯腿 肢体 脚 leg"],["1f9b5_1f3fb",0,"腿: 较浅肤色 弯腿 肢体 脚 腿 leg"],["1f9b5_1f3fc",0,"腿: 中等-浅肤色 中等-浅肤色 弯腿 肢体 脚 leg"],["1f9b5_1f3fd",0,"腿: 中等肤色 中等肤色 弯腿 肢体 脚 leg"],["1f9b5_1f3fe",0,"腿: 中等-深肤色 中等-深肤色 弯腿 肢体 脚 leg"],["1f9b5_1f3ff",0,"腿: 较深肤色 弯腿 肢体 脚 腿 leg"],["1f9bf",0,"机械腿 义肢 无障碍 腿 leg-mechanical"],["1f9be",0,"机械手臂 义肢 手臂 无障碍 arm-mechanical"],["1f4aa",0,"肌肉 二头肌 健身房 强壮 muscle flex"],["1f4aa_1f3fb",0,"肌肉: 较浅肤色 二头肌 健身房 强壮 肌肉 muscle flex"],["1f4aa_1f3fc",0,"肌肉: 中等-浅肤色 中等-浅肤色 二头肌 健身房 强壮 muscle flex"],["1f4aa_1f3fd",0,"肌肉: 中等肤色 中等肤色 二头肌 健身房 强壮 muscle flex"],["1f4aa_1f3fe",0,"肌肉: 中等-深肤色 中等-深肤色 二头肌 健身房 强壮 muscle flex"],["1f4aa_1f3ff",0,"肌肉: 较深肤色 二头肌 健身房 强壮 肌肉 muscle flex"],["1f44f",0,"鼓掌 干得好 恭喜 拍手 赞成 clap"],["1f44f_1f3fb",0,"鼓掌: 较浅肤色 干得好 恭喜 拍手 赞成 clap"],["1f44f_1f3fc",0,"鼓掌: 中等-浅肤色 中等-浅肤色 干得好 恭喜 拍手 clap"],["1f44f_1f3fd",0,"鼓掌: 中等肤色 中等肤色 干得好 恭喜 拍手 clap"],["1f44f_1f3fe",0,"鼓掌: 中等-深肤色 中等-深肤色 干得好 恭喜 拍手 clap"],["1f44f_1f3ff",0,"鼓掌: 较深肤色 干得好 恭喜 拍手 赞成 clap"],["1f44d",0,"拇指向上 同意 好 手 拇指 thumbs-up +1"],["1f44d_1f3fb",0,"拇指向上: 较浅肤色 同意 好 手 拇指 thumbs-up +1"],["1f44d_1f3fc",0,"拇指向上: 中等-浅肤色 中等-浅肤色 同意 好 手 thumbs-up +1"],["1f44d_1f3fd",0,"拇指向上: 中等肤色 中等肤色 同意 好 手 thumbs-up +1"],["1f44d_1f3fe",0,"拇指向上: 中等-深肤色 中等-深肤色 同意 好 手 thumbs-up +1"],["1f44d_1f3ff",0,"拇指向上: 较深肤色 同意 好 手 拇指 thumbs-up +1"],["1f44e",0,"拇指向下 不赞成 反对 否决 手 thumbs-down"],["1f44e_1f3fb",0,"拇指向下: 较浅肤色 不赞成 反对 否决 手 thumbs-down"],["1f44e_1f3fc",0,"拇指向下: 中等-浅肤色 不赞成 中等-浅肤色 反对 否决 thumbs-down"],["1f44e_1f3fd",0,"拇指向下: 中等肤色 不赞成 中等肤色 反对 否决 thumbs-down"],["1f44e_1f3fe",0,"拇指向下: 中等-深肤色 不赞成 中等-深肤色 反对 否决 thumbs-down"],["1f44e_1f3ff",0,"拇指向下: 较深肤色 不赞成 反对 否决 手 thumbs-down"],["1faf6",0,"做成心形的双手 手 比心 爱 heart-hands"],["1faf6_1f3fb",0,"做成心形的双手: 较浅肤色 做成心形的双手 手 比心 爱 heart-hands"],["1faf6_1f3fc",0,"做成心形的双手: 中等-浅肤色 中等-浅肤色 做成心形的双手 手 比心 heart-hands"],["1faf6_1f3fd",0,"做成心形的双手: 中等肤色 中等肤色 做成心形的双手 手 比心 heart-hands"],["1faf6_1f3fe",0,"做成心形的双手: 中等-深肤色 中等-深肤色 做成心形的双手 手 比心 heart-hands"],["1faf6_1f3ff",0,"做成心形的双手: 较深肤色 做成心形的双手 手 比心 爱 heart-hands"],["1f64c",0,"举双手 举手 击掌 双手 raising-hands hooray"],["1f64c_1f3fb",0,"举双手: 较浅肤色 举双手 举手 击掌 双手 raising-hands hooray"],["1f64c_1f3fc",0,"举双手: 中等-浅肤色 中等-浅肤色 举双手 举手 击掌 raising-hands hooray"],["1f64c_1f3fd",0,"举双手: 中等肤色 中等肤色 举双手 举手 击掌 raising-hands hooray"],["1f64c_1f3fe",0,"举双手: 中等-深肤色 中等-深肤色 举双手 举手 击掌 raising-hands hooray"],["1f64c_1f3ff",0,"举双手: 较深肤色 举双手 举手 击掌 双手 raising-hands hooray"],["1f450",0,"张开双手 十 双手 摊手 open-hands"],["1f450_1f3fb",0,"张开双手: 较浅肤色 十 双手 张开双手 摊手 open-hands"],["1f450_1f3fc",0,"张开双手: 中等-浅肤色 中等-浅肤色 十 双手 张开双手 open-hands"],["1f450_1f3fd",0,"张开双手: 中等肤色 中等肤色 十 双手 张开双手 open-hands"],["1f450_1f3fe",0,"张开双手: 中等-深肤色 中等-深肤色 十 双手 张开双手 open-hands"],["1f450_1f3ff",0,"张开双手: 较深肤色 十 双手 张开双手 摊手 open-hands"],["1f932",0,"掌心向上托起 双掌 双掌向上 希望 palms-up"],["1f932_1f3fb",0,"掌心向上托起: 较浅肤色 双掌 双掌向上 希望 掌心向上托起 palms-up"],["1f932_1f3fc",0,"掌心向上托起: 中等-浅肤色 中等-浅肤色 双掌 双掌向上 希望 palms-up"],["1f932_1f3fd",0,"掌心向上托起: 中等肤色 中等肤色 双掌 双掌向上 希望 palms-up"],["1f932_1f3fe",0,"掌心向上托起: 中等-深肤色 中等-深肤色 双掌 双掌向上 希望 palms-up"],["1f932_1f3ff",0,"掌心向上托起: 较深肤色 双掌 双掌向上 希望 掌心向上托起 palms-up"],["1f91c",0,"朝右的拳头 手 拳头 朝右 fist-rightwards"],["1f91c_1f3fb",0,"朝右的拳头: 较浅肤色 手 拳头 朝右 朝右的拳头 fist-rightwards"],["1f91c_1f3fc",0,"朝右的拳头: 中等-浅肤色 中等-浅肤色 手 拳头 朝右 fist-rightwards"],["1f91c_1f3fd",0,"朝右的拳头: 中等肤色 中等肤色 手 拳头 朝右 fist-rightwards"],["1f91c_1f3fe",0,"朝右的拳头: 中等-深肤色 中等-深肤色 手 拳头 朝右 fist-rightwards"],["1f91c_1f3ff",0,"朝右的拳头: 较深肤色 手 拳头 朝右 朝右的拳头 fist-rightwards"],["1f91b",0,"朝左的拳头 拳头 朝左 fist-leftwards"],["1f91b_1f3fb",0,"朝左的拳头: 较浅肤色 拳头 朝左 朝左的拳头 较浅肤色 fist-leftwards"],["1f91b_1f3fc",0,"朝左的拳头: 中等-浅肤色 中等-浅肤色 拳头 朝左 朝左的拳头 fist-leftwards"],["1f91b_1f3fd",0,"朝左的拳头: 中等肤色 中等肤色 拳头 朝左 朝左的拳头 fist-leftwards"],["1f91b_1f3fe",0,"朝左的拳头: 中等-深肤色 中等-深肤色 拳头 朝左 朝左的拳头 fist-leftwards"],["1f91b_1f3ff",0,"朝左的拳头: 较深肤色 拳头 朝左 朝左的拳头 较深肤色 fist-leftwards"],["270a",0,"举起拳头 举拳 团结 手 raised-fist"],["270a_1f3fb",0,"举起拳头: 较浅肤色 举拳 举起拳头 团结 手 raised-fist"],["270a_1f3fc",0,"举起拳头: 中等-浅肤色 中等-浅肤色 举拳 举起拳头 团结 raised-fist"],["270a_1f3fd",0,"举起拳头: 中等肤色 中等肤色 举拳 举起拳头 团结 raised-fist"],["270a_1f3fe",0,"举起拳头: 中等-深肤色 中等-深肤色 举拳 举起拳头 团结 raised-fist"],["270a_1f3ff",0,"举起拳头: 较深肤色 举拳 举起拳头 团结 手 raised-fist"],["1f44a",0,"出拳 完全同意 手 打 fist bump"],["1f44a_1f3fb",0,"出拳: 较浅肤色 出拳 完全同意 手 打 fist bump"],["1f44a_1f3fc",0,"出拳: 中等-浅肤色 中等-浅肤色 出拳 完全同意 手 fist bump"],["1f44a_1f3fd",0,"出拳: 中等肤色 中等肤色 出拳 完全同意 手 fist bump"],["1f44a_1f3fe",0,"出拳: 中等-深肤色 中等-深肤色 出拳 完全同意 手 fist bump"],["1f44a_1f3ff",0,"出拳: 较深肤色 出拳 完全同意 手 打 fist bump"],["1faf3",0,"掌心向下的手 下投 手 扔掉 拿起 palm-down drop"],["1faf3_1f3fb",0,"掌心向下的手: 较浅肤色 下投 手 扔掉 拿起 palm-down drop"],["1faf3_1f3fc",0,"掌心向下的手: 中等-浅肤色 下投 中等-浅肤色 手 扔掉 palm-down drop"],["1faf3_1f3fd",0,"掌心向下的手: 中等肤色 下投 中等肤色 手 扔掉 palm-down drop"],["1faf3_1f3fe",0,"掌心向下的手: 中等-深肤色 下投 中等-深肤色 手 扔掉 palm-down drop"],["1faf3_1f3ff",0,"掌心向下的手: 较深肤色 下投 手 扔掉 拿起 palm-down drop"],["1faf4",0,"掌心向上的手 不知道 召唤 告诉我 手 palm-up throw"],["1faf4_1f3fb",0,"掌心向上的手: 较浅肤色 不知道 召唤 告诉我 手 palm-up throw"],["1faf4_1f3fc",0,"掌心向上的手: 中等-浅肤色 不知道 中等-浅肤色 召唤 告诉我 palm-up throw"],["1faf4_1f3fd",0,"掌心向上的手: 中等肤色 不知道 中等肤色 召唤 告诉我 palm-up throw"],["1faf4_1f3fe",0,"掌心向上的手: 中等-深肤色 不知道 中等-深肤色 召唤 告诉我 palm-up throw"],["1faf4_1f3ff",0,"掌心向上的手: 较深肤色 不知道 召唤 告诉我 手 palm-up throw"],["1faf1",0,"向右的手 伸手 右 右手 向右 rightwards-hand"],["1faf1_1f3fb",0,"向右的手: 较浅肤色 伸手 右 右手 向右 rightwards-hand"],["1faf1_1f3fc",0,"向右的手: 中等-浅肤色 中等-浅肤色 伸手 右 右手 rightwards-hand"],["1faf1_1f3fd",0,"向右的手: 中等肤色 中等肤色 伸手 右 右手 rightwards-hand"],["1faf1_1f3fe",0,"向右的手: 中等-深肤色 中等-深肤色 伸手 右 右手 rightwards-hand"],["1faf1_1f3ff",0,"向右的手: 较深肤色 伸手 右 右手 向右 rightwards-hand"],["1faf2",0,"向左的手 伸手 向左 左 leftwards-hand"],["1faf2_1f3fb",0,"向左的手: 较浅肤色 伸手 向左 向左的手 左 leftwards-hand"],["1faf2_1f3fc",0,"向左的手: 中等-浅肤色 中等-浅肤色 伸手 向左 向左的手 leftwards-hand"],["1faf2_1f3fd",0,"向左的手: 中等肤色 中等肤色 伸手 向左 向左的手 leftwards-hand"],["1faf2_1f3fe",0,"向左的手: 中等-深肤色 中等-深肤色 伸手 向左 向左的手 leftwards-hand"],["1faf2_1f3ff",0,"向左的手: 较深肤色 伸手 向左 向左的手 左 leftwards-hand"],["1faf8",0,"向右推 中止 停止 击掌 向右 push-rightwards"],["1faf8_1f3fb",0,"向右推: 较浅肤色 中止 停止 击掌 向右 push-rightwards"],["1faf8_1f3fc",0,"向右推: 中等-浅肤色 中止 中等-浅肤色 停止 击掌 push-rightwards"],["1faf8_1f3fd",0,"向右推: 中等肤色 中止 中等肤色 停止 击掌 push-rightwards"],["1faf8_1f3fe",0,"向右推: 中等-深肤色 中止 中等-深肤色 停止 击掌 push-rightwards"],["1faf8_1f3ff",0,"向右推: 较深肤色 中止 停止 击掌 向右 push-rightwards"],["1faf7",0,"向左推 中止 停止 击掌 向左 push-leftwards"],["1faf7_1f3fb",0,"向左推: 较浅肤色 中止 停止 击掌 向左 push-leftwards"],["1faf7_1f3fc",0,"向左推: 中等-浅肤色 中止 中等-浅肤色 停止 击掌 push-leftwards"],["1faf7_1f3fd",0,"向左推: 中等肤色 中止 中等肤色 停止 击掌 push-leftwards"],["1faf7_1f3fe",0,"向左推: 中等-深肤色 中止 中等-深肤色 停止 击掌 push-leftwards"],["1faf7_1f3ff",0,"向左推: 较深肤色 中止 停止 击掌 向左 push-leftwards"],["1f44b",0,"挥手 你好 再见 嗨 在吗 wave"],["1f44b_1f3fb",0,"挥手: 较浅肤色 你好 再见 嗨 在吗 wave"],["1f44b_1f3fc",0,"挥手: 中等-浅肤色 中等-浅肤色 你好 再见 嗨 wave"],["1f44b_1f3fd",0,"挥手: 中等肤色 中等肤色 你好 再见 嗨 wave"],["1f44b_1f3fe",0,"挥手: 中等-深肤色 中等-深肤色 你好 再见 嗨 wave"],["1f44b_1f3ff",0,"挥手: 较深肤色 你好 再见 嗨 在吗 wave"],["1f91a",0,"立起的手背 举起 举起手背 手 手背 back-hand"],["1f91a_1f3fb",0,"立起的手背: 较浅肤色 举起 举起手背 手 手背 back-hand"],["1f91a_1f3fc",0,"立起的手背: 中等-浅肤色 中等-浅肤色 举起 举起手背 手 back-hand"],["1f91a_1f3fd",0,"立起的手背: 中等肤色 中等肤色 举起 举起手背 手 back-hand"],["1f91a_1f3fe",0,"立起的手背: 中等-深肤色 中等-深肤色 举起 举起手背 手 back-hand"],["1f91a_1f3ff",0,"立起的手背: 较深肤色 举起 举起手背 手 手背 back-hand"],["1f590_fe0f",0,"手掌 举起张开的手掌 击掌 布 手 palm"],["1f590_1f3fb",0,"手掌: 较浅肤色 举起张开的手掌 击掌 布 手 palm"],["1f590_1f3fc",0,"手掌: 中等-浅肤色 中等-浅肤色 举起张开的手掌 击掌 布 palm"],["1f590_1f3fd",0,"手掌: 中等肤色 中等肤色 举起张开的手掌 击掌 布 palm"],["1f590_1f3fe",0,"手掌: 中等-深肤色 中等-深肤色 举起张开的手掌 击掌 布 palm"],["1f590_1f3ff",0,"手掌: 较深肤色 举起张开的手掌 击掌 布 手 palm"],["270b",0,"举起手 举手 举起的手 五指 raised-hand"],["270b_1f3fb",0,"举起手: 较浅肤色 举手 举起手 举起的手 五指 raised-hand"],["270b_1f3fc",0,"举起手: 中等-浅肤色 中等-浅肤色 举手 举起手 举起的手 raised-hand"],["270b_1f3fd",0,"举起手: 中等肤色 中等肤色 举手 举起手 举起的手 raised-hand"],["270b_1f3fe",0,"举起手: 中等-深肤色 中等-深肤色 举手 举起手 举起的手 raised-hand"],["270b_1f3ff",0,"举起手: 较深肤色 举手 举起手 举起的手 五指 raised-hand"],["1f596",0,"瓦肯举手礼 手 敬礼 斯波克 星际迷航 vulcan prosper"],["1f596_1f3fb",0,"瓦肯举手礼: 较浅肤色 手 敬礼 斯波克 星际迷航 vulcan prosper"],["1f596_1f3fc",0,"瓦肯举手礼: 中等-浅肤色 中等-浅肤色 手 敬礼 斯波克 vulcan prosper"],["1f596_1f3fd",0,"瓦肯举手礼: 中等肤色 中等肤色 手 敬礼 斯波克 vulcan prosper"],["1f596_1f3fe",0,"瓦肯举手礼: 中等-深肤色 中等-深肤色 手 敬礼 斯波克 vulcan prosper"],["1f596_1f3ff",0,"瓦肯举手礼: 较深肤色 手 敬礼 斯波克 星际迷航 vulcan prosper"],["1f91f",0,"爱你的手势 三种 我爱你 手 爱你 love-you-gesture"],["1f91f_1f3fb",0,"爱你的手势: 较浅肤色 三种 我爱你 手 爱你 love-you-gesture"],["1f91f_1f3fc",0,"爱你的手势: 中等-浅肤色 三种 中等-浅肤色 我爱你 手 love-you-gesture"],["1f91f_1f3fd",0,"爱你的手势: 中等肤色 三种 中等肤色 我爱你 手 love-you-gesture"],["1f91f_1f3fe",0,"爱你的手势: 中等-深肤色 三种 中等-深肤色 我爱你 手 love-you-gesture"],["1f91f_1f3ff",0,"爱你的手势: 较深肤色 三种 我爱你 手 爱你 love-you-gesture"],["1f918",0,"摇滚 手 摇滚精神 燥起来 metal horns"],["1f918_1f3fb",0,"摇滚: 较浅肤色 手 摇滚 摇滚精神 燥起来 metal horns"],["1f918_1f3fc",0,"摇滚: 中等-浅肤色 中等-浅肤色 手 摇滚 摇滚精神 metal horns"],["1f918_1f3fd",0,"摇滚: 中等肤色 中等肤色 手 摇滚 摇滚精神 metal horns"],["1f918_1f3fe",0,"摇滚: 中等-深肤色 中等-深肤色 手 摇滚 摇滚精神 metal horns"],["1f918_1f3ff",0,"摇滚: 较深肤色 手 摇滚 摇滚精神 燥起来 metal horns"],["270c_fe0f",0,"胜利手势 V 和平 成功 手 victory v"],["270c_1f3fb",0,"胜利手势: 较浅肤色 V 和平 成功 手 victory v"],["270c_1f3fc",0,"胜利手势: 中等-浅肤色 V 中等-浅肤色 和平 成功 victory v"],["270c_1f3fd",0,"胜利手势: 中等肤色 V 中等肤色 和平 成功 victory v"],["270c_1f3fe",0,"胜利手势: 中等-深肤色 V 中等-深肤色 和平 成功 victory v"],["270c_1f3ff",0,"胜利手势: 较深肤色 V 和平 成功 手 victory v"],["1f91e",0,"交叉的手指 交叉 幸运 手 crossed-fingers"],["1f91e_1f3fb",0,"交叉的手指: 较浅肤色 交叉 交叉的手指 幸运 手 crossed-fingers"],["1f91e_1f3fc",0,"交叉的手指: 中等-浅肤色 中等-浅肤色 交叉 交叉的手指 幸运 crossed-fingers"],["1f91e_1f3fd",0,"交叉的手指: 中等肤色 中等肤色 交叉 交叉的手指 幸运 crossed-fingers"],["1f91e_1f3fe",0,"交叉的手指: 中等-深肤色 中等-深肤色 交叉 交叉的手指 幸运 crossed-fingers"],["1f91e_1f3ff",0,"交叉的手指: 较深肤色 交叉 交叉的手指 幸运 手 crossed-fingers"],["1faf0",0,"食指与拇指交叉的手 响指 心 手 昂贵 hand-with-index-finger-and-thumb-crossed snap"],["1faf0_1f3fb",0,"食指与拇指交叉的手: 较浅肤色 响指 心 手 昂贵 hand-with-index-finger-and-thumb-crossed snap"],["1faf0_1f3fc",0,"食指与拇指交叉的手: 中等-浅肤色 中等-浅肤色 响指 心 手 hand-with-index-finger-and-thumb-crossed snap"],["1faf0_1f3fd",0,"食指与拇指交叉的手: 中等肤色 中等肤色 响指 心 手 hand-with-index-finger-and-thumb-crossed snap"],["1faf0_1f3fe",0,"食指与拇指交叉的手: 中等-深肤色 中等-深肤色 响指 心 手 hand-with-index-finger-and-thumb-crossed snap"],["1faf0_1f3ff",0,"食指与拇指交叉的手: 较深肤色 响指 心 手 昂贵 hand-with-index-finger-and-thumb-crossed snap"],["1f919",0,"给我打电话 手 打电话给我 电话 call-me-hand"],["1f919_1f3fb",0,"给我打电话: 较浅肤色 手 打电话给我 电话 给我打电话 call-me-hand"],["1f919_1f3fc",0,"给我打电话: 中等-浅肤色 中等-浅肤色 手 打电话给我 电话 call-me-hand"],["1f919_1f3fd",0,"给我打电话: 中等肤色 中等肤色 手 打电话给我 电话 call-me-hand"],["1f919_1f3fe",0,"给我打电话: 中等-深肤色 中等-深肤色 手 打电话给我 电话 call-me-hand"],["1f919_1f3ff",0,"给我打电话: 较深肤色 手 打电话给我 电话 给我打电话 call-me-hand"],["1f90c",0,"捏手指 为什么 你到底在说什么 匮乏 审讯 pinched-fingers"],["1f90c_1f3fb",0,"捏手指: 较浅肤色 为什么 你到底在说什么 匮乏 审讯 pinched-fingers"],["1f90c_1f3fc",0,"捏手指: 中等-浅肤色 中等-浅肤色 为什么 你到底在说什么 匮乏 pinched-fingers"],["1f90c_1f3fd",0,"捏手指: 中等肤色 中等肤色 为什么 你到底在说什么 匮乏 pinched-fingers"],["1f90c_1f3fe",0,"捏手指: 中等-深肤色 中等-深肤色 为什么 你到底在说什么 匮乏 pinched-fingers"],["1f90c_1f3ff",0,"捏手指: 较深肤色 为什么 你到底在说什么 匮乏 审讯 pinched-fingers"],["1f90f",0,"捏合的手势 一点 一点点 小 少 pinch"],["1f90f_1f3fb",0,"捏合的手势: 较浅肤色 一点 一点点 小 少 pinch"],["1f90f_1f3fc",0,"捏合的手势: 中等-浅肤色 一点 一点点 中等-浅肤色 小 pinch"],["1f90f_1f3fd",0,"捏合的手势: 中等肤色 一点 一点点 中等肤色 小 pinch"],["1f90f_1f3fe",0,"捏合的手势: 中等-深肤色 一点 一点点 中等-深肤色 小 pinch"],["1f90f_1f3ff",0,"捏合的手势: 较深肤色 一点 一点点 小 少 pinch"],["1f44c",0,"OK OK 手势 可以 同意 ok"],["1f44c_1f3fb",0,"OK: 较浅肤色 OK OK 手势 可以 同意 ok"],["1f44c_1f3fc",0,"OK: 中等-浅肤色 OK OK 手势 中等-浅肤色 可以 ok"],["1f44c_1f3fd",0,"OK: 中等肤色 OK OK 手势 中等肤色 可以 ok"],["1f44c_1f3fe",0,"OK: 中等-深肤色 OK OK 手势 中等-深肤色 可以 ok"],["1f44c_1f3ff",0,"OK: 较深肤色 OK OK 手势 可以 同意 ok"],["1faf5",0,"指向观察者的食指 伸出手指 你 戳 手指 pointing"],["1faf5_1f3fb",0,"指向观察者的食指: 较浅肤色 伸出手指 你 戳 手指 pointing"],["1faf5_1f3fc",0,"指向观察者的食指: 中等-浅肤色 中等-浅肤色 伸出手指 你 戳 pointing"],["1faf5_1f3fd",0,"指向观察者的食指: 中等肤色 中等肤色 伸出手指 你 戳 pointing"],["1faf5_1f3fe",0,"指向观察者的食指: 中等-深肤色 中等-深肤色 伸出手指 你 戳 pointing"],["1faf5_1f3ff",0,"指向观察者的食指: 较深肤色 伸出手指 你 戳 手指 pointing"],["1f449",0,"反手食指向右指 反手 向右指 手 point-right"],["1f449_1f3fb",0,"反手食指向右指: 较浅肤色 反手 反手食指向右指 向右指 手 point-right"],["1f449_1f3fc",0,"反手食指向右指: 中等-浅肤色 中等-浅肤色 反手 反手食指向右指 向右指 point-right"],["1f449_1f3fd",0,"反手食指向右指: 中等肤色 中等肤色 反手 反手食指向右指 向右指 point-right"],["1f449_1f3fe",0,"反手食指向右指: 中等-深肤色 中等-深肤色 反手 反手食指向右指 向右指 point-right"],["1f449_1f3ff",0,"反手食指向右指: 较深肤色 反手 反手食指向右指 向右指 手 point-right"],["1f448",0,"反手食指向左指 反手 向左指 手 point-left"],["1f448_1f3fb",0,"反手食指向左指: 较浅肤色 反手 反手食指向左指 向左指 手 point-left"],["1f448_1f3fc",0,"反手食指向左指: 中等-浅肤色 中等-浅肤色 反手 反手食指向左指 向左指 point-left"],["1f448_1f3fd",0,"反手食指向左指: 中等肤色 中等肤色 反手 反手食指向左指 向左指 point-left"],["1f448_1f3fe",0,"反手食指向左指: 中等-深肤色 中等-深肤色 反手 反手食指向左指 向左指 point-left"],["1f448_1f3ff",0,"反手食指向左指: 较深肤色 反手 反手食指向左指 向左指 手 point-left"],["261d_fe0f",0,"食指向上指 向上指 手 指上 食指 index-finger"],["261d_1f3fb",0,"食指向上指: 较浅肤色 向上指 手 指上 较浅肤色 index-finger"],["261d_1f3fc",0,"食指向上指: 中等-浅肤色 中等-浅肤色 向上指 手 指上 index-finger"],["261d_1f3fd",0,"食指向上指: 中等肤色 中等肤色 向上指 手 指上 index-finger"],["261d_1f3fe",0,"食指向上指: 中等-深肤色 中等-深肤色 向上指 手 指上 index-finger"],["261d_1f3ff",0,"食指向上指: 较深肤色 向上指 手 指上 较深肤色 index-finger"],["1f446",0,"反手食指向上指 反手 向上指 手 point-up"],["1f446_1f3fb",0,"反手食指向上指: 较浅肤色 反手 反手食指向上指 向上指 手 point-up"],["1f446_1f3fc",0,"反手食指向上指: 中等-浅肤色 中等-浅肤色 反手 反手食指向上指 向上指 point-up"],["1f446_1f3fd",0,"反手食指向上指: 中等肤色 中等肤色 反手 反手食指向上指 向上指 point-up"],["1f446_1f3fe",0,"反手食指向上指: 中等-深肤色 中等-深肤色 反手 反手食指向上指 向上指 point-up"],["1f446_1f3ff",0,"反手食指向上指: 较深肤色 反手 反手食指向上指 向上指 手 point-up"],["1f447",0,"反手食指向下指 反手 向下指 手 point-down"],["1f447_1f3fb",0,"反手食指向下指: 较浅肤色 反手 反手食指向下指 向下指 手 point-down"],["1f447_1f3fc",0,"反手食指向下指: 中等-浅肤色 中等-浅肤色 反手 反手食指向下指 向下指 point-down"],["1f447_1f3fd",0,"反手食指向下指: 中等肤色 中等肤色 反手 反手食指向下指 向下指 point-down"],["1f447_1f3fe",0,"反手食指向下指: 中等-深肤色 中等-深肤色 反手 反手食指向下指 向下指 point-down"],["1f447_1f3ff",0,"反手食指向下指: 较深肤色 反手 反手食指向下指 向下指 手 point-down"],["1f595",0,"竖中指 中指 反手 手 middle-finger"],["1f595_1f3fb",0,"竖中指: 较浅肤色 中指 反手 手 竖中指 middle-finger"],["1f595_1f3fc",0,"竖中指: 中等-浅肤色 中指 中等-浅肤色 反手 手 middle-finger"],["1f595_1f3fd",0,"竖中指: 中等肤色 中指 中等肤色 反手 手 middle-finger"],["1f595_1f3fe",0,"竖中指: 中等-深肤色 中指 中等-深肤色 反手 手 middle-finger"],["1f595_1f3ff",0,"竖中指: 较深肤色 中指 反手 手 竖中指 middle-finger"],["270d_fe0f",0,"写字 写 手 笔 writing-hand"],["270d_1f3fb",0,"写字: 较浅肤色 写 写字 手 笔 writing-hand"],["270d_1f3fc",0,"写字: 中等-浅肤色 中等-浅肤色 写 写字 手 writing-hand"],["270d_1f3fd",0,"写字: 中等肤色 中等肤色 写 写字 手 writing-hand"],["270d_1f3fe",0,"写字: 中等-深肤色 中等-深肤色 写 写字 手 writing-hand"],["270d_1f3ff",0,"写字: 较深肤色 写 写字 手 笔 writing-hand"],["1f933",0,"自拍 手机 相机 selfie"],["1f933_1f3fb",0,"自拍: 较浅肤色 手机 相机 自拍 较浅肤色 selfie"],["1f933_1f3fc",0,"自拍: 中等-浅肤色 中等-浅肤色 手机 相机 自拍 selfie"],["1f933_1f3fd",0,"自拍: 中等肤色 中等肤色 手机 相机 自拍 selfie"],["1f933_1f3fe",0,"自拍: 中等-深肤色 中等-深肤色 手机 相机 自拍 selfie"],["1f933_1f3ff",0,"自拍: 较深肤色 手机 相机 自拍 较深肤色 selfie"],["1f64f",0,"双手合十 合掌 感恩 拜托 folded-hands please"],["1f64f_1f3fb",0,"双手合十: 较浅肤色 双手合十 合掌 感恩 拜托 folded-hands please"],["1f64f_1f3fc",0,"双手合十: 中等-浅肤色 中等-浅肤色 双手合十 合掌 感恩 folded-hands please"],["1f64f_1f3fd",0,"双手合十: 中等肤色 中等肤色 双手合十 合掌 感恩 folded-hands please"],["1f64f_1f3fe",0,"双手合十: 中等-深肤色 中等-深肤色 双手合十 合掌 感恩 folded-hands please"],["1f64f_1f3ff",0,"双手合十: 较深肤色 双手合十 合掌 感恩 拜托 folded-hands please"],["1f485",0,"涂指甲油 修指甲 忙完了 护手 指甲油 nail-care"],["1f485_1f3fb",0,"涂指甲油: 较浅肤色 修指甲 忙完了 护手 指甲油 nail-care"],["1f485_1f3fc",0,"涂指甲油: 中等-浅肤色 中等-浅肤色 修指甲 忙完了 护手 nail-care"],["1f485_1f3fd",0,"涂指甲油: 中等肤色 中等肤色 修指甲 忙完了 护手 nail-care"],["1f485_1f3fe",0,"涂指甲油: 中等-深肤色 中等-深肤色 修指甲 忙完了 护手 nail-care"],["1f485_1f3ff",0,"涂指甲油: 较深肤色 修指甲 忙完了 护手 指甲油 nail-care"],["1f91d",0,"握手 一言为定 会面 协议 君子协定 handshake"],["1f91d_1f3fb",0,"握手: 较浅肤色 一言为定 会面 协议 君子协定 handshake"],["1faf1_1f3fb_200d_1faf2_1f3fc",0,"握手: 较浅肤色中等-浅肤色 一言为定 中等-浅肤色 会面 协议 handshake"],["1faf1_1f3fb_200d_1faf2_1f3fd",0,"握手: 较浅肤色中等肤色 一言为定 中等肤色 会面 协议 handshake"],["1faf1_1f3fb_200d_1faf2_1f3fe",0,"握手: 较浅肤色中等-深肤色 一言为定 中等-深肤色 会面 协议 handshake"],["1faf1_1f3fb_200d_1faf2_1f3ff",0,"握手: 较浅肤色较深肤色 一言为定 会面 协议 君子协定 handshake"],["1faf1_1f3fc_200d_1faf2_1f3fb",0,"握手: 中等-浅肤色较浅肤色 一言为定 中等-浅肤色 会面 协议 handshake"],["1f91d_1f3fc",0,"握手: 中等-浅肤色 一言为定 中等-浅肤色 会面 协议 handshake"],["1faf1_1f3fc_200d_1faf2_1f3fd",0,"握手: 中等-浅肤色中等肤色 一言为定 中等-浅肤色 中等肤色 会面 handshake"],["1faf1_1f3fc_200d_1faf2_1f3fe",0,"握手: 中等-浅肤色中等-深肤色 一言为定 中等-浅肤色 中等-深肤色 会面 handshake"],["1faf1_1f3fc_200d_1faf2_1f3ff",0,"握手: 中等-浅肤色较深肤色 一言为定 中等-浅肤色 会面 协议 handshake"],["1faf1_1f3fd_200d_1faf2_1f3fb",0,"握手: 中等肤色较浅肤色 一言为定 中等肤色 会面 协议 handshake"],["1faf1_1f3fd_200d_1faf2_1f3fc",0,"握手: 中等肤色中等-浅肤色 一言为定 中等-浅肤色 中等肤色 会面 handshake"],["1f91d_1f3fd",0,"握手: 中等肤色 一言为定 中等肤色 会面 协议 handshake"],["1faf1_1f3fd_200d_1faf2_1f3fe",0,"握手: 中等肤色中等-深肤色 一言为定 中等-深肤色 中等肤色 会面 handshake"],["1faf1_1f3fd_200d_1faf2_1f3ff",0,"握手: 中等肤色较深肤色 一言为定 中等肤色 会面 协议 handshake"],["1faf1_1f3fe_200d_1faf2_1f3fb",0,"握手: 中等-深肤色较浅肤色 一言为定 中等-深肤色 会面 协议 handshake"],["1faf1_1f3fe_200d_1faf2_1f3fc",0,"握手: 中等-深肤色中等-浅肤色 一言为定 中等-浅肤色 中等-深肤色 会面 handshake"],["1faf1_1f3fe_200d_1faf2_1f3fd",0,"握手: 中等-深肤色中等肤色 一言为定 中等-深肤色 中等肤色 会面 handshake"],["1f91d_1f3fe",0,"握手: 中等-深肤色 一言为定 中等-深肤色 会面 协议 handshake"],["1faf1_1f3fe_200d_1faf2_1f3ff",0,"握手: 中等-深肤色较深肤色 一言为定 中等-深肤色 会面 协议 handshake"],["1faf1_1f3ff_200d_1faf2_1f3fb",0,"握手: 较深肤色较浅肤色 一言为定 会面 协议 君子协定 handshake"],["1faf1_1f3ff_200d_1faf2_1f3fc",0,"握手: 较深肤色中等-浅肤色 一言为定 中等-浅肤色 会面 协议 handshake"],["1faf1_1f3ff_200d_1faf2_1f3fd",0,"握手: 较深肤色中等肤色 一言为定 中等肤色 会面 协议 handshake"],["1faf1_1f3ff_200d_1faf2_1f3fe",0,"握手: 较深肤色中等-深肤色 一言为定 中等-深肤色 会面 协议 handshake"],["1f91d_1f3ff",0,"握手: 较深肤色 一言为定 会面 协议 君子协定 handshake"],["1fa82",1,"降落伞 帆伞 悬挂滑翔 滑翔 滑翔伞 parachute"],["1fac8",1,"hairy-creature"],["1f483",1,"跳舞的女人 优雅 佛拉门戈 女人 女舞者 dancer-woman"],["1f483_1f3fb",1,"跳舞的女人: 较浅肤色 优雅 佛拉门戈 女人 女舞者 dancer-woman"],["1f483_1f3fc",1,"跳舞的女人: 中等-浅肤色 中等-浅肤色 优雅 佛拉门戈 女人 dancer-woman"],["1f483_1f3fd",1,"跳舞的女人: 中等肤色 中等肤色 优雅 佛拉门戈 女人 dancer-woman"],["1f483_1f3fe",1,"跳舞的女人: 中等-深肤色 中等-深肤色 优雅 佛拉门戈 女人 dancer-woman"],["1f483_1f3ff",1,"跳舞的女人: 较深肤色 优雅 佛拉门戈 女人 女舞者 dancer-woman"],["1f490",2,"花束 周年纪念 生日 罗曼史 bouquet flowers"],["1f339",2,"玫瑰 优雅 红玫瑰 花 rose"],["1f940",2,"枯萎的花 凋谢 枯萎 花 wilted-flower"],["1f337",2,"郁金香 开花 花 tulip"],["1fab7",2,"莲花 佛教 印度教 幽静 恬静 lotus"],["1f338",2,"樱花 花 cherry-blossom"],["1fabb",2,"风信子 春天 植物 灌木 矢车菊 hyacinth"],["1f33c",2,"开花 花 蒲公英 blossom"],["1f342",2,"落叶 叶 秋 fallen-leaf"],["1f341",2,"枫叶 树叶 秋叶 落叶 maple-leaf"],["1f344",2,"蘑菇 毒蕈 真菌 mushroom"],["1f33f",2,"药草 草药 香草 herb"],["1f331",2,"幼苗 发芽 芽 苗 plant seed"],["1f343",2,"风吹叶落 叶子 树叶 随风飘舞 leaves"],["1f340",2,"四叶草 幸运 爱尔兰的 luck four-leaf-clover"],["1f335",2,"仙人掌 干旱 植物 沙漠 cactus"],["1fabe",2,"无叶树 冬天 冬季 干旱 无叶 leafless-tree"],["1f332",2,"松树 圣诞树 常青树 树 evergreen-tree"],["1faa8",2,"岩石 固体 坚不可摧 巨石 rock"],["1f6d8",2,"山体滑坡 危险 地震 塌方 山 debris landslide"],["1f30b",2,"火山 喷发 大自然 山 volcano"],["1f3de_fe0f",2,"国家公园 公园 自然 风景 national-park"],["1f305",2,"日出 大自然 太阳 早晨 sunrise"],["1f304",2,"山顶日出 太阳 山 日出 sunrise-over-mountains"],["1f30a",2,"浪花 波浪 浪 海洋 ocean"],["1f32c_fe0f",2,"大风 狂风 风吹 wind-face"],["2744_fe0f",2,"雪花 冷 天气 雪 snowflake winter"],["1f300",2,"台风 天气 旋风 晕 cyclone"],["1f32a_fe0f",2,"龙卷风 云 天气 旋风 tornado"],["1f308",2,"彩虹 LGBT 双性恋 同志 rainbow"],["1f4a7",2,"水滴 冷 天气 水 droplet"],["2601_fe0f",2,"云 云彩 云朵 天气 cloud"],["1f327_fe0f",2,"下雨 云 天气 雨 rain-cloud"],["1f329_fe0f",2,"打雷 云 天气 闪电 cloud-with-lightning"],["26c5",2,"阴 乌云蔽日 多云 partly-sunny"],["1fa90",2,"有环行星 土星 行星 ringed-planet"],["1f30d",2,"地球上的欧洲非洲 世界 地球 欧洲 globe-showing-Europe-Africa"],["1f30e",2,"地球上的美洲 世界 全球 地球 globe-showing-Americas"],["1f30f",2,"地球上的亚洲澳洲 世界 亚洲 亚澳 全球 globe-showing-Asia-Australia"],["1f30c",2,"银河 太空 星空 milky-way"],["2604_fe0f",2,"彗星 太空 comet"],["1f981",2,"狮子 狮子头 狮子座 脸 lion-face"],["1f43a",2,"狼 头 狼头 脸 wolf"],["1f43b",2,"熊 低吼 头 灰熊 bear-face"],["1f43c",2,"熊猫 头 熊猫脸 猫熊 panda"],["1f98a",2,"狐狸 动物 头 狐狸的脸 fox-face"],["1f42e",2,"奶牛头 乳牛 奶牛 母牛 cow-face"],["1f984",2,"独角兽 头 独角兽头 脸 unicorn"],["1f98e",2,"蜥蜴 爬行动物 lizard"],["1f409",2,"龙 中国 权力的游戏 dragon"],["1f996",2,"霸王龙 恐龙 暴龙 暴龙君主 t-rex"],["1f995",2,"蜥蜴类 万龙属 恐龙 梁龙 腕龙 dinosaur"],["1f422",2,"龟 乌龟 海龟 陆龟 turtle"],["1f40a",2,"鳄鱼 crocodile"],["1f40d",2,"蛇 持票人 狡猾的人 蛇夫座 snake"],["1f438",2,"青蛙 动物 头 脸 frog"],["1f407",2,"兔子 兔 动物 rabbit"],["1f400",2,"耗子 鼠 rat"],["1f429",2,"贵宾犬 卷毛狗 毛茸茸 狗 poodle"],["1f415",2,"狗 动物 宠物 小狗 汪星人 dog"],["1f9ae",2,"导盲犬 指引 无障碍 盲 guide-dog"],["1f415_200d_1f9ba",2,"服务犬 工作犬 无障碍 服务 service-dog"],["1f416",2,"猪 培根 猪肉 pig"],["1f40e",2,"马 动物 比赛 赛马 racehorse"],["1facf",2,"驴 倔强 动物 哺乳动物 固执的 donkey"],["1f402",2,"公牛 牛 金牛座 黄道十二宫 ox"],["1f410",2,"山羊 摩羯座 黄道十二宫 goat"],["1f9a5",2,"树懒 慢 懒 爬树 sloth"],["1f998",2,"袋鼠 动物 小袋鼠 有袋目动物 有袋类动物 kangaroo"],["1f405",2,"老虎 动物园 虎 tiger"],["1f412",2,"猴子 猴 monkey"],["1f98d",2,"大猩猩 动物 gorilla"],["1f9a7",2,"红毛猩猩 动物 猩猩 猴 猴子 orangutan"],["1f43f_fe0f",2,"松鼠 花栗鼠 金花鼠 chipmunk"],["1f99d",2,"浣熊 动物 好奇 淘气 raccoon"],["1f994",2,"刺猬 多刺 hedgehog"],["1f9a6",2,"水獭 动物 好玩 捕鱼 otter"],["1f987",2,"蝙蝠 吸血鬼 bat"],["1f426",2,"鸟 动物 鸟类学 bird"],["1f426_200d_2b1b",2,"黑色的鸟 乌鸦 动物 喙 渡鸦 black-bird"],["1f413",2,"公鸡 动物 鸡 rooster"],["1f423",2,"小鸡破壳 小鸡 破壳 hatching-chick"],["1f424",2,"小鸡 鸡 baby-chick"],["1f425",2,"正面朝向的小鸡 小鸡 hatched-chick"],["1f985",2,"鹰 老鹰 鸟 eagle"],["1f989",2,"猫头鹰 睿智 鸟 owl"],["1f54a_fe0f",2,"鸽 和平 和平象征 飞翔 鸟 peace dove"],["1fabf",2,"鹅 傻 傻瓜 动物 嘎嘎叫声 goose"],["1f9a9",2,"火烈鸟 华丽 热带 红鹳 flamingo"],["1f99a",2,"孔雀 卖弄 招摇 色彩缤纷 peacock"],["1f426_200d_1f525",2,"凤凰 不朽 不死鸟 东山再起 phoenix"],["1f427",2,"企鹅 南极 南极洲 penguin"],["1f9ad",2,"海豹 动物 海洋 海狮 seal"],["1f988",2,"鲨鱼 鱼 鲨 shark"],["1facd",2,"虎鲸 大海 海洋 鲸 鲸鱼 orca"],["1f42c",2,"海豚 鸭脚板 dolphin"],["1f433",2,"喷水的鲸 喷水 鲸 whale"],["1f41f",2,"鱼 双鱼座 星座 黄道十二宫 fish"],["1f421",2,"河豚 鱼 blowfish"],["1f99e",2,"龙虾 浓汤 海鲜 红龙虾 贝类浓汤 lobster"],["1f980",2,"蟹 巨蟹座 螃蟹 黄道十二宫 crab"],["1f419",2,"章鱼 八爪 鱼 octopus"],["1fabc",2,"水母 刺毛 动物 发光 哎哟 jellyfish"],["1fae7",2,"气泡 打嗝 水下 泡泡 bubbles"],["1f982",2,"蝎子 天蝎宫 天蝎座 黄道十二宫 scorpion"],["1f577_fe0f",2,"蜘蛛 昆虫 spider"],["1f40c",2,"蜗牛 法国蜗牛 snail"],["1f41c",2,"蚂蚁 ant"],["1f997",2,"蟋蟀 昆虫 蚱蜢 蛐蛐 cricket"],["1f99f",2,"蚊子 发烧 发热 昆虫 疟疾 mosquito"],["1fab3",2,"蟑螂 动物 害虫 小强 昆虫 cockroach"],["1fab0",2,"苍蝇 动物 害虫 疾病 腐烂 fly"],["1f41d",2,"蜜蜂 勤劳 昆虫 蜂蜜 bee"],["1f41e",2,"瓢虫 昆虫 母 lady-bug"],["1f98b",2,"蝴蝶 昆虫 漂亮 美丽 butterfly"],["1f41b",2,"毛毛虫 昆虫 毛虫 bug"],["1fab1",2,"蠕虫 动物 寄生虫 环节动物 蚯蚓 worm"],["1f43e",2,"爪印 爪 爪子 足迹 paw prints"],["1f353",3,"草莓 水果 浆果 strawberry"],["1f352",3,"樱桃 水果 cherries"],["1f34e",3,"红苹果 健康 水果 熟 红 red-apple"],["1f345",3,"西红柿 水果 番茄 蔬菜 tomato"],["1f349",3,"西瓜 水果 watermelon"],["1f34a",3,"橘子 柑桔 柑橘 桔子 tangerine orange"],["1f955",3,"胡萝卜 蔬菜 食物 carrot"],["1f96d",3,"芒果 水果 热带 食物 mango"],["1f34d",3,"菠萝 水果 热带 pineapple"],["1f33d",3,"玉米 农作物 包谷 苞米 ear-of-corn"],["1f34b",3,"柠檬 柑橘 水果 酸 lemon"],["1f348",3,"甜瓜 哈密瓜 水果 蜜瓜 melon"],["1f350",3,"梨 水果 pear"],["1fadb",3,"豌豆荚 大豆 毛豆 素食者 荚 pea-pod"],["1f96c",3,"绿叶蔬菜 卷心菜 圆白菜 小白菜 甘蓝 leafy-green"],["1fad1",3,"灯笼椒 蔬菜 辣椒 青椒 bell-pepper"],["1f95d",3,"猕猴桃 奇异果 水果 食物 kiwi-fruit"],["1f951",3,"鳄梨 水果 牛油果 酪梨 食物 avocado"],["1f966",3,"西兰花 甘蓝 野生卷心菜 broccoli"],["1f952",3,"黄瓜 泡菜 腌菜 蔬菜 食物 cucumber"],["1fad0",3,"蓝莓 水果 浆果 越桔 blueberries"],["1f347",3,"葡萄 水果 grapes"],["1fadc",3,"根菜 根 甜菜 素食 色拉 root-vegetable beet"],["1f954",3,"土豆 蔬菜 食物 马铃薯 potato"],["1f9c5",3,"洋葱 佐料 调味 onion"],["1fada",3,"姜 健康 啤酒 天然 ginger"],["1f9c4",3,"蒜 佐料 大蒜 蒜头 garlic"],["1fad8",3,"豆 肾 豆子 豆类 beans"],["1f35e",3,"面包 一条面包 全麦面包 小麦 淀粉 bread"],["1f95e",3,"烙饼 煎饼 薄煎饼 薄饼 pancakes"],["1f373",3,"煎蛋 一面老一面嫩的煎蛋 做菜 只煎一面老 平底锅 cooking"],["1f9c0",3,"芝士 奶酪 起司 cheese-wedge"],["1f953",3,"培根 烟肉 熏肉 肉 bacon"],["1f357",3,"家禽的腿 家禽 火鸡 饿 poultry-leg"],["1f354",3,"汉堡 吃 汉堡包 速食 hamburger"],["1f32d",3,"热狗 香肠 hot-dog"],["1f968",3,"椒盐卷饼 弯曲 扭曲食品 盘绕 pretzel"],["1f355",3,"披萨 一片比萨 比萨 比萨饼 pizza"],["1f32e",3,"墨西哥卷饼 卷饼 玉米卷饼 墨西哥 taco"],["1f32f",3,"墨西哥玉米煎饼 卷饼 玉米煎饼 墨西哥 墨西哥卷饼 burrito"],["1f35d",3,"意粉 意大利面 意面 肉丸 spaghetti"],["1f957",3,"绿色沙拉 沙拉 绿色蔬菜 食物 green-salad"],["1f35c",3,"面条 拉面 河粉 热气腾腾 热气腾腾面碗 steaming-bowl"],["1f362",3,"关东煮 串 卡博 海鲜 oden"],["1f361",3,"团子 串 和果子 日本 dango"],["1f368",3,"冰淇淋 冰 冰激凌 奶油 ice-cream"],["1f366",3,"圆筒冰激凌 冰淇淋 圆筒冰淇淋 甜 soft-ice-cream"],["1f967",3,"派 一片派 南瓜派 水果派 油酥点心 pie"],["1f369",3,"甜甜圈 甜 甜点 食物 doughnut"],["1f36a",3,"饼干 巧克力片 曲奇 曲奇饼 甜点 cookie"],["1f9c2",3,"盐 佐料瓶 味道 咸 火大 salt"],["1f37f",3,"爆米花 看电影 popcorn"],["1f9cb",3,"珍珠奶茶 奶茶 泡泡 牛奶 珍珠 bubble-tea milk-tea"],["1f9c3",3,"饮料盒 吸管 果汁 果汁盒 甜味 beverage-box"],["1f37c",3,"奶瓶 奶 婴儿 新生儿 baby-bottle"],["1f375",3,"热茶 乌龙茶 无柄茶杯 杯 没有把手的茶杯 teacup-without-handle"],["2615",3,"热饮 咖啡 早晨 星巴克 热气腾腾 hot-beverage"],["1fad6",3,"茶壶 冲泡 壶 茶 teapot"],["1f9c9",3,"马黛茶 茶 饮料 mate"],["1f37b",3,"干杯 啤酒 喝酒 碰杯 clinking-beer-mugs"],["1f942",3,"碰杯 喝 干杯 庆祝 杯 clinking-glasses"],["1f37e",3,"开香槟 喝酒 庆祝 木塞 bottle-with-popping-cork"],["1f377",3,"葡萄酒 俱乐部 喝酒 酒 wine-glass"],["1fad7",3,"倾倒液体 倒出 倾倒 洒出 pour"],["1f379",3,"热带水果饮料 俱乐部 喝酒 热带饮料 tropical-drink"],["1f962",3,"筷子 箸 chopsticks"],["1f37d_fe0f",3,"餐具 做菜 刀 刀叉与盘 叉 fork-and-knife-with-plate"],["1f6d1",4,"停止标志 停止 八角形 八边形 stop-sign"],["1f6a7",4,"路障 施工 construction"],["1f6a8",4,"警车灯 灯 紧急 警报 警灯 police-car-light"],["26fd",4,"油泵 加油 加油站 柴油 fuel-pump"],["1f6df",4,"救生圈 安全 救援 救生 ring-buoy"],["2693",4,"锚 停泊 工具 船 anchor"],["1f6a6",4,"纵向的红绿灯 交叉口 交通灯 信号灯 直的红绿灯 vertical-traffic-light"],["1f6b2",4,"自行车 单车 脚踏车 自行车骑士 bicycle"],["1f3cd_fe0f",4,"摩托车 摩托 赛车 motorcycle"],["1f697",4,"汽车 开车 轿车 automobile"],["1f69a",4,"货车 卡车 开车 送货 delivery-truck"],["1f69c",4,"拖拉机 tractor"],["1f3ce_fe0f",4,"赛车 汽车 疾驰 跑车 racing-car"],["1f695",4,"出租车 小黄 开车 汽车 taxi"],["1f68c",4,"公交车 公交 公共汽车 大巴 bus"],["1f682",4,"蒸汽火车 守车 旅行 火车 火车头 locomotive"],["26f5",4,"帆船 游艇 船 驾帆船 sailboat"],["1f6f6",4,"独木舟 船 canoe"],["1f6f8",4,"飞碟 UFO 不明飞行物 外星人 外星球 flying-saucer"],["1f680",4,"火箭 发射 太空 旅行 rocket"],["2708_fe0f",4,"飞机 喷气机 旅行 飞行 airplane"],["1f6eb",4,"航班起飞 值机 出境 报到 登机 airplane-departure"],["1f6ec",4,"航班降落 到达 着陆 航班 airplane-arrival"],["1f3a2",4,"过山车 游乐园 roller-coaster"],["1f3a1",4,"摩天轮 游乐园 ferris-wheel"],["1f3a0",4,"旋转木马 木马 游乐园 carousel-horse"],["1f5ff",4,"摩埃 复活岛 复活节岛 复活节岛石像 moai"],["1f3da_fe0f",4,"废墟 废屋 荒宅 荒废 derelict-house"],["1f3e0",4,"房子 住家 家 乡村家园 建筑 house"],["1f3d5_fe0f",4,"露营 帐篷 camping"],["1f307",4,"日落 夕阳 sunset"],["1f388",5,"气球 庆祝 生日 节日 balloon"],["1f382",5,"生日蛋糕 庆祝 甜 甜点 生日 birthday-cake"],["1f381",5,"礼物 包礼物 包装 圣诞 庆祝 wrapped-gift"],["1f386",5,"焰火 庆典 庆祝 炮竹 烟花 fireworks"],["1fa94",5,"印度油灯 排灯节 油 灯 diya-lamp"],["1fa85",5,"彩罐 五月节 庆祝 皮纳塔 piñata"],["1faa9",5,"镜球 派对 聚会 舞会 舞厅 mirror-ball disco-ball"],["1f947",5,"金牌 奖牌 第一 第一名奖牌 gold-medal 1st-place-medal"],["1f948",5,"银牌 亚军 奖牌 第二 第二名奖牌 silver-medal 2nd-place-medal"],["1f949",5,"铜牌 奖牌 季军 第三 第三名奖牌 bronze-medal 3rd-place-medal"],["1f3c6",5,"奖杯 冠军 奖励 奖品 trophy"],["26bd",5,"足球 大罗 梅西 球 球赛 soccer-ball"],["26be",5,"棒球 球 运动 baseball"],["1f94e",5,"垒球 手套 球 腋下 softball"],["1f3c0",5,"篮球 打球 球 篮筐 basketball"],["1f3c9",5,"英式橄榄球 橄榄球 球 运动 rugby-football"],["1f3be",5,"网球 球 球拍 网球拍 tennis"],["1f3f8",5,"羽毛球 球拍 羽球 badminton"],["1f94d",5,"袋棍球 得分 球 球棍 球门 lacrosse"],["1f3cf",5,"板球 球 球拍 cricket-game"],["1f3d1",5,"曲棍球 球 球棍 球赛 field-hockey"],["1f3d2",5,"冰球 冰球杆 球 球棍 ice-hockey"],["1f3bf",5,"滑雪 运动 雪 skis"],["26f8_fe0f",5,"滑冰 冰刀 溜冰 ice-skate"],["1f6fc",5,"四轮滑冰鞋 旱冰 溜冰 溜冰鞋 roller-skates"],["1fa70",5,"芭蕾舞鞋 舞蹈 舞鞋 足尖鞋 ballet-shoes"],["1f6f9",5,"滑板 板 踩滑板 skateboard"],["26f3",5,"高尔夫球洞 果岭 果岭旗 球洞 高尔夫 flag-in-hole"],["1f3af",5,"正中靶心的飞镖 命中 标的 直接命中 direct-hit target"],["1f94f",5,"飞盘 圆盘 极限 极限运动 终极 flying-disc"],["1fa83",5,"回旋镖 反弹 回弹 土著 boomerang"],["1fa81",5,"风筝 翱翔 飞翔 kite"],["1f3a3",5,"钓鱼竿 钓竿 鱼杆 fishing-pole"],["1f94b",5,"练武服 制服 柔道 武术 空手道 martial-arts-uniform"],["1f3b1",5,"台球 8 球制桌球 8号球 台球台 8-ball"],["1f3d3",5,"乒乓球 乒乓 桌球 比赛 ping-pong"],["1f3b3",5,"保龄球 全倒 球 运动 bowling"],["265f_fe0f",5,"兵 受骗者 国际象棋 牺牲品 chess-pawn"],["1f3b2",5,"骰子 掷骰子 色子 骰子游戏 die"],["1f3b0",5,"老虎机 吃角子老虎 游戏 角子机 slot-machine"],["1fa84",5,"魔棒 女巫 巫师 魔术 魔术师 wand"],["1f4f7",5,"相机 卡片相机 拍照 摄影 照片 camera"],["1f4f8",5,"开闪光灯的相机 带闪光灯的相机 拍照 相机 camera-flash"],["1fadf",5,"泼溅 喷洒 污渍 油漆 splatter"],["1f3b7",5,"萨克斯管 乐器 吹奏 演奏 saxophone"],["1f3ba",5,"小号 乐器 吹奏 喇叭 trumpet"],["1fa8a",5,"长号 乐器 悲伤 滑动 爵士 trombone"],["1f3b8",5,"吉他 乐器 弹奏 演奏 guitar"],["1fa95",5,"班卓琴 弦乐器 弹奏 音乐 banjo"],["1f3bb",5,"小提琴 乐器 提琴 是特拉迪瓦尔 violin"],["1fa89",5,"竖琴 丘比特 乐器 爱 harp"],["1f941",5,"鼓 音乐 鼓声 鼓槌 drum"],["1fa87",5,"沙球 乐器 恰恰 打击乐器 拨浪鼓 maracas"],["1f4fa",5,"电视机 电视 看电视 视频 television"],["1f39e_fe0f",5,"影片帧 帧 电影 电影胶卷 film"],["1f3ac",5,"场记板 场记 打板 拍电影 clapper"],["1f3ad",5,"表演艺术 剧院 女演员 戏剧 演员 performing-arts"],["1f39f_fe0f",5,"入场券 票 门票 admission-tickets"],["1f4df",6,"寻呼机 BB 机 传呼机 呼机 pager"],["1f50c",6,"电源插头 插头 电插头 电源 electric-plug"],["1f50b",6,"电池 正极 电 电极 battery-full"],["1faab",6,"电池电量不足 低能量 电子 电池 battery-low"],["1f4bf",6,"光盘 cd 专辑 存储 optical-disk"],["1f4bb",6,"笔记本电脑 PC 个人电脑 手提电脑 电脑 laptop-computer"],["1f5a8_fe0f",6,"打印机 印刷机 喷墨打印 复印 打印 printer"],["1fa8e",6,"宝箱 劫掠 奖赏 宝物 宝石 treasure"],["1fa99",6,"硬币 富有 欧元 美元 coin"],["1f48e",6,"宝石 婚礼 珠宝 订婚 gem-stone"],["1f4b8",6,"长翅膀的钱 纸币 翅膀 花钱 钱 money-with-wings"],["2696_fe0f",6,"天平 公平 公正 天秤 balance-scale"],["1f6d2",6,"购物车 手推车 购物 采购 shopping-cart"],["1f4a1",6,"灯泡 主意 想法 点子 light-bulb"],["1f9f9",6,"扫帚 女巫 巫婆 打扫 扫地 broom"],["1f9e6",6,"袜子 短袜 袜 长袜 socks"],["1f393",6,"毕业帽 四方帽 学位 学者 毕业 graduation-cap"],["1f451",6,"皇冠 国王 权力的游戏 王冠 王后 crown"],["1f48d",6,"戒指 结婚 订婚 钻戒 ring"],["1faad",6,"折扇 凉 凉快 啪嗒声 害羞 fan"],["2602_fe0f",6,"伞 雨 雨伞 umbrella"],["1f460",6,"高跟鞋 女 时装 鞋 高跟 high-heeled-shoe"],["1f45f",6,"跑鞋 跑 运动鞋 鞋 running-shoe"],["1f321_fe0f",6,"温度计 天气 气温 温度 thermometer"],["1fa7a",6,"听诊器 医生 医疗 心脏 stethoscope"],["1f6e0_fe0f",6,"锤子与扳手 工具 扳手 铁锤 锤子 hammer-and-wrench"],["1fa8f",6,"铲 埋 挖 掘 洞 shovel dig"],["2699_fe0f",6,"齿轮 传动 工具 机械 零件 gear"],["26d3_fe0f_200d_1f4a5",6,"断链 手铐 断开 断开的链条 broken-chain"],["26d3_fe0f",6,"链条 铁链 链 锁链 chains"],["1f587_fe0f",6,"连起来的两个回形针 万字夹 回形针 回纹针 曲别针 linked-paperclips"],["2702_fe0f",6,"剪刀 修剪 剪 剪子 scissors"],["270f_fe0f",6,"铅笔 橡皮 橡皮擦 画画 画笔 pencil"],["1f4da",6,"书 书本 书籍 图书 books"],["1f4ca",6,"条形图 图形 图表 柱形图 bar-chart"],["1f4c8",6,"趋势向上的图表 上升 上涨 上涨图表 上涨趋势线 chart-increasing"],["1f4c9",6,"趋势向下的图表 下跌 下跌图表 下跌趋势线 下降 chart-decreasing"],["1f5d1_fe0f",6,"垃圾桶 垃圾 垃圾篓 废纸篓 wastebasket"],["1f4e6",6,"包裹 快递 指向 盒子 package"],["1f5f3_fe0f",6,"投票箱 投票 盒子 票箱 ballot-box"],["23f0",6,"闹钟 小时 时间 钟 alarm-clock"],["231b",6,"沙漏 时间 计时 计时器 hourglass-done"],["23f3",6,"沙正往下流的沙漏 沙 沙漏 等待 hourglass-not-done"],["1f6ce_fe0f",6,"服务铃 行李员 酒店 铃 bellhop-bell"],["1f514",6,"铃铛 叮当 响铃 钟 钟声 bell"],["1f4e3",6,"扩音器 呼喊 喇叭 喇叭筒 大声 megaphone"],["1f50e",6,"右斜的放大镜 工具 搜索 放大 magnifying-glass-tilted-right"],["1f52e",6,"水晶球 命运 工具 梦幻 水晶 crystal-ball"],["1f4a3",6,"炸弹 爆炸 bomb"],["1faa4",6,"捕鼠器 奶酪 老鼠夹 诱饵 mouse-trap"],["1f512",6,"合上的锁 上锁 私密 锁 locked"],["2660_fe0f",7,"黑桃 扑克 牌 葵扇 spade"],["2648",7,"白羊座 公羊 星座 牡羊座 Aries"],["2649",7,"金牛座 公牛 星座 金牛 Taurus"],["264a",7,"双子座 双子 孪生子 星座 Gemini"],["264b",7,"巨蟹座 巨蟹 星座 螃蟹 Cancer"],["264c",7,"狮子座 星座 雄狮 Leo"],["264d",7,"处女座 室女座 星座 黄道十二宫 Virgo"],["264e",7,"天秤座 平衡 星座 正义 Libra"],["264f",7,"天蝎座 天蝎 星座 蝎子 Scorpio"],["2650",7,"射手座 人马座 射手 弓箭手 Sagittarius"],["2651",7,"摩羯座 天宫图 山羊 摩羯 Capricorn"],["2652",7,"水瓶座 星座 水 Aquarius"],["2653",7,"双鱼座 双鱼 星座 鱼 Pisces"],["26ce",7,"蛇夫座 星座 蛇 蛇夫 Ophiuchus"],["1f5ef_fe0f",7,"愤怒话语气泡 右倾愤怒对话框 对话框 愤怒 anger-bubble"],["1f4ac",7,"话语气泡 发言 对话框 气泡 气泡对话框 speech-bubble"],["2757",7,"红色感叹号 ！ 叹号 吃惊 惊讶 exclamation exclamation-mark"],["2753",7,"红色问号 为什么 标点 标点符号 疑问 question question-mark"],["2049_fe0f",7,"感叹疑问号 ！ ！？ ？ 叹号 exclamation-question-mark !?"],["203c_fe0f",7,"双感叹号 ！ ！！ 两个 双叹号 exclamation-double !!"],["274c",7,"叉号 x 乘 交叉 cross-mark"],["1f198",7,"SOS按钮 sos SOS 按键"],["2668_fe0f",7,"温泉 水 泉 热气腾腾 hot-springs"],["1f4f4",7,"手机关机 关机 关闭 关闭手机 手机 phone-off"],["2622_fe0f",7,"辐射 放射性 标识 radioactive"],["2623_fe0f",7,"生物危害 动物 当心感染 污染 biohazard"],["26a0_fe0f",7,"警告 小心 warning"],["2705",7,"勾号按钮 勾 勾号 完成 check-mark check-mark-green"],["1f195",7,"new按钮 按键 新 新的 new"],["1f193",7,"免费按钮 free 不收费 免费"],["1f199",7,"up按钮 up 向上 按键 up!"],["1f197",7,"OK按钮 OK ok按钮 同意 ok-button"],["1f192",7,"cool按钮 cool 按键 酷"],["1f6ae",7,"倒垃圾 垃圾丢弃处 垃圾入篓 垃圾桶 litter"],["262e_fe0f",7,"和平符号 和平 peace-symbol"],["262f_fe0f",7,"阴阳 太极 宗教 道 道教 yin-yang"],["267e_fe0f",7,"无穷大 宇宙 无尽 极大 infinity"],["1f3b6",7,"多个音符 乐谱 五线谱 八分音符 musical-notes"],["2795",7,"加 加号 十字 数学 plus-sign +"],["a9_fe0f",7,"版权 copyright"],["ae_fe0f",7,"注册 注册标记 registered"],["2122_fe0f",7,"商标 产品 标志 trade-mark"],["1f3c1",8,"黑白方格旗 方格 格子旗 竞赛 终点 chequered-flag"],["1f6a9",8,"三角旗 升旗 旗 旗杆上的三角旗 triangular-flag"],["1f3f4",8,"黑旗 举黑旗 摇黑棋 黑色旗 black-flag"],["1f3f3_fe0f",8,"白旗 举白旗 摇白旗 白色旗子 white-flag"]],
+};
 
 </script>
   <script>
@@ -86824,18 +87065,31 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 
   var K = {
     enabled: 'zhinote.mascot.enabled',   // '0' 关闭；其它/缺省 = 开
-    resident: 'zhinote.mascot.resident', // '1' 常驻右下角
+    resident: 'zhinote.mascot.resident', // '1' 常驻
     avatar: 'zhinote.mascot.avatar',     // 常驻形象（emoji 字符）
+    pos: 'zhinote.mascot.pos',           // 常驻位置 {x,y}（视口像素，左上角）；没存 = 默认右下角
   };
-  // 常驻形象可选项（静态 emoji；对话里说话的动图表情与此无关）
-  var AVATARS = [
-    '🌱','🌿','☘️','🍀','🪴','🌵','🌻','🌸','🌷','🍄','🍂','🌈','⭐','🌙','☀️','🔥','💡','🎈','🍵','🫧','💎','🎐',
-    '🙂','😊','😀','😄','😁','😉','😌','🤔','😎','🤗','🥰','🤩','🥳','😇','😋','😴','🤓','🥸','🫠','😺',
-    '🤖','👻','👽','🐣','🐱','🐶','🐼','🦊','🐰','🐻','🐨','🐯','🦁','🐸','🐵','🐳','🐬','🦉','🦜','🐢','🐙','🦄',
-  ];
-  function avatarGlyph() { var v = lget(K.avatar); return (v && AVATARS.indexOf(v) >= 0) ? v : '🌱'; }
-  function lget(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
-  function lset(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  // 常驻形象：从谷歌动图全集（window.NOTO_EMOJI，mascot-emoji.js）里任选，存 emoji 字符
+  function avatarGlyph() { return lget(K.avatar) || '🌱'; }
+  // 持久化：主存走 storage 设置（'_'+键名 → 本机保存、不上云；Quicker 端随动作状态变量落盘，
+  // 重启 Quicker 不丢）。localStorage 只作旧值迁移来源 + 兜底双写——单独靠它在 Quicker 端
+  // 不可靠（预热建窗/进程被杀时浏览器缓存可能整体丢失，用户实测常驻/位置/形象全部重置）。
+  function lget(k) {
+    var st = window.storage;
+    try {
+      var v = st && st.getSetting ? st.getSetting('_' + k) : undefined;
+      if (v !== undefined && v !== null) return String(v);
+    } catch (_) {}
+    var lv = null;
+    try { lv = localStorage.getItem(k); } catch (_) {}
+    // 旧数据一次性迁移进 storage 设置（storage 未就绪时其内部为 no-op，下次读到再迁）
+    if (lv !== null && st && st.setSetting) { try { st.setSetting('_' + k, lv); } catch (_) {} }
+    return lv;
+  }
+  function lset(k, v) {
+    try { if (window.storage && window.storage.setSetting) window.storage.setSetting('_' + k, v); } catch (_) {}
+    try { localStorage.setItem(k, v); } catch (_) {}
+  }
 
   function isEnabled() { return lget(K.enabled) !== '0'; }
   function isResident() { return lget(K.resident) === '1'; }
@@ -86861,7 +87115,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   // 闲时随机小表情池（常驻按钮偶尔演一下，制造点惊喜）
   var IDLE_SET = ['sleep', 'yawn', 'hmm', 'smug', 'dizzy', 'hot', 'cold', 'upside', 'shush', 'halo', 'relieved', 'tongue', 'zany', 'wink', 'focus', 'think', 'idea', 'happy', 'drool', 'nerd'];
   function cpToGlyph(cp) {
-    try { return String.fromCodePoint.apply(null, cp.split('-').map(function (h) { return parseInt(h, 16); })); }
+    try { return String.fromCodePoint.apply(null, cp.split(/[-_]/).map(function (h) { return parseInt(h, 16); })); }
     catch (_) { return '\uD83D\uDE42'; }
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -86948,8 +87202,9 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       + '<div class="mascot-chat" id="mascot-chat"></div>'
       + '<div class="mascot-quick" id="mascot-quick"></div>'
     + '<div class="mascot-input">'
+    + '<button type="button" class="mascot-ctx mascot-cmdbtn" id="mascot-cmd" title="常用语（存下常问的话，一点就问）" aria-label="常用语">⚡</button>'
     + '<button type="button" class="mascot-ctx" id="mascot-ctx" title="选择随问题带上的笔记" aria-label="选择笔记">📄<span class="mascot-ctx-t"></span></button>'
-    + '<textarea id="mascot-ta" rows="1" placeholder="问小枝…（Enter 发送）"></textarea>'
+    + '<textarea id="mascot-ta" rows="1" placeholder="问小枝…" title="Enter 发送，Shift+Enter 换行"></textarea>'
       + '<button type="button" class="mascot-send" id="mascot-send" title="发送" aria-label="发送">'
       + '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg></button>'
       + '</div>'
@@ -86958,16 +87213,22 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       + '<span class="mascot-fallback">' + avatarGlyph() + '</span></button>';
     _avatar = _root.querySelector('#mascot-avatar');
     _panel = _root.querySelector('#mascot-panel');
+    renderAvatar(_avatar.querySelector('.mascot-fallback')); // 静态字形 → 谷歌矢量图（防空框）
     _avatar.addEventListener('click', function () {
+      if (_dragMoved) { _dragMoved = false; return; } // 刚拖完松手的那下不算点击
       var opening = !_panelOpen;
       toggle();
       // 点开时打个招呼（换个表情），别只干巴巴弹窗
       if (opening) playAvatarMood(['hi', 'happy', 'wink', 'love', 'done'][Math.floor(Math.random() * 5)]);
     });
-    // 右键：不弹窗，换个表情 + 冒句碎碎念（纯互动）
+    installDrag();
+    installHoverTree();
+    applyPos();
+    window.addEventListener('resize', function () { applyPos(); });
+    // 右键：不弹窗，冒句碎碎念（showQuip 内部自带配套表情，这里不再另演一场——
+    // 曾经两处各演一场，1ms 内连开两场互抢 = 闪一下，20260730 取证坐实）
     _avatar.addEventListener('contextmenu', function (e) {
       e.preventDefault(); e.stopPropagation();
-      playAvatarMood();
       showQuip(true);
     });
     _root.querySelector('#mascot-close').addEventListener('click', function () { closePanel(); });
@@ -86985,6 +87246,303 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     try { document.body.classList.toggle('mascot-off', !isEnabled()); } catch (_) {} // 悬浮工具栏的 🌱 按钮随开关显隐
   }
 
+  // ===== 常驻位置：整个屏幕随意拖，松手记住（没拖过 = 默认右下角）=====
+  var _dragMoved = false;
+  function savedPos() { try { var p = JSON.parse(lget(K.pos) || ''); if (p && isFinite(p.x) && isFinite(p.y)) return p; } catch (_) {} return null; }
+  function clampPos(x, y) {
+    var w = (_avatar && _avatar.offsetWidth) || 48, h = (_avatar && _avatar.offsetHeight) || 48;
+    return { x: Math.min(Math.max(4, x), window.innerWidth - w - 4), y: Math.min(Math.max(4, y), window.innerHeight - h - 4) };
+  }
+  function applyPos() {
+    if (!_root) return;
+    var p = savedPos();
+    if (!p) { _root.style.left = _root.style.top = _root.style.right = _root.style.bottom = ''; return; }
+    p = clampPos(p.x, p.y);
+    _root.style.left = p.x + 'px'; _root.style.top = p.y + 'px';
+    _root.style.right = 'auto'; _root.style.bottom = 'auto';
+  }
+  function installDrag() {
+    var sx = 0, sy = 0, ox = 0, oy = 0, dragging = false, pid = null;
+    _avatar.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var r = _root.getBoundingClientRect();
+      sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top; dragging = false; pid = e.pointerId;
+      var move = function (ev) {
+        if (ev.pointerId !== pid) return;
+        var dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!dragging && Math.abs(dx) + Math.abs(dy) < 6) return; // 6px 内当点击，不进拖动
+        if (!dragging) { dragging = true; try { _avatar.setPointerCapture(pid); } catch (_) {} closeTree(); hideQuip(); }
+        var p = clampPos(ox + dx, oy + dy);
+        _root.style.left = p.x + 'px'; _root.style.top = p.y + 'px';
+        _root.style.right = 'auto'; _root.style.bottom = 'auto';
+      };
+      var up = function () {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+        if (dragging) {
+          _dragMoved = true; // 松手时抑制随之而来的 click
+          var r2 = _root.getBoundingClientRect();
+          lset(K.pos, JSON.stringify({ x: Math.round(r2.left), y: Math.round(r2.top) }));
+          setTimeout(function () { _dragMoved = false; }, 250);
+        }
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', up);
+    });
+  }
+  /** 拖过之后，面板/气泡不再固定往左上弹：哪边空间大放哪边 */
+  function placePanel() {
+    if (!_panel || !_avatar) return;
+    if (!savedPos()) { _panel.style.left = _panel.style.right = _panel.style.top = _panel.style.bottom = _panel.style.maxHeight = _panel.style.transformOrigin = ''; return; }
+    var r = _avatar.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    var below = (vh - r.bottom) > r.top;
+    var alignRight = (r.left + r.right) / 2 > vw / 2;
+    _panel.style.left = alignRight ? 'auto' : '0px';
+    _panel.style.right = alignRight ? '0px' : 'auto';
+    _panel.style.top = below ? 'calc(100% + 10px)' : 'auto';
+    _panel.style.bottom = below ? 'auto' : 'calc(100% + 10px)';
+    var avail = (below ? vh - r.bottom : r.top) - 26;
+    _panel.style.maxHeight = Math.max(240, Math.min(Math.round(vh * 0.72), avail)) + 'px';
+    _panel.style.transformOrigin = (below ? 'top' : 'bottom') + ' ' + (alignRight ? 'right' : 'left');
+  }
+
+  // ===== 悬浮常驻 → 常用语层级菜单（分组飞出式）；碎碎念挪到右键上 =====
+  var _treeEl = null, _treeTimer = null, _treeCloseTimer = null;
+  var _hoverAnimAt = 0;
+  function installHoverTree() {
+    _avatar.addEventListener('mouseenter', function () {
+      if (_panelOpen || !_visible || !isEnabled()) return;
+      // 摸它就动：悬停演自己的动图（3s 冷却，避免鼠标扫来扫去抽风）
+      var now = Date.now();
+      if (now - _hoverAnimAt > 3000) { _hoverAnimAt = now; playAvatarSelf(3800); }
+      clearTimeout(_treeTimer); clearTimeout(_treeCloseTimer);
+      _treeTimer = setTimeout(function () { if (!_panelOpen && !_dragMoved) openCmdTree(_avatar, { hover: true }); }, 240);
+    });
+    _avatar.addEventListener('mouseleave', function () { clearTimeout(_treeTimer); scheduleTreeClose(); });
+  }
+  function scheduleTreeClose() {
+    clearTimeout(_treeCloseTimer);
+    _treeCloseTimer = setTimeout(function () { closeTree(); }, 240);
+  }
+  function closeTree() { clearTimeout(_treeTimer); if (_treeEl) { _treeEl.remove(); _treeEl = null; } }
+  /** 常用语层级菜单：问一问 + 各分组（悬浮飞出子菜单）+ 管理入口。
+   *  常驻悬浮（hover:true，移开即收）与悬浮工具栏 🌱 点击（点外面关）共用。 */
+  function openCmdTree(anchor, opts) {
+    opts = opts || {};
+    closeTree(); closePicker();
+    var A = ai(); if (!A || !isEnabled() || !anchor) return;
+    var groups = A.cmdGroups();
+    var el = document.createElement('div'); el.className = 'mascot-tree';
+    function sepEl() { var s = document.createElement('div'); s.className = 'mascot-tree-sep'; return s; }
+    function mkRow(ico, label) {
+      var r = document.createElement('div'); r.className = 'mascot-tree-row';
+      r.innerHTML = '<span class="mascot-tree-ico">' + ico + '</span><span class="mascot-tree-lb">' + esc(label) + '</span>';
+      return r;
+    }
+    var ask = mkRow('🌱', '问一问');
+    ask.addEventListener('mousedown', function (e) { e.preventDefault(); closeTree(); askSelection('ask'); });
+    el.appendChild(ask);
+    var hasAny = false;
+    groups.forEach(function (grp) {
+      if (!grp.items || !grp.items.length) return;
+      if (!hasAny) { el.appendChild(sepEl()); hasAny = true; }
+      var g = document.createElement('div'); g.className = 'mascot-tree-row mascot-tree-grp';
+      g.innerHTML = '<span class="mascot-tree-ico">📂</span><span class="mascot-tree-lb">' + esc(grp.n) + '</span><span class="mascot-tree-caret">▸</span>';
+      var sub = document.createElement('div'); sub.className = 'mascot-tree-sub';
+      grp.items.forEach(function (it) {
+        var r = mkRow(esc(it.e || '⚡'), it.n || (it.t.length > 14 ? it.t.slice(0, 14) + '…' : it.t));
+        r.title = it.t;
+        r.addEventListener('mousedown', function (e) { e.preventDefault(); closeTree(); execCmdItem(it); });
+        sub.appendChild(r);
+      });
+      g.appendChild(sub);
+      el.appendChild(g);
+    });
+    el.appendChild(sepEl());
+    var mg = mkRow('⚙️', '管理常用语…');
+    mg.classList.add('mascot-tree-dim');
+    mg.addEventListener('mousedown', function (e) { e.preventDefault(); closeTree(); openMascotSettings('cmds'); });
+    el.appendChild(mg);
+    document.body.appendChild(el);
+    _treeEl = el;
+    var r = anchor.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    var w = el.offsetWidth, h = el.offsetHeight;
+    var above = r.top > vh - r.bottom;
+    var y = above ? r.top - h - 8 : r.bottom + 8;
+    y = Math.min(Math.max(8, y), vh - h - 8);
+    var alignRight = (r.left + r.right) / 2 > vw / 2;
+    var x = alignRight ? r.right - w : r.left;
+    x = Math.min(Math.max(8, x), vw - w - 8);
+    el.style.left = Math.round(x) + 'px'; el.style.top = Math.round(y) + 'px';
+    el.classList.add(alignRight ? 'mascot-tree-flyleft' : 'mascot-tree-flyright');
+    if (opts.hover) {
+      el.addEventListener('mouseenter', function () { clearTimeout(_treeCloseTimer); });
+      el.addEventListener('mouseleave', scheduleTreeClose);
+    } else {
+      setTimeout(function () {
+        document.addEventListener('mousedown', function onDoc(e) {
+          if (_treeEl !== el) { document.removeEventListener('mousedown', onDoc, true); return; }
+          if (!el.contains(e.target)) { closeTree(); document.removeEventListener('mousedown', onDoc, true); }
+        }, true);
+      }, 0);
+    }
+  }
+  /** 点一条常用语：默认就地插对话块自动发问（有选中文字则「指令＋选中段」一起问），
+   *  问答留在笔记里最丝滑；编辑器不可用（欢迎页/只读）才退回面板。 */
+  function execCmdItem(it) {
+    if (!it || !it.t) return;
+    var sel = ai() ? ai().getSelectionText() : '';
+    var instr = it.t.replace(/[\s:：]+$/, '');
+    var q = sel ? instr + '：\n\n' + sel : it.t;
+    if (insertBlockAt(q, true)) return;
+    // 兜底：面板（保留「替换原文」能力的老路径）
+    try { var ed = window.editor && window.editor.instance && window.editor.instance(); if (ed) { _selFrom = ed.state.selection.from; _selTo = ed.state.selection.to; } } catch (_) {}
+    openPanel();
+    if (sel) { _selText = sel; runCmdItem(it); }
+    else send(it.t);
+  }
+
+  // ===== 常用语图标：复用全项目统一的图标选择器（与笔记/笔记本图标同一套 UI 和备选池）=====
+  function openEmojiPick(anchor, cb, cur) {
+    if (!window.openIconPicker) return;
+    window.openIconPicker(anchor, { currentIcon: cur || '', defaultIcon: '⚡', onPick: cb, title: '选择图标' });
+  }
+
+  // ===== 常驻形象：谷歌动图全集选择器 =====
+  // 网格用谷歌矢量图渲染（新表情在旧系统字库里是空框，图片在任何系统长一样）；悬停播动画预览
+  var EMO_HOST = 'https://fonts.gstatic.com/s/e/notoemoji/latest/';
+  var _cpByChar = null;
+  function notoCp(ch) {
+    var NE = window.NOTO_EMOJI;
+    if (!NE || !ch) return '';
+    if (!_cpByChar) {
+      _cpByChar = {};
+      NE.items.forEach(function (it) {
+        var g = cpToGlyph(it[0]);
+        _cpByChar[g] = it[0];
+        _cpByChar[g.replace(/\uFE0F/g, '')] = it[0]; // 变体选择符两边可有可无，都能查到
+      });
+    }
+    return _cpByChar[ch] || _cpByChar[String(ch).replace(/\uFE0F/g, '')] || '';
+  }
+  /** 把当前常驻形象画进元素：优先谷歌矢量图（防空框），不在动图集/离线/加载失败就停在系统字形 */
+  function renderAvatar(el) {
+    if (!el) return;
+    var ch = avatarGlyph(), cp = notoCp(ch);
+    el.textContent = ch;
+    if (!cp) return;
+    var img = new Image();
+    img.className = 'mascot-avaimg';
+    img.alt = ch; img.draggable = false;
+    img.onload = function () { if (el.isConnected && el.textContent === ch) { el.textContent = ''; el.appendChild(img); } };
+    img.src = EMO_HOST + cp + '/emoji.svg';
+    // 快路：矢量图已在浏览器缓存（首次渲染就拉过）→ 立即换上，消掉"系统字符闪一帧再变图"的抖动
+    if (img.complete) { try { img.onload(); } catch (_) {} img.onload = null; }
+  }
+  var _avaPop = null, _avaPrev = null, _avaPrevTimer = null, _avaTab = 0;
+  function closeAvaPick() {
+    if (!_avaPop) return;
+    clearTimeout(_avaPrevTimer);
+    if (_avaPrev) { try { _avaPrev.stop(false); } catch (_) {} _avaPrev = null; }
+    _avaPop.remove(); _avaPop = null;
+  }
+  function openAvatarPicker(anchor, onPicked) {
+    closeAvaPick();
+    var NE = window.NOTO_EMOJI;
+    if (!NE) { if (window.toast) window.toast('表情清单没加载出来，稍后再试', 'error'); return; }
+    var pop = document.createElement('div');
+    pop.className = 'mascot-avapick';
+    pop.innerHTML = '<input type="text" class="mascot-inp mascot-avapick-q" placeholder="搜表情：开心 / 猫 / 爱心…">'
+      + '<div class="mascot-avapick-tabs">' + NE.cats.map(function (c, i) { return '<button type="button" class="mascot-avapick-tab' + (i === _avaTab ? ' on' : '') + '" data-i="' + i + '">' + esc(c) + '</button>'; }).join('') + '</div>'
+      + '<div class="mascot-avapick-grid"></div>'
+      + '<div class="mascot-avapick-foot"><span class="mascot-avapick-pv"></span><span class="mascot-avapick-pn">共 ' + NE.items.length + ' 个，全都会动；悬停预览，点选定</span></div>';
+    document.body.appendChild(pop);
+    _avaPop = pop;
+    var grid = pop.querySelector('.mascot-avapick-grid');
+    var inp = pop.querySelector('.mascot-avapick-q');
+    var pv = pop.querySelector('.mascot-avapick-pv');
+    var pn = pop.querySelector('.mascot-avapick-pn');
+    var curCh = avatarGlyph();
+    function cells(list) {
+      grid.innerHTML = list.map(function (it) {
+        var g = cpToGlyph(it[0]);
+        return '<button type="button" class="mascot-avapick-cell' + (g === curCh ? ' on' : '') + '" data-cp="' + it[0] + '" title="' + esc((it[2] || '').split(' ')[0]) + '">'
+          + '<img loading="lazy" src="' + EMO_HOST + it[0] + '/emoji.svg" alt="' + esc(g) + '" onerror="this.replaceWith(this.alt)">'
+          + '</button>';
+      }).join('') || '<div class="mascot-picker-none">没有找到相关表情</div>';
+      grid.scrollTop = 0;
+    }
+    function render() {
+      var q = inp.value.trim().toLowerCase();
+      pop.querySelectorAll('.mascot-avapick-tab').forEach(function (t) { t.classList.toggle('on', !q && +t.dataset.i === _avaTab); });
+      if (!q) { cells(NE.items.filter(function (it) { return it[1] === _avaTab; })); return; }
+      cells(NE.items.filter(function (it) { return (it[2] || '').toLowerCase().indexOf(q) >= 0 || cpToGlyph(it[0]) === q; }));
+    }
+    render();
+    function position() {
+      var r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: 0, top: 0, bottom: 0 };
+      var w = pop.offsetWidth || 324, h = pop.offsetHeight || 400;
+      var x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+      var y = r.bottom + 8;
+      if (y + h > window.innerHeight - 8) y = Math.max(8, r.top - h - 8);
+      pop.style.left = x + 'px'; pop.style.top = y + 'px';
+    }
+    position();
+    var deb = null;
+    inp.addEventListener('input', function () { clearTimeout(deb); deb = setTimeout(render, 120); });
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAvaPick(); } });
+    // 分类标签单行超宽：滚轮横滚 + 按住拖动（滚动条隐藏，不然靠后的分组够不着）
+    var tabs = pop.querySelector('.mascot-avapick-tabs');
+    tabs.addEventListener('wheel', function (e) {
+      if (e.deltaY && !e.deltaX) { e.preventDefault(); tabs.scrollLeft += e.deltaY; }
+    }, { passive: false });
+    var _dragX = null, _dragScroll = 0, _dragged = false;
+    tabs.addEventListener('pointerdown', function (e) { _dragX = e.clientX; _dragScroll = tabs.scrollLeft; _dragged = false; });
+    tabs.addEventListener('pointermove', function (e) {
+      if (_dragX == null) return;
+      var dx = e.clientX - _dragX;
+      if (!_dragged && Math.abs(dx) > 4) { _dragged = true; try { tabs.setPointerCapture(e.pointerId); } catch (_) {} }
+      if (_dragged) tabs.scrollLeft = _dragScroll - dx;
+    });
+    tabs.addEventListener('pointerup', function () { _dragX = null; });
+    tabs.addEventListener('pointercancel', function () { _dragX = null; });
+    tabs.addEventListener('click', function (e) {
+      if (_dragged) { _dragged = false; return; } // 刚拖完松手的那下不算点选
+      var t = e.target.closest('.mascot-avapick-tab'); if (!t) return;
+      _avaTab = +t.dataset.i; inp.value = ''; render();
+      t.scrollIntoView({ block: 'nearest', inline: 'nearest' }); // 点到半露的标签时滚到全露
+    });
+    grid.addEventListener('mouseover', function (e) {
+      var c = e.target.closest('.mascot-avapick-cell'); if (!c) return;
+      var cp = c.dataset.cp;
+      clearTimeout(_avaPrevTimer);
+      _avaPrevTimer = setTimeout(function () {
+        if (!_avaPop) return;
+        if (_avaPrev) { try { _avaPrev.stop(false); } catch (_) {} }
+        _avaPrev = animEmoji(pv, cp);
+        pn.textContent = c.title || '';
+      }, 120);
+    });
+    grid.addEventListener('click', function (e) {
+      var c = e.target.closest('.mascot-avapick-cell'); if (!c) return;
+      lset(K.avatar, cpToGlyph(c.dataset.cp));
+      closeAvaPick();
+      var fb = _root && _root.querySelector('#mascot-avatar .mascot-fallback');
+      if (fb) renderAvatar(fb);
+      if (isResident()) showAvatar();
+      if (onPicked) onPicked();
+    });
+    setTimeout(function () {
+      document.addEventListener('mousedown', function onDoc(e) {
+        if (_avaPop !== pop) { document.removeEventListener('mousedown', onDoc, true); return; }
+        if (!pop.contains(e.target)) { closeAvaPick(); document.removeEventListener('mousedown', onDoc, true); }
+      }, true);
+    }, 0);
+    setTimeout(function () { try { inp.focus(); } catch (_) {} }, 20);
+  }
+
   // ===== 表情切换（带竞态保护 + 离线兜底）=====
   // 动图 emoji 演在「对话里最新一条小枝消息」的头像上（说话的人）；常驻按钮固定 🌱 不动。
   function setChatAvatar(el) {
@@ -86994,7 +87552,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     if (el) setMood(_curMood || 'idle');
   }
   function setMood(name) {
-    var cp = MOODS[name] || (/^[0-9a-f-]+$/i.test(name) ? name : MOODS.idle);
+    var cp = MOODS[name] || (/^[0-9a-f_-]+$/i.test(name) ? name : MOODS.idle);
     _curMood = name;
     var host = _chatAva;
     if (!host || !host.isConnected) return;
@@ -87019,17 +87577,21 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   }
 
   /** 在任意元素里播动图 emoji（面板头像之外的场景用：对话块说话人、常驻闲时小表情）。
-   *  返回 { stop(freeze) }：stop 销毁动画；freeze !== false 时留下静态字形。 */
-  function animEmoji(host, moodOrCp) {
-    var cp = MOODS[moodOrCp] || (/^[0-9a-f-]+$/i.test(moodOrCp) ? moodOrCp : MOODS.idle);
+   *  返回 { stop(freeze) }：stop 销毁动画；freeze !== false 时留下静态字形。
+   *  opts.defer：备好戏再登台——动图数据就绪前**完全不动**元素现有内容，失败也不动。
+   *    常驻按钮用它防"抽搐"：旧行为是先硬切成系统字符、加载完再换动图（两跳且画法不同），
+   *    网络慢/失败时还会卡出一个随机静态表情杵 5 秒。 */
+  function animEmoji(host, moodOrCp, opts) {
+    var cp = MOODS[moodOrCp] || (/^[0-9a-f_-]+$/i.test(moodOrCp) ? moodOrCp : MOODS.idle);
     var stopped = false, anim = null;
-    host.textContent = cpToGlyph(cp); // 先给静态字形，动图就绪再替换（离线时它就是最终形态）
+    var defer = !!(opts && opts.defer);
+    if (!defer) host.textContent = cpToGlyph(cp); // 先给静态字形，动图就绪再替换（离线时它就是最终形态）
     Promise.all([loadLottie(), getData(cp)]).then(function (r) {
       if (stopped || !host.isConnected) return;
       var box = document.createElement('div'); box.className = 'mascot-lottie';
       host.textContent = ''; host.appendChild(box);
       try { anim = r[0].loadAnimation({ container: box, renderer: 'svg', loop: true, autoplay: true, animationData: r[1] }); }
-      catch (_) { host.textContent = cpToGlyph(cp); }
+      catch (_) { if (defer) { try { renderAvatar(host); } catch (_) {} } else host.textContent = cpToGlyph(cp); }
     }).catch(function () {});
     return {
       stop: function (freeze) {
@@ -87046,6 +87608,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     if (!isEnabled()) return;
     _visible = true; applyState();
     setMood(mood || _curMood || 'idle');
+    playAvatarSelf(4200); // 每次现身（启动/开常驻/换形象）都动一下自己，别光杵着
   }
   function hideAvatar() {
     if (isResident() && isEnabled()) { _panelOpen = false; applyState(); return; }
@@ -87054,6 +87617,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   function openPanel() {
     if (!isEnabled()) return;
     _visible = true; _panelOpen = true; applyState();
+    placePanel(); closeTree();
     try { hideQuip(); } catch (_) {}
     refreshChat();
     var ta = taEl(); if (ta) setTimeout(function () { try { ta.focus(); } catch (_) {} }, 60);
@@ -87070,7 +87634,22 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 
   // ===== @ 智能触发（正文里输入 @ 冒出小提示，不挡打字）=====
   var _chip = null, _atQuery = '';
-  var _pendingBlockQ = '';   // @ 确认时预填给新对话块输入框的文字（挂载时取走）
+  var _pendingBlockQ = '';     // 新对话块输入框的预填文字（挂载时取走）
+  var _pendingBlockSendQ = ''; // 挂载后自动发送的问题（常用语点选：指令+选中文字，多行也行）
+
+  /** 在正文当前位置（选区所在段落之后）插入一个对话块。
+   *  q + autoSend=true：挂载后自动发问；autoSend=false：q 预填输入框等用户回车。
+   *  编辑器不可用/只读时返回 false（调用方兜底开面板）。 */
+  function insertBlockAt(q, autoSend) {
+    try {
+      var ed = window.editor && window.editor.instance && window.editor.instance();
+      if (!ed || !ed.isEditable) return false;
+      var pos = ed.state.selection.$to.after(1); // 顶层块之后，不劈开当前段落
+      if (autoSend) _pendingBlockSendQ = q || ''; else _pendingBlockQ = q || '';
+      ed.chain().insertContentAt(pos, { type: 'zhichatBlock', attrs: { data: JSON.stringify({ v: 1, items: [] }) } }).scrollIntoView().run();
+      return true;
+    } catch (_) { _pendingBlockSendQ = ''; _pendingBlockQ = ''; return false; }
+  }
   function ensureChip() {
     if (_chip) return;
     _chip = document.createElement('div');
@@ -87127,6 +87706,18 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     if (m) { _atQuery = m[2]; showChip(range); } else hideChip();
   }
 
+  /** 悬浮工具栏 🌱：hover 直接弹常用语层级菜单（不用 tooltip，少一步）；点按仍可弹（触屏没有 hover） */
+  function installBubbleHover() {
+    var btn = document.querySelector('#bubble-menu .bubble-mascot');
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function () {
+      if (!isEnabled()) return;
+      clearTimeout(_treeTimer); clearTimeout(_treeCloseTimer);
+      _treeTimer = setTimeout(function () { openCmdTree(btn, { hover: true }); }, 160);
+    });
+    btn.addEventListener('mouseleave', function () { clearTimeout(_treeTimer); scheduleTreeClose(); });
+  }
+
   function installTrigger() {
     document.addEventListener('input', tryAt, true);
     document.addEventListener('keydown', function (e) {
@@ -87162,9 +87753,19 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
 
   // ===== 选笔记浮层（面板与对话块共用；搜索复用 storage.searchAll 全文引擎）=====
   var _picker = null;
-  function closePicker() { if (_picker) { _picker.remove(); _picker = null; } }
-  function openNotePicker(anchor, cur, onPick) {
+  var _pickerOnClose = null; // opts.onClose：浮层关闭时回调（含选中与取消；调用方可据 picked 参数区分）
+  var _pickerPicked = false;
+  function closePicker() {
+    if (!_picker) return;
+    _picker.remove(); _picker = null;
+    var cb = _pickerOnClose; _pickerOnClose = null;
+    if (cb) { try { cb(_pickerPicked); } catch (_) {} }
+  }
+  function openNotePicker(anchor, cur, onPick, opts) {
+    opts = opts || {}; // noOff：不显示「不带笔记」（选目标笔记的场合，如速记，用不上）
     closePicker();
+    _pickerOnClose = opts.onClose || null;
+    _pickerPicked = false;
     var pop = document.createElement('div'); pop.className = 'mascot-picker';
     pop.innerHTML = '<input type="text" class="mascot-picker-inp" placeholder="搜标题或内容…">'
       + '<div class="mascot-picker-list"></div>';
@@ -87181,7 +87782,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       pop.style.left = Math.round(x) + 'px';
       pop.style.top = Math.round(Math.max(8, y)) + 'px';
     }
-    function pick(p) { closePicker(); onPick(p); }
+    function pick(p) { _pickerPicked = true; closePicker(); onPick(p); }
     function itemHtml(icon, title, sub, extra) {
       return '<span class="mascot-picker-ico">' + icon + '</span><span class="mascot-picker-m"><span class="mascot-picker-t">'
         + esc(title) + '</span>' + (sub ? '<span class="mascot-picker-s">' + esc(sub) + '</span>' : '') + '</span>' + (extra || '');
@@ -87203,9 +87804,12 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         return w ? (w.name || '') : '';
       } catch (_) { return ''; }
     }
-    function noteRow(n) {
-      return { el: mkRow(itemHtml(n.icon || '📄', n.title || '无标题', wsName(n.workspaceId)), cur && cur.mode === 'note' && cur.id === n.id), p: { mode: 'note', id: n.id, title: n.title || '无标题' } };
+    function noteRow(n, ind) {
+      var el = mkRow(itemHtml(n.icon || '📄', n.title || '无标题', ind ? '' : wsName(n.workspaceId)), cur && cur.mode === 'note' && cur.id === n.id);
+      if (ind) el.classList.add('mascot-picker-ind');
+      return { el: el, p: { mode: 'note', id: n.id, title: n.title || '无标题' } };
     }
+    var exp = null; // 笔记本展开状态（本次浮层内记住；null = 首次，默认只展开当前笔记本）
     function render(q) {
       list.innerHTML = '';
       var rows = [];
@@ -87213,11 +87817,35 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       try { curId = window.editor.currentId(); } catch (_) {}
       if (!q) {
         if (curId) rows.push({ el: mkRow(itemHtml('📝', '本篇（当前打开）', ''), cur && cur.mode === 'current'), p: { mode: 'current' } });
-        rows.push({ el: mkRow(itemHtml('🚫', '不带笔记', '只按对话内容回答'), cur && cur.mode === 'off'), p: { mode: 'off' } });
+        if (!opts.noOff) rows.push({ el: mkRow(itemHtml('🚫', '不带笔记', '只按对话内容回答'), cur && cur.mode === 'off'), p: { mode: 'off' } });
+        // 层级列表：笔记本 → 笔记（点笔记本行展开/收起；当前笔记本默认展开）
+        var groups = {};
         allNotes().forEach(function (n) {
           if (n.id === curId) return;
-          rows.push(noteRow(n));
+          var wid = n.workspaceId || '';
+          (groups[wid] = groups[wid] || []).push(n);
         });
+        var wss = [];
+        try { wss = window.storage.getWorkspaces() || []; } catch (_) {}
+        var activeId = '';
+        try { activeId = (window.storage.getActiveWorkspace() || {}).id || ''; } catch (_) {}
+        if (!exp) { exp = {}; exp[activeId] = true; }
+        var listWs = wss.filter(function (w) { return (groups[w.id] || []).length; });
+        // 不属于任何已知笔记本的散笔记（异常数据兜底）挂在最后
+        var known = {}; wss.forEach(function (w) { known[w.id] = 1; });
+        var strays = [];
+        for (var wid in groups) if (!known[wid]) strays = strays.concat(groups[wid]);
+        listWs.forEach(function (w) {
+          var open = !!exp[w.id];
+          var head = mkRow('<span class="mascot-mm-caret">' + (open ? '▾' : '▸') + '</span>'
+            + '<span class="mascot-picker-ico">' + esc(w.icon || '📔') + '</span>'
+            + '<span class="mascot-picker-m"><span class="mascot-picker-t mascot-picker-wst">' + esc(w.name || '未命名') + '</span></span>'
+            + '<span class="mascot-picker-n">' + groups[w.id].length + '</span>', false);
+          head.classList.add('mascot-picker-ws');
+          rows.push({ el: head, t: function () { exp[w.id] = !open; render(''); } });
+          if (open) groups[w.id].forEach(function (n) { rows.push(noteRow(n, true)); });
+        });
+        strays.forEach(function (n) { rows.push(noteRow(n)); });
       } else {
         // 全文搜索（当前笔记本）+ 标题匹配（所有笔记本）合并去重
         var seen = {};
@@ -87237,7 +87865,7 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         if (!rows.length) list.innerHTML = '<div class="mascot-picker-none">没有找到相关笔记</div>';
       }
       rows.forEach(function (r) {
-        r.el.addEventListener('mousedown', function (e) { e.preventDefault(); pick(r.p); });
+        r.el.addEventListener('mousedown', function (e) { e.preventDefault(); if (r.t) r.t(); else pick(r.p); });
         list.appendChild(r.el);
       });
       position();
@@ -87350,6 +87978,71 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     renderList();
   }
 
+  /** 自定义常用语菜单（面板 ⚡ 与对话块 ⚡ 共用）：点一条直接问；能把当前输入存成新常用语；可去设置管理。
+   *  opts.getInput() 返回当前输入框文字；opts.onPick({e,n,t}) 由调用方决定怎么发。 */
+  function openCmdMenu(anchor, opts) {
+    closePicker();
+    var A = ai(); if (!A) return;
+    opts = opts || {};
+    var pop = document.createElement('div'); pop.className = 'mascot-picker mascot-cmdmenu';
+    var list = document.createElement('div'); list.className = 'mascot-picker-list';
+    pop.appendChild(list);
+    document.body.appendChild(pop); _picker = pop;
+    function position() {
+      var r = anchor.getBoundingClientRect();
+      var w = pop.offsetWidth, h = pop.offsetHeight;
+      var x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+      var y = r.top - h - 6;                              // 优先在按钮上方（按钮都在输入行，下方是屏幕边）
+      if (y < 8) y = Math.min(r.bottom + 6, window.innerHeight - h - 8);
+      pop.style.left = Math.round(x) + 'px';
+      pop.style.top = Math.round(Math.max(8, y)) + 'px';
+    }
+    function renderList() {
+      list.innerHTML = '';
+      var groups = A.cmdGroups(), any = false;
+      groups.forEach(function (grp) {
+        if (!grp.items || !grp.items.length) return;
+        any = true;
+        var hd = document.createElement('div'); hd.className = 'mascot-picker-ghead'; hd.textContent = grp.n;
+        list.appendChild(hd);
+        grp.items.forEach(function (c) {
+          var r = document.createElement('div'); r.className = 'mascot-picker-row';
+          r.innerHTML = '<span class="mascot-picker-ico">' + esc(c.e || '⚡') + '</span><span class="mascot-picker-m"><span class="mascot-picker-t">' + esc(c.n ? c.n + '　' + c.t : c.t) + '</span></span>';
+          r.title = c.t;
+          r.addEventListener('mousedown', function (e) {
+            e.preventDefault(); closePicker();
+            if (opts.onPick) opts.onPick({ e: c.e, n: c.n, t: c.t });
+          });
+          list.appendChild(r);
+        });
+      });
+      if (!any) {
+        var none = document.createElement('div'); none.className = 'mascot-picker-none';
+        none.textContent = '还没有常用语。把常问的话（如「总结一下」「帮我润色」）存起来，以后一点就问。';
+        list.appendChild(none);
+      }
+      var cur = String((opts.getInput && opts.getInput()) || '').trim();
+      if (cur) {
+        var add = document.createElement('div'); add.className = 'mascot-picker-row mascot-picker-clr';
+        add.innerHTML = '<span class="mascot-picker-ico">＋</span><span class="mascot-picker-m"><span class="mascot-picker-t">把当前输入存为常用语</span><span class="mascot-picker-s">' + esc(cur.length > 30 ? cur.slice(0, 30) + '…' : cur) + '</span></span>';
+        add.addEventListener('mousedown', function (e) { e.preventDefault(); A.cmdAdd(cur); renderList(); });
+        list.appendChild(add);
+      }
+      var mg = document.createElement('div'); mg.className = 'mascot-picker-row' + (cur ? '' : ' mascot-picker-clr');
+      mg.innerHTML = '<span class="mascot-picker-ico">⚙️</span><span class="mascot-picker-m"><span class="mascot-picker-s">管理常用语（增删改）…</span></span>';
+      mg.addEventListener('mousedown', function (e) { e.preventDefault(); closePicker(); openMascotSettings(); });
+      list.appendChild(mg);
+      position();
+    }
+    setTimeout(function () {
+      document.addEventListener('mousedown', function onDoc(e) {
+        if (_picker !== pop) { document.removeEventListener('mousedown', onDoc, true); return; }
+        if (!pop.contains(e.target)) { closePicker(); document.removeEventListener('mousedown', onDoc, true); }
+      }, true);
+    }, 0);
+    renderList();
+  }
+
   function setupCard() {
     return '<div class="mascot-setup">'
       + '<div class="mascot-setup-em">🌱</div>'
@@ -87377,8 +88070,22 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     var b = _root.querySelector('#mascot-setup-go');
     if (b) b.addEventListener('click', function () { openMascotSettings(); });
   }
-  function openMascotSettings() {
-    try { closePanel(); if (typeof window.openSettingsModal === 'function') window.openSettingsModal('mascot'); } catch (_) {}
+  function openMascotSettings(sec) {
+    try {
+      closePanel();
+      if (typeof window.openSettingsModal !== 'function') return;
+      if (sec === 'cmds') _cmdFoldOpen = true; // 常用语折叠区渲染成展开
+      window.openSettingsModal('mascot');
+      if (sec === 'cmds') {
+        // 弹窗渲染是异步的：轮询到「常用语」折叠区出现后滚过去
+        var tries = 0;
+        (function seek() {
+          var el = document.getElementById('cmd-fold');
+          if (el) { el.open = true; try { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { el.scrollIntoView(); } return; }
+          if (++tries < 15) setTimeout(seek, 100);
+        })();
+      }
+    } catch (_) {}
   }
 
   function renderQuick() {
@@ -87386,8 +88093,12 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     _selText = ai().getSelectionText();
     try { var ed = window.editor && window.editor.instance && window.editor.instance(); if (ed) { _selFrom = ed.state.selection.from; _selTo = ed.state.selection.to; } } catch (_) {}
     if (_selText && ai().isConfigured() && !_streaming) {
-      q.innerHTML = '<span class="mascot-quick-hint">对选中的文字：</span>'
-        + ai().ACTIONS.map(function (a) { return '<button type="button" class="mascot-chip" data-act="' + a.id + '">' + a.emoji + ' ' + esc(a.label) + '</button>'; }).join('');
+      // 全部常用语（含预置的润色/翻译/总结…，都在 cmdItems 里）对选中文字一键执行
+      var chips = ai().cmdItems().map(function (c, i) {
+        var lbl = c.n || (c.t.length > 8 ? c.t.slice(0, 8) + '…' : c.t);
+        return '<button type="button" class="mascot-chip" data-cmdi="' + i + '" title="' + esc(c.t) + '">' + esc(c.e) + ' ' + esc(lbl) + '</button>';
+      });
+      q.innerHTML = '<span class="mascot-quick-hint">对选中的文字：</span>' + chips.join('');
       q.classList.add('on');
     } else { q.innerHTML = ''; q.classList.remove('on'); }
   }
@@ -87549,10 +88260,16 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     s.classList.toggle('busy', !!busy); s.title = busy ? '停止' : '发送';
   }
 
-  function runAction(id) {
-    var act = ai() && ai().actionOf(id); if (!act || !_selText) return;
+  /** 用一条常用语对选中文字执行（结果可「替换原文」）；it = {e,n,t} */
+  function runCmdItem(it) {
+    if (!it || !it.t || !_selText) return;
     var range = { from: _selFrom, to: _selTo };
-    send(act.prompt + _selText, act.emoji + ' ' + act.label + '：' + preview(_selText), { range: range, mood: act.mood });
+    var instr = it.t.replace(/[\s:：]+$/, '');
+    send(instr + '：\n\n' + _selText, (it.e || '⚡') + ' ' + (it.n || preview(it.t)) + '：' + preview(_selText), { range: range });
+  }
+  function runCmdFlat(i) {
+    var items = (ai() && ai().cmdItems()) || [];
+    if (items[i]) runCmdItem(items[i]);
   }
 
   function newChat() {
@@ -87644,7 +88361,22 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       if (!ta) return; var v = ta.value; ta.value = ''; autoGrow(ta); send(v);
     });
     if (model) model.addEventListener('click', function () { openModelMenu(model, populateModel); });
-    if (q) q.addEventListener('click', function (e) { var b = e.target.closest('.mascot-chip'); if (b) runAction(b.dataset.act); });
+    if (q) q.addEventListener('click', function (e) {
+      var b = e.target.closest('.mascot-chip'); if (!b) return;
+      if (b.dataset.cmdi != null) runCmdFlat(parseInt(b.dataset.cmdi, 10));
+    });
+    var cmdBtn = _root.querySelector('#mascot-cmd');
+    if (cmdBtn) cmdBtn.addEventListener('click', function () {
+      openCmdMenu(cmdBtn, {
+        getInput: function () { return ta ? ta.value : ''; },
+        onPick: function (it) {
+          if (ta) { ta.value = ''; autoGrow(ta); }
+          // 有选中文字就对选中执行，否则直接当问题发（带笔记与否按 📄 当前选择）
+          if (_selText) runCmdItem(it);
+          else send(it.t);
+        },
+      });
+    });
     var ctx = _root.querySelector('#mascot-ctx');
     if (ctx) {
       refreshCtxBtn();
@@ -87781,10 +88513,21 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       modelBtnLabel(msel);
       msel.addEventListener('click', function (e) { e.stopPropagation(); openModelMenu(msel, function () { modelBtnLabel(msel); }); });
       msel.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-      ask.appendChild(ctxBtn); ask.appendChild(inp); ask.appendChild(btn); ask.appendChild(msel);
+      var cmdBtn = document.createElement('button'); cmdBtn.type = 'button'; cmdBtn.className = 'zc-ctx zc-cmd'; cmdBtn.textContent = '⚡';
+      cmdBtn.title = '常用语（存下常问的话，一点就问）';
+      cmdBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openCmdMenu(cmdBtn, {
+          getInput: function () { return inp.value; },
+          onPick: function (it) { inp.value = it.t; submit(); },
+        });
+      });
+      cmdBtn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      ask.appendChild(cmdBtn); ask.appendChild(ctxBtn); ask.appendChild(inp); ask.appendChild(btn); ask.appendChild(msel);
       body.appendChild(ask);
-      function submit() {
-        var q = (inp.value || '').trim();
+      function submit(forceQ) {
+        // 注意：submit 也直接挂在按钮 click 上，forceQ 可能是事件对象——只认字符串
+        var q = String(typeof forceQ === 'string' ? forceQ : (inp.value || '')).trim();
         if (!q || busy) return;
         // 阅读模式/同步保护下不可提问（.zc-ask 已由 CSS 隐藏，这里是兜底）
         try { var ed = window.editor.instance(); if (ed && !ed.isEditable) return; } catch (_) {}
@@ -87861,9 +88604,14 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
         else if (e.key === 'Escape' && !st.items.length && !busy && onRemove) { e.preventDefault(); onRemove(); }
       });
       if (!st.items.length) {
-        // 空块没提问就点走 → 自动消失，不留空壳（焦点还在块内或选笔记浮层里则不算「点走」）
-        inp.addEventListener('blur', function () {
+        // 空块没提问就点走 → 自动消失，不留空壳（焦点还在块内或选笔记浮层里则不算「点走」）。
+        // 触屏不启用：虚拟键盘弹出/编辑器抢回焦点会误触发 blur，块刚冒出来就被删（用户实测）；
+        // 出生后 1.5s 内的 blur 一律忽略，兜住各端插入初期的焦点竞争。
+        var bornAt = Date.now();
+        var coarse = false; try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (_) {}
+        if (!coarse) inp.addEventListener('blur', function () {
           setTimeout(function () {
+            if (Date.now() - bornAt < 1500) return;
             var f = document.activeElement;
             if (f && (dom.contains(f) || f.closest('.mascot-picker'))) return;
             if (_picker) return; // 选笔记浮层开着（可能刚点开还没聚焦）
@@ -87871,10 +88619,23 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
           }, 120);
         });
         if (_pendingBlockQ) { inp.value = _pendingBlockQ; _pendingBlockQ = ''; }
+        if (_pendingBlockSendQ) { // 常用语点选：块一出生就替用户把问题发出去（可能多行，绕过单行输入框）
+          var autoQ = _pendingBlockSendQ; _pendingBlockSendQ = '';
+          setTimeout(function () { submit(autoQ); }, 60);
+        }
         setTimeout(function () { try { inp.focus(); var n = inp.value.length; inp.setSelectionRange(n, n); } catch (_) {} }, 50);
       }
     }
-    function render() { dom.classList.toggle('zc-open', !collapsed); renderHead(); renderBody(); }
+    // 吸顶检测：块头贴住编辑区顶部滚动时纯 sticky 会顶出直角，加 .zc-stuck 换成
+    // 浮起的圆角胶囊（描边圈+投影），四角保持与静止态一致的圆润
+    var scEl = (dom.closest && dom.closest('#editor')) || document.getElementById('editor');
+    function updateStuck() {
+      if (!dom.isConnected) { head.classList.remove('zc-stuck'); return; }
+      var on = !collapsed && (head.getBoundingClientRect().top - dom.getBoundingClientRect().top) > 2;
+      head.classList.toggle('zc-stuck', on);
+    }
+    if (scEl) scEl.addEventListener('scroll', updateStuck, { passive: true });
+    function render() { dom.classList.toggle('zc-open', !collapsed); renderHead(); renderBody(); requestAnimationFrame(updateStuck); }
     render();
     if (!st.items.length) {
       // 刚被 @ / 命令面板唤出的空块：气泡冒出动画（已有内容的块是重开笔记加载的，不动）
@@ -87886,7 +88647,10 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     }
     return {
       update: function (s) { if (busy) return; st = parseData(s); render(); },
-      destroy: function () { if (abortCtl) { try { abortCtl.abort(); } catch (_) {} } },
+      destroy: function () {
+        if (abortCtl) { try { abortCtl.abort(); } catch (_) {} }
+        if (scEl) { try { scEl.removeEventListener('scroll', updateStuck); } catch (_) {} }
+      },
     };
   }
 
@@ -87911,13 +88675,13 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     var h = '<div class="mascot-set">';
     h += row('启用小枝', '你的 AI 笔记助手', '<span class="mascot-sw' + (en ? ' on' : '') + '" id="mascot-sw" role="switch" tabindex="0"></span>');
     if (en) {
-      h += row('唤出方式', '面板随时问；@ 就地插入对话块，问答留在笔记里', '<span class="mascot-hint"><span class="mascot-kbd">Alt</span>+<span class="mascot-kbd">A</span>，或正文输入 <span class="mascot-kbd">@</span></span>');
-      h += row('常驻右下角', '关闭后平时隐藏；Alt+Shift+A 也能随时切换', '<span class="mascot-sw' + (res ? ' on' : '') + '" id="mascot-res" role="switch" tabindex="0"></span>');
-      h += '<details class="mascot-row mascot-row-col mascot-avafold"><summary><span class="mascot-lbl">常驻形象<small>右下角的小家伙长什么样</small></span>'
-        + '<span class="mascot-ava-cur">' + avatarGlyph() + '</span><span class="mascot-avafold-caret">▾</span></summary>'
-        + '<div class="mascot-em-pick" id="mascot-ava-pick">'
-        + AVATARS.map(function (e) { return '<button type="button" class="mascot-em-opt' + (e === avatarGlyph() ? ' on' : '') + '" data-em="' + e + '">' + e + '</button>'; }).join('')
-        + '</div></details>';
+      h += row('唤出方式', '都在正文就地插对话块，问答留在笔记里；点屏幕上的常驻小枝才开小窗', '<span class="mascot-hint"><span class="mascot-kbd">Alt</span>+<span class="mascot-kbd">A</span>，或正文输入 <span class="mascot-kbd">@</span></span>');
+      h += row('常驻屏幕上', '默认在右下角，按住可拖到任意位置（会记住）；悬浮出常用语菜单，右键听它闲聊；Alt+Shift+A 随时切换', '<span class="mascot-sw' + (res ? ' on' : '') + '" id="mascot-res" role="switch" tabindex="0"></span>');
+      h += '<div class="mascot-row"><div class="mascot-lbl">常驻形象<small>谷歌动图表情'
+        + (window.NOTO_EMOJI ? ' ' + window.NOTO_EMOJI.items.length + ' 个随便挑' : '')
+        + '，会动、任何系统都能显示</small></div>'
+        + '<span class="mascot-ava-cur" id="mascot-ava-cur">' + esc(avatarGlyph()) + '</span>'
+        + '<button type="button" class="mascot-btn" id="mascot-ava-btn">更换…</button></div>';
       h += aiSettingsHtml();
     }
     return h + '</div>';
@@ -87945,7 +88709,42 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       + '<span class="mascot-status' + (A.isConfigured() ? ' ok' : '') + '" id="ai-status">' + (A.isConfigured() ? '已就绪' : '待配置') + '</span>'
       + '<button type="button" class="mascot-btn" id="ai-test">测试连接</button></div>';
     h += row('显示深度思考', '推理型模型答题前的思考过程，可随时点开/收起；关闭则只看答案', '<span class="mascot-sw' + (A.showThink() ? ' on' : '') + '" id="think-sw" role="switch" tabindex="0"></span>');
+    h += cmdSettingsHtml(A);
     h += memSettingsHtml(A);
+    return h;
+  }
+  function cmdSettingsHtml(A) {
+    var groups = A.cmdGroups(), total = 0;
+    groups.forEach(function (g) { total += (g.items || []).length; });
+    var del = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+    var h = '<div class="mascot-sec">常用语</div>';
+    h += '<details class="mascot-row mascot-row-col mascot-avafold" id="cmd-fold"' + ((_cmdFoldOpen != null ? _cmdFoldOpen : !total) ? ' open' : '') + '>'
+      + '<summary><span class="mascot-lbl">自定义常用语<small>可分组、可换图标；常驻小枝悬浮菜单、正文右键「问小枝」、面板和对话块的 ⚡ 都用这份清单</small>'
+      + '<span class="mascot-fold-x">' + total + ' 条<span class="mascot-avafold-caret">▾</span></span></span></summary>'
+      + '<div id="cmd-groups">';
+    groups.forEach(function (g, gi) {
+      h += '<div class="mascot-cmdg">'
+        + '<div class="mascot-cmdg-head">'
+        + '<input type="text" class="mascot-inp mascot-cmdg-name" data-gi="' + gi + '" value="' + esc(g.n) + '" maxlength="12" title="分组名，改完即存">'
+        + '<span class="mascot-fold-n">' + (g.items || []).length + ' 条</span>'
+        + '<button type="button" class="mascot-memdel cmdg-del" data-gi="' + gi + '" title="删除整组（连同组内常用语）">' + del + '</button>'
+        + '</div><div class="mascot-memlist">';
+      (g.items || []).forEach(function (c, ii) {
+        h += '<div class="mascot-memrow">'
+          + '<button type="button" class="mascot-emobtn cmd-emo" data-gi="' + gi + '" data-ii="' + ii + '" title="换图标">' + esc(c.e || '⚡') + '</button>'
+          + '<input type="text" class="mascot-inp mascot-cmdname" data-gi="' + gi + '" data-ii="' + ii + '" value="' + esc(c.n || '') + '" maxlength="20" placeholder="名称" title="菜单里显示的短名（可空）">'
+          + '<input type="text" class="mascot-inp mascot-meminp mascot-cmdinp" data-gi="' + gi + '" data-ii="' + ii + '" value="' + esc(c.t) + '" maxlength="300" title="发给小枝的指令原文">'
+          + '<button type="button" class="mascot-memdel cmd-del" data-gi="' + gi + '" data-ii="' + ii + '" title="删除这条">' + del + '</button>'
+          + '</div>';
+      });
+      h += '<div class="mascot-memrow">'
+        + '<button type="button" class="mascot-emobtn cmd-newe" data-gi="' + gi + '" data-e="⚡" title="选个图标">⚡</button>'
+        + '<input type="text" class="mascot-inp mascot-meminp cmd-newt" data-gi="' + gi + '" placeholder="新常用语，回车或点添加" maxlength="300">'
+        + '<button type="button" class="mascot-btn cmd-addbtn" data-gi="' + gi + '">添加</button></div>';
+      h += '</div></div>';
+    });
+    h += '<div class="mascot-frow"><button type="button" class="mascot-btn" id="cmd-addgroup">＋ 新建分组</button></div>';
+    h += '</div></details>';
     return h;
   }
   function memSettingsHtml(A) {
@@ -87993,16 +88792,11 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       res.addEventListener('click', toggleRes);
       res.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRes(); } });
     }
-    var avaPick = _panelSetEl.querySelector('#mascot-ava-pick');
-    if (avaPick) avaPick.addEventListener('click', function (e) {
-      var b = e.target.closest('.mascot-em-opt'); if (!b) return;
-      lset(K.avatar, b.dataset.em);
-      var fb = _root && _root.querySelector('#mascot-avatar .mascot-fallback');
-      if (fb) fb.textContent = b.dataset.em;
-      var cur = _panelSetEl.querySelector('.mascot-ava-cur');
-      if (cur) cur.textContent = b.dataset.em;
-      avaPick.querySelectorAll('.mascot-em-opt').forEach(function (x) { x.classList.toggle('on', x === b); });
-      if (isResident()) showAvatar(); // 立即看到效果
+    var avaCur = _panelSetEl.querySelector('#mascot-ava-cur');
+    if (avaCur) renderAvatar(avaCur);
+    var avaBtn = _panelSetEl.querySelector('#mascot-ava-btn');
+    if (avaBtn) avaBtn.addEventListener('click', function () {
+      openAvatarPicker(avaBtn, function () { if (avaCur) renderAvatar(avaCur); }); // 常驻按钮那份 openAvatarPicker 内部已刷新
     });
     aiBind();
   }
@@ -88032,7 +88826,54 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
       tsw.addEventListener('click', tt);
       tsw.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tt(); } });
     }
+    cmdBind(A);
     memBind(A);
+  }
+  var _cmdFoldOpen = null; // 常用语折叠的展开状态：跨 rerender 保持（改一条就整段重绘）
+  function cmdBind(A) {
+    var fold = _panelSetEl.querySelector('#cmd-fold');
+    if (fold) fold.addEventListener('toggle', function () { _cmdFoldOpen = fold.open; });
+    var box = _panelSetEl.querySelector('#cmd-groups');
+    if (!box) return;
+    function gi(el) { return parseInt(el.dataset.gi, 10); }
+    function ii(el) { return parseInt(el.dataset.ii, 10); }
+    function doAdd(g) {
+      var inp = box.querySelector('.cmd-newt[data-gi="' + g + '"]');
+      var emo = box.querySelector('.cmd-newe[data-gi="' + g + '"]');
+      if (!inp || !inp.value.trim()) return;
+      _cmdFoldOpen = true;
+      A.cmdAddItem(g, { e: (emo && emo.dataset.e) || '⚡', t: inp.value });
+      rerender();
+      var n2 = _panelSetEl.querySelector('.cmd-newt[data-gi="' + g + '"]');
+      if (n2) try { n2.focus(); } catch (_) {}
+    }
+    box.addEventListener('change', function (e) {
+      var t = e.target;
+      if (t.classList.contains('mascot-cmdg-name')) { A.cmdRenameGroup(gi(t), t.value); rerender(); }
+      else if (t.classList.contains('mascot-cmdname')) { A.cmdUpdateItem(gi(t), ii(t), { n: t.value }); rerender(); }
+      else if (t.classList.contains('mascot-cmdinp')) { A.cmdUpdateItem(gi(t), ii(t), { t: t.value }); rerender(); }
+    });
+    box.addEventListener('click', function (e) {
+      var emo = e.target.closest('.cmd-emo');
+      if (emo) { openEmojiPick(emo, function (em) { A.cmdUpdateItem(gi(emo), ii(emo), { e: em }); rerender(); }, (emo.textContent || '').trim()); return; }
+      var ne = e.target.closest('.cmd-newe');
+      if (ne) { openEmojiPick(ne, function (em) { ne.dataset.e = em; ne.textContent = em; }, ne.dataset.e || ''); return; }
+      var del = e.target.closest('.cmd-del');
+      if (del) { A.cmdRemoveItem(gi(del), ii(del)); rerender(); return; }
+      var gdel = e.target.closest('.cmdg-del');
+      if (gdel) { // 删组连带删词条：先点一下变红确认，再点才删
+        if (gdel.dataset.arm) { A.cmdRemoveGroup(gi(gdel)); rerender(); }
+        else { gdel.dataset.arm = '1'; gdel.classList.add('arm'); gdel.title = '再点一次确认删除整组'; setTimeout(function () { if (gdel.isConnected) { delete gdel.dataset.arm; gdel.classList.remove('arm'); gdel.title = '删除整组（连同组内常用语）'; } }, 2500); }
+        return;
+      }
+      var addBtn = e.target.closest('.cmd-addbtn');
+      if (addBtn) doAdd(gi(addBtn));
+      var ag = e.target.closest('#cmd-addgroup');
+      if (ag) { _cmdFoldOpen = true; A.cmdAddGroup('新分组'); rerender(); }
+    });
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing && e.target.classList.contains('cmd-newt')) { e.preventDefault(); doAdd(gi(e.target)); }
+    });
   }
   function memBind(A) {
     var sw = _panelSetEl.querySelector('#mem-sw');
@@ -88102,14 +88943,21 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     return v;
   }
 
-  // ===== 从编辑区带着选中文字进对话（正文右键 / 悬浮工具栏入口）=====
-  // kind：'ask' = 只打开面板（快捷动作条会自动出现）；其余 = ai.js ACTIONS 里的动作 id（润色/翻译/总结…）
-  function askSelection(kind) {
+  // ===== 「问一问」（正文右键 / 悬浮工具栏 / 悬浮层级菜单）=====
+  // 用户定的交互：除了主动点常驻图标，对话一律在编辑区里以对话块进行——就地插空块等提问
+  //（块默认「带上本篇」，选中的内容也在本篇里）；编辑器不可用才退回面板。
+  function askSelection() {
     if (!isEnabled()) return;
+    if (insertBlockAt('', false)) return;
     try { var ed = window.editor && window.editor.instance && window.editor.instance(); if (ed) { _selFrom = ed.state.selection.from; _selTo = ed.state.selection.to; } } catch (_) {}
-    var txt = ai() ? ai().getSelectionText() : '';
     openPanel(); // openPanel → refreshChat → renderQuick 会重读选区并亮出快捷动作
-    if (kind && kind !== 'ask' && txt) { _selText = txt; runAction(kind); }
+  }
+  /** Alt+A / 命令面板「问小枝」：面板开着 = 收起；否则在正文插对话块，编辑器不可用才开面板 */
+  function summon() {
+    if (!isEnabled()) return;
+    if (_panelOpen) { closePanel(); return; }
+    if (insertBlockAt('', false)) return;
+    openPanel();
   }
 
   // ===== 常驻小动作：闲时偶尔换个表情，悬浮冒一句闲话（让它更像个活物）=====
@@ -88119,23 +88967,28 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     var fb = _avatar && _avatar.querySelector('.mascot-fallback');
     if (!fb) return;
     clearTimeout(_avatarAnimTimer);
-    if (_avatarAnim) _avatarAnim.stop(false);
-    _avatarAnim = animEmoji(fb, name || IDLE_SET[Math.floor(Math.random() * IDLE_SET.length)]);
+    // 接续场：先把上一场收干净、回到形象本体（矢量图有缓存 → 单跳瞬回），再备下一场
+    if (_avatarAnim) { _avatarAnim.stop(false); _avatarAnim = null; renderAvatar(fb); }
+    // defer：动图数据备好才登台，就绪前形象纹丝不动；加载失败整场取消（防"抽搐闪烁/卡随机静态表情"）
+    _avatarAnim = animEmoji(fb, name || IDLE_SET[Math.floor(Math.random() * IDLE_SET.length)], { defer: true });
     _avatarAnimTimer = setTimeout(function () {
       if (_avatarAnim) { _avatarAnim.stop(false); _avatarAnim = null; }
-      if (fb.isConnected) fb.textContent = avatarGlyph();
+      if (fb.isConnected) renderAvatar(fb);
     }, ms || 5200);
   }
+  /** 演常驻形象「自己」的动图（选了 😺 就动 😺）；形象不在动图集里时退回随机小表情 */
+  function playAvatarSelf(ms) { playAvatarMood(notoCp(avatarGlyph()) || null, ms); }
   var _idlePlayTimer = null;
   function scheduleIdlePlay() {
     clearTimeout(_idlePlayTimer);
-    _idlePlayTimer = setTimeout(idlePlay, 30000 + Math.random() * 30000); // 30s~1min 随机一次（用户嫌 45s~2.5min 太冷清）
+    _idlePlayTimer = setTimeout(idlePlay, 25000 + Math.random() * 30000); // 25~55s 随机一次
   }
   function idlePlay() {
     scheduleIdlePlay();
     if (!isEnabled() || !_visible || _panelOpen || _streaming) return;
     if (document.visibilityState !== 'visible') return;
-    playAvatarMood();
+    // 一半演自己的动图（存在感），一半演随机小表情（惊喜感）
+    if (Math.random() < 0.5) playAvatarSelf(); else playAvatarMood();
   }
 
   // 闲话池：让 AI 一次生成一批「小枝会自言自语的话」缓存在本机，悬浮时随机冒一句——
@@ -88172,7 +89025,18 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     _quipLast = now;
     if (!_quipEl) { _quipEl = document.createElement('div'); _quipEl.className = 'mascot-quip'; _root.appendChild(_quipEl); }
     _quipEl.textContent = pickQuip();
+    // 拖到过别处时按剩余空间决定气泡朝向（默认右下角 = 往上冒）
+    if (savedPos() && _avatar) {
+      var ar = _avatar.getBoundingClientRect();
+      var below = (window.innerHeight - ar.bottom) > ar.top;
+      var alignRight = (ar.left + ar.right) / 2 > window.innerWidth / 2;
+      _quipEl.style.top = below ? 'calc(100% + 10px)' : 'auto';
+      _quipEl.style.bottom = below ? 'auto' : 'calc(100% + 10px)';
+      _quipEl.style.left = alignRight ? 'auto' : '0';
+      _quipEl.style.right = alignRight ? '0' : 'auto';
+    } else if (_quipEl) { _quipEl.style.top = _quipEl.style.bottom = _quipEl.style.left = _quipEl.style.right = ''; }
     _quipEl.classList.add('on');
+    closeTree();
     playAvatarMood(); // 碎碎念时配一个表情，像真在说话
     clearTimeout(_quipHideTimer);
     _quipHideTimer = setTimeout(hideQuip, 4200);
@@ -88183,9 +89047,10 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   function init() {
     ensureDom();
     installTrigger();
+    installBubbleHover();
     if (isEnabled() && isResident()) showAvatar('idle');
     else applyState();
-    _avatar.addEventListener('mouseenter', function () { showQuip(false); }); // 不能直接传 showQuip：事件对象会被当成 force
+    // 悬浮改为弹常用语层级菜单（installHoverTree）；碎碎念保留在右键上
     scheduleIdlePlay();
     // 云端带下来的加密 key：本机没 key 时尝试用网盘密码解出（换设备免重填）
     try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
@@ -88204,11 +89069,15 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     toggleResident: toggleResident,
     isResident: isResident,
     askSelection: askSelection,
+    summon: summon,           // Alt+A / 命令面板：编辑区插对话块（面板开着则收起；编辑器不可用退面板）
+    askCmd: execCmdItem,      // 执行一条常用语 {e,n,t}：就地插块自动发问（正文右键子菜单用）
+    openCmdTree: openCmdTree, // 常用语层级菜单（悬浮工具栏 🌱 等入口用）
     isEnabled: isEnabled,
     mountSettings: mountSettings,
     renderMdInto: renderMd,
     mountChatBlock: mountChatBlock,
     insertChatBlock: insertChatBlock,
+    pickNote: openNotePicker, // 层级选笔记浮层（笔记本→笔记），供其它模块复用
   };
 })();
 
@@ -90134,8 +91003,8 @@ const editor = (() => {
         const cmd = btn.dataset.cmd;
         // 触屏点格式按钮是排版而非打字：execCommand 内 .chain().focus() 会聚焦编辑器（键盘交给浏览器）。
         if (cmd === 'askMascot') {
-          // 带着选中文字唤小枝（面板里立刻出现 润色/翻译/总结 快捷动作）
-          try { window.mascot?.askSelection('ask'); } catch (_) {}
+          // 弹常用语层级菜单（问一问 / 润色 / 翻译…点了才带着选中文字执行）
+          try { (window.mascot?.openCmdTree || window.mascot?.askSelection)?.call(window.mascot, btn, {}); } catch (_) {}
         } else if (cmd === 'copySelection') {
           document.execCommand('copy');
         } else if (cmd === 'setHighlight') {
@@ -90164,8 +91033,12 @@ const editor = (() => {
     }
 
     const pm = editorEl.querySelector('.ProseMirror');
+    // 粘贴/复制目标在 NodeView 内的原生输入框（日历汇总记事、对话块输入等）时，
+    // 下面这些编辑器级剪贴板处理一律不许插手——否则捕获阶段抢走事件，
+    // 粘贴内容会跑进笔记正文而不是输入框（用户实测踩过，且因剪贴板有无 HTML/公式而时灵时不灵）
+    const inNativeInput = (e) => !!(e.target && e.target.closest && e.target.closest('input, textarea'));
     (pm || editorEl).addEventListener('paste', (e) => {
-      if (!_editor) return;
+      if (!_editor || inNativeInput(e)) return;
       const { $from } = _editor.state.selection;
       if ($from.parent.type.name === 'codeBlock') return;
       const items = e.clipboardData?.items;
@@ -90185,7 +91058,7 @@ const editor = (() => {
       pasteText(text);
     }, true);
     const handleCopyEvent = (e) => {
-      if (!_editor || !e.clipboardData) return;
+      if (!_editor || !e.clipboardData || inNativeInput(e)) return;
       const sel = _editor.state.selection;
       if (sel.empty) return;
       e.preventDefault();
@@ -90211,12 +91084,13 @@ const editor = (() => {
     };
     editorEl.addEventListener('copy', handleCopyEvent);
     editorEl.addEventListener('cut', (e) => {
+      if (inNativeInput(e)) return;
       handleCopyEvent(e);
       if (_editor) _editor.commands.deleteSelection();
     });
     editorEl.addEventListener('paste', (e) => {
       const cd = e.clipboardData;
-      if (!cd) return;
+      if (!cd || inNativeInput(e)) return;
       // 代码块内不做数学公式处理，保持原始文本
       if (_editor) {
         const { $from } = _editor.state.selection;
@@ -90825,6 +91699,8 @@ const editor = (() => {
 
   async function handleFilePaste(e) {
     if (!window.host?.caps.file) return;
+    // 目标在 NodeView 内的原生输入框（日历汇总/对话块输入）：交给输入框自己，不往正文插
+    if (e.target && e.target.closest && e.target.closest('input, textarea')) return;
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const item of items) {
@@ -92068,7 +92944,9 @@ const WIN_MIN_H = 400;
 
 async function bootstrap() {
   // 显眼的版本水印——在控制台第一行就能看到，确认 cache 是否刷新
-  console.log('%c[ZhiNote] build 20260515b ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
+  // 这行是「当前跑的是哪一次构建」的唯一可靠标记（__MD_VER__ 打包后恒为 vX.Y.Z-dev 分不出轮次）。
+  // 每轮改动随 index.html 的 ?v= 一起更新，否则没法判断 Quicker 常驻窗口里跑的是不是新包。
+  console.log('%c[ZhiNote] build 20260730t6 ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
   console.log('[ZhiNote] 调试开关：在控制台运行 window.__MD_DEBUG__=true 后再输入 / 或 ;; 可看判定过程');
 
   // 宿主标记：非 Quicker 宿主（浏览器/PWA）→ body.host-web，CSS 据此隐藏窗口控制等桌面专属 UI。
@@ -92142,26 +93020,40 @@ async function bootstrap() {
   // 窗口自愈放最前（在 storage.init() 等耗时操作之前），尽快复位，减少"一条线"残留时间。
   // isQuicker() 只看 $quicker / chrome.webview 是否注入，不依赖 storage，已可用。
   if (storage.isQuicker()) {
-    // 锁定原生四边缩放的最小尺寸（子程序内 WM_GETMINMAXINFO 子类化，OS 级）。一次性挂钩，子程序侧按 hWnd 去重。
-    const _dpr = window.devicePixelRatio || 1;
-    try {
-      await windowOp('最小尺寸', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
-    } catch (_) {}
-    // 窗口异常过小（"一条线"/被压扁/存盘尺寸损坏）时，复位到最小尺寸并在工作区内居中。
-    try {
-      const innerW = window.innerWidth, innerH = window.innerHeight;
-      if (innerW < WIN_MIN_W - 24 || innerH < WIN_MIN_H - 24) {
-        try {
-          await windowOp('复位窗口', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
-        } catch (_) {
-          // 子程序还没加「复位窗口」模式时的兜底：先最大化，至少让窗口可见可用
-          try { await windowOp('最大化'); _isMaximized = true; } catch (_) {}
+    const _winInit = async () => {
+      // 锁定原生四边缩放的最小尺寸（子程序内 WM_GETMINMAXINFO 子类化，OS 级）。一次性挂钩，子程序侧按 hWnd 去重。
+      const _dpr = window.devicePixelRatio || 1;
+      try {
+        await windowOp('最小尺寸', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
+      } catch (_) {}
+      // 窗口异常过小（"一条线"/被压扁/存盘尺寸损坏）时，复位到最小尺寸并在工作区内居中。
+      try {
+        const innerW = window.innerWidth, innerH = window.innerHeight;
+        if (innerW < WIN_MIN_W - 24 || innerH < WIN_MIN_H - 24) {
+          try {
+            await windowOp('复位窗口', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
+          } catch (_) {
+            // 子程序还没加「复位窗口」模式时的兜底：先最大化，至少让窗口可见可用
+            try { await windowOp('最大化'); _isMaximized = true; } catch (_) {}
+          }
         }
-      }
-    } catch (_) {}
-    // 关闭 WebView2 通用自动填充（原生「保存的信息」弹窗）。反射只依赖微软 WebView2 公开 API、
-    // 不碰 Quicker 内部类型；子程序未加该模式时会被吞掉、无副作用。不阻塞启动。
-    try { windowOp('关闭自动填充').catch(() => {}); } catch (_) {}
+      } catch (_) {}
+      // 关闭 WebView2 通用自动填充（原生「保存的信息」弹窗）。反射只依赖微软 WebView2 公开 API、
+      // 不碰 Quicker 内部类型；子程序未加该模式时会被吞掉、无副作用。不阻塞启动。
+      try { windowOp('关闭自动填充').catch(() => {}); } catch (_) {}
+    };
+    if (window.host.caps.window) {
+      await _winInit();
+    } else {
+      // 预热路径（Quicker 冷启动、窗口隐藏加载）时 $quickerSp 桥可能晚于本代码注入。
+      // 原先直接调用会被 host 层静默吞掉 → 最小尺寸挂钩/自动填充关闭整段丢失。
+      // 改为不阻塞启动，等桥就绪后补跑（与 waitAndRemoveBorder 同款轮询）。
+      (function waitBridge(n) {
+        if (window.host.caps.window) { _winInit(); return; }
+        if (n > 0) setTimeout(() => waitBridge(n - 1), 300);
+        else console.warn('[app] $quickerSp 桥 9 秒未注入，窗口初始化（最小尺寸/复位/自动填充）未执行');
+      })(30);
+    }
   }
 
   try {
@@ -92236,10 +93128,16 @@ async function bootstrap() {
   listenQuickerMessages();
   startBackupScheduler();
 
-  // 加载本机字体缓存；首次没缓存就异步探测一次
+  // 本机字体：读缓存；空则首次异步全量扫。当前选中已失效/旧预设 → 静默改回系统默认（开设置时再提示）
   loadCachedSystemFonts();
+  try { ensureContentFontValid({ notify: false }); } catch (_) {}
   if (!getDetectedSystemFonts().length) {
-    setTimeout(() => { try { refreshDetectedSystemFonts(); } catch (_) {} }, 1500);
+    setTimeout(() => {
+      try {
+        refreshDetectedSystemFonts();
+        ensureContentFontValid({ notify: false });
+      } catch (_) {}
+    }, 1500);
   }
 
   // 当前打开的笔记若已不存在（被同步/导入/采纳等移除）→ 关闭编辑器，不残留陈旧标题/正文。
@@ -92569,21 +93467,13 @@ function applyTheme(themeId) {
   }, 0);
 }
 
-/** 正文字体预设（精选） */
-const CONTENT_FONTS = [
-  { id: '',        name: '系统默认', stack: '' },
-  { id: 'song',    name: '宋体（思源宋体）', stack: '"Source Han Serif SC", "Noto Serif SC", "Songti SC", SimSun, serif' },
-  { id: 'kai',     name: '楷体（霞鹜文楷）', stack: '"LXGW WenKai", "LXGW WenKai Screen", "KaiTi", "STKaiti", serif' },
-  { id: 'sans',    name: '黑体（思源黑体）', stack: '"HarmonyOS Sans SC", "Source Han Sans SC", "Noto Sans SC", "PingFang SC", sans-serif' },
-  { id: 'inter',   name: 'Inter（西文）',   stack: 'Inter, "PingFang SC", sans-serif' },
-  { id: 'serif',   name: 'Georgia（西文）', stack: 'Georgia, "Times New Roman", "Source Han Serif SC", serif' },
-  { id: 'mono',    name: '等宽（JetBrains Mono）', stack: '"JetBrains Mono", "Fira Code", Consolas, monospace' },
-];
-window.CONTENT_FONTS = CONTENT_FONTS;
+/** 旧版写死预设 id（song/kai/…）：已取消预设，读到这些值一律回退「系统默认」 */
+const LEGACY_FONT_PRESET_IDS = new Set(['song', 'kai', 'sans', 'inter', 'serif', 'mono']);
 
 /** ====== 本机字体探测（canvas 字体宽度差异法，无需权限） ======
- *  常见 Windows / macOS / 中文字体候选清单，启动时探测哪些已安装，缓存到 localStorage
- *  设置面板会把"探测到的本机字体"追加到下拉的【系统字体】分组里
+ *  方案：不做挂名预设。候选清单仅作扫描池；首次/点 ⟳ 全量扫，结果缓存到 localStorage。
+ *  设置下拉 =「系统默认」+ 缓存名单；缓存里有、复查探测不到 → 灰显不可选（保留痕迹）；
+ *  当前正选中已失效字体 → 自动改回系统默认并提示。
  */
 const SYSTEM_FONT_CANDIDATES = [
   // Windows 中文
@@ -92608,7 +93498,7 @@ const SYSTEM_FONT_CANDIDATES = [
   'Segoe UI', 'Segoe UI Emoji', 'Segoe Print', 'Segoe Script',
 ];
 
-let _detectedSystemFonts = null; // [{ name }]，懒加载
+let _detectedSystemFonts = null; // [{ name, ok }]，ok=false 表示缓存里有、本机复查已不可用（灰显）
 
 /** Canvas 字体宽度差异法（无需 Local Font Access 权限，所有 Chromium 内核都能用）
  *  原理：用基准字体（monospace）测某个字符串的宽度，再用候选字体兜底测一次，
@@ -92632,55 +93522,140 @@ function fontExistsByCanvas(name) {
   return false;
 }
 
-/** 探测一遍候选字体，返回本机已安装的列表 */
-function detectSystemFonts() {
+/** 探测一遍候选字体，返回本机当前已安装的名字列表（去重） */
+function detectInstalledFontNames() {
   const found = [];
-  for (const name of SYSTEM_FONT_CANDIDATES) {
-    if (fontExistsByCanvas(name)) found.push({ name });
-  }
-  // 去重（不同 alias 同一字体名）
   const seen = new Set();
-  const dedup = found.filter(f => {
-    const k = f.name.toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
-  });
-  return dedup;
+  for (const name of SYSTEM_FONT_CANDIDATES) {
+    if (!fontExistsByCanvas(name)) continue;
+    const k = name.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    found.push(name);
+  }
+  return found;
+}
+
+function _normFontEntry(x) {
+  if (!x) return null;
+  if (typeof x === 'string') return { name: x, ok: true };
+  if (x.name) return { name: String(x.name), ok: x.ok !== false };
+  return null;
 }
 
 function loadCachedSystemFonts() {
   try {
     const raw = localStorage.getItem('zhinote-sys-fonts');
-    if (raw) _detectedSystemFonts = JSON.parse(raw);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return;
+    _detectedSystemFonts = arr.map(_normFontEntry).filter(Boolean);
   } catch (_) {}
 }
 function saveCachedSystemFonts(list) {
   try { localStorage.setItem('zhinote-sys-fonts', JSON.stringify(list || [])); } catch (_) {}
 }
 function getDetectedSystemFonts() { return _detectedSystemFonts || []; }
+
+/** 全量重扫候选池：已装的 ok:true；曾在缓存、现探测不到的保留为 ok:false（灰显不可选） */
 function refreshDetectedSystemFonts() {
-  _detectedSystemFonts = detectSystemFonts();
-  saveCachedSystemFonts(_detectedSystemFonts);
-  return _detectedSystemFonts;
+  const installed = detectInstalledFontNames();
+  const instSet = new Set(installed.map(n => n.toLowerCase()));
+  const prev = getDetectedSystemFonts();
+  const out = installed.map(name => ({ name, ok: true }));
+  const seen = new Set(instSet);
+  for (const e of prev) {
+    const k = (e.name || '').toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ name: e.name, ok: false });
+  }
+  out.sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1; // 可用的在前
+    return a.name.localeCompare(b.name, 'zh');
+  });
+  _detectedSystemFonts = out;
+  saveCachedSystemFonts(out);
+  return out;
 }
+
+/** 打开设置时复查缓存：不重扫整份候选，只对已缓存名字再探一次 */
+function validateCachedSystemFonts() {
+  const prev = getDetectedSystemFonts();
+  if (!prev.length) return refreshDetectedSystemFonts();
+  const out = prev.map(e => ({ name: e.name, ok: fontExistsByCanvas(e.name) }));
+  out.sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1;
+    return a.name.localeCompare(b.name, 'zh');
+  });
+  _detectedSystemFonts = out;
+  saveCachedSystemFonts(out);
+  return out;
+}
+
 window.refreshDetectedSystemFonts = refreshDetectedSystemFonts;
 window.getDetectedSystemFonts = getDetectedSystemFonts;
 
 function applyFontFamily(id) {
-  // 优先按预设 id 查；没有就把 id 当作字体名直接用（系统字体走这条）
-  const preset = CONTENT_FONTS.find(x => x.id === id);
-  if (preset) {
-    const stack = preset.stack || '';
+  // '' / 空 = 系统默认（跟界面字体）；具体字体名则优先用它，没有再退回界面字体
+  if (id && !LEGACY_FONT_PRESET_IDS.has(id)) {
     document.documentElement.style.setProperty('--font-content',
-      stack ? stack : 'var(--font-ui)');
-    return;
-  }
-  if (id) {
-    document.documentElement.style.setProperty('--font-content',
-      `"${id.replace(/"/g, '')}", var(--font-ui)`);
+      `"${String(id).replace(/"/g, '')}", var(--font-ui)`);
   } else {
     document.documentElement.style.setProperty('--font-content', 'var(--font-ui)');
   }
+}
+
+/** 读当前笔记字体设置；旧预设 id 或本机已不可用 → 视为失效 */
+function readContentFontSetting() {
+  const raw = storage.getSetting('fontFamily') || localStorage.getItem('zhinote-font') || '';
+  return String(raw || '');
+}
+function isContentFontUsable(id) {
+  if (!id || LEGACY_FONT_PRESET_IDS.has(id)) return false;
+  return fontExistsByCanvas(id);
+}
+/** 失效则写回「系统默认」并套用；notify 时 toast 一句。返回最终生效的值。 */
+function ensureContentFontValid(opts) {
+  const notify = !!(opts && opts.notify);
+  const cur = readContentFontSetting();
+  if (!cur) { applyFontFamily(''); return ''; }
+  if (isContentFontUsable(cur)) { applyFontFamily(cur); return cur; }
+  try { storage.setSetting('fontFamily', ''); } catch (_) {}
+  try { localStorage.setItem('zhinote-font', ''); } catch (_) {}
+  applyFontFamily('');
+  if (notify) {
+    const why = LEGACY_FONT_PRESET_IDS.has(cur)
+      ? '原「预设字体」已取消，已改回系统默认'
+      : '原笔记字体本机已不可用，已改回系统默认';
+    try { toast(why); } catch (_) {}
+  }
+  return '';
+}
+
+/** 生成 #set-font 的 option 列表 HTML（系统默认 + 本机缓存；失效项 disabled） */
+function fontSelectOptionsHtml(selected) {
+  const cur = selected == null ? '' : String(selected);
+  const list = getDetectedSystemFonts();
+  let html = `<option value=""${cur === '' ? ' selected' : ''}>系统默认</option>`;
+  for (const f of list) {
+    const name = f.name;
+    const ok = f.ok !== false;
+    const sel = cur === name && ok ? ' selected' : '';
+    const dis = ok ? '' : ' disabled';
+    const label = ok ? name : (name + '（已卸载）');
+    const title = ok ? '' : ' title="本机已检测不到此字体"';
+    html += `<option value="${escapeHtml(name)}"${sel}${dis}${title}>${escapeHtml(label)}</option>`;
+  }
+  return html;
+}
+/** 重建 #set-font 的 option（自绘下拉会在打开/change 时重读原生 option，无需拆掉重装） */
+function refillFontSelect(sel, selected) {
+  if (!sel) return;
+  sel.innerHTML = fontSelectOptionsHtml(selected);
+  sel.value = selected || '';
+  if (![...sel.options].some(o => o.value === sel.value && !o.disabled)) sel.value = '';
+  try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
 }
 
 const CLOZE_COLOR_MAP = {
@@ -92706,7 +93681,7 @@ function applySavedSettings() {
   // 优先读 localStorage（Quicker 变量异步、可能被云端覆盖；localStorage 是这台设备的"最后一选"）
   const theme = (localStorage.getItem('zhinote-theme') || storage.getSetting('theme') || 'light');
   applyTheme(theme);
-  applyFontFamily(storage.getSetting('fontFamily') || localStorage.getItem('zhinote-font') || '');
+  ensureContentFontValid({ notify: false });
   applyClozeColor(storage.getSetting('clozeColor') || 'black');
   applyOutlinePosition(storage.getSetting('outlinePosition') || 'left');
 
@@ -92781,6 +93756,14 @@ window.applyEditorLineHeight = applyEditorLineHeight;
 function applyEditorPadding(em) {
   const v = parseFloat(em);
   document.documentElement.style.setProperty('--editor-pad', (isFinite(v) ? v : 1) + 'em');
+  // 同步给出像素值：吸顶元素（如小枝块头）的负 top 若直接用 em 变量，会按自身字号解析，
+  // 与 #editor 按 14px 解析的 padding 差几像素，吸附点偏低漏出一条缝（用户实测）。
+  let px = (isFinite(v) ? v : 1) * 14;
+  try {
+    const ed = document.getElementById('editor');
+    if (ed) { const m = parseFloat(getComputedStyle(ed).paddingTop); if (isFinite(m)) px = m; }
+  } catch (_) {}
+  document.documentElement.style.setProperty('--editor-pad-px', px + 'px');
 }
 window.applyEditorPadding = applyEditorPadding;
 
@@ -93196,9 +94179,9 @@ function _isNonEditorTextTarget() {
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
   if (!ctrl && e.altKey && !e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
-    // 唤出 / 收起小枝
+    // 唤出小枝：优先在正文就地插对话块（用户定的交互）；面板开着则收起
     e.preventDefault();
-    try { window.mascot && window.mascot.toggle(); } catch (_) {}
+    try { (window.mascot?.summon || window.mascot?.toggle)?.call(window.mascot); } catch (_) {}
     return;
   }
   if (!ctrl && e.altKey && e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
@@ -94243,6 +95226,7 @@ function setupMobileLayout() {
   }
 
   if (window.matchMedia('(pointer: coarse)').matches) setupTouchGestures(mq);
+  setupRootScrollGuard();
 
   // 从树里打开笔记后自动收起抽屉——**仅窄屏**生效；宽屏（含最大化）不收起。
   // 刚新建的笔记除外（新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作）。
@@ -94669,6 +95653,38 @@ function setupKeyboardViewportTracking() {
   window._mdKbLift = lift; // 手势层在 touchend 时补调（按压期间暂缓的滚动纠正）
 }
 
+/** 布局视口滚动归零守卫（全端，桌面/触屏都挂）：本应用是 100dvh 全屏布局，文档根/body 永远不该滚动。
+ *  但 overflow:hidden 挡不住"聚焦屏外元素/输入法"触发的浏览器自动滚动——根或 body 被偷偷滚下去
+ *  几像素后整页上移：顶栏图标贴上边缘、底部离下边缘一截（用户报的"所有元素往上移了一点"，
+ *  与 iOS 键盘场景 lift 纠正的是同一症状，但 lift 只在触屏路径注册）。三重防护（实测缺一不可）：
+ *  ① 捕获阶段监听 document 全部 scroll，目标是根/body 才纠正（根滚动只在值变化那一刻发一次事件，
+ *     错过就永久错位；body 滚动不冒泡到 window，必须捕获）；② 注册时先纠正一次存量偏移；
+ *  ③ 关掉浏览器"刷新后恢复滚动位置"（会在本守卫注册前把旧偏移原样还回来）。
+ *  iOS 键盘期与编辑器选字期让路（同 lift 的约束，避免打断系统选字/键盘避让）。 */
+function setupRootScrollGuard() {
+  const selActive = () => {
+    const s = window.getSelection && window.getSelection();
+    if (!s || s.rangeCount === 0 || s.isCollapsed) return false;
+    const a = s.anchorNode;
+    const node = a && (a.nodeType === 3 ? a.parentElement : a);
+    return !!(node && node.closest && node.closest('#editor .ProseMirror'));
+  };
+  const fix = () => {
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+    const h = document.documentElement, b = document.body;
+    if (h.scrollTop || h.scrollLeft) { h.scrollTop = 0; h.scrollLeft = 0; }
+    if (b && (b.scrollTop || b.scrollLeft)) { b.scrollTop = 0; b.scrollLeft = 0; }
+  };
+  document.addEventListener('scroll', (e) => {
+    const t = e.target;
+    if (t !== document && t !== document.documentElement && t !== document.body) return;
+    if (document.body.classList.contains('kb-open') || window._mdTouchActive || selActive()) return;
+    fix();
+  }, { capture: true, passive: true });
+  try { history.scrollRestoration = 'manual'; } catch (_) {}
+  fix();
+}
+
 /** 大纲分隔条拖拽调宽。大纲在左时拖右缘（宽 = 起始 + dx），在右时拖左缘（宽 = 起始 - dx）。 */
 function setupOutlineResizer() {
   const resizer = document.getElementById('outline-resizer');
@@ -94929,6 +95945,9 @@ const WS_EMOJI_PRESETS = [
   // 自然/天气
   '☀️','🌙','⭐','🌟','🔥','⚡','❄️','🌈','🌊','🌸','🌹','🍀','🍂','🌍','🌌','✨',
   '🌺','🌻','🌷','💐','🌿','🪴','🌵','🍄','🐚','🪨','💧','🫧','☁️','🌤️','🌧️','🌪️',
+  // 表情/心情
+  '😀','😄','😁','😊','🙂','😉','😌','😎','🤔','🤗','🥰','😍','🤩','🥳','😇','😋',
+  '😜','🤪','🫠','😴','🥱','😮','🥹','🥺','😢','😅','😬','🤓','🥸','🤖','👻','😺',
   // 动物
   '🐱','🐶','🐰','🦊','🐻','🐼','🐨','🦁','🐯','🦄','🐝','🦋','🐠','🐳','🦅','🦉',
   // 标记/状态
@@ -95810,7 +96829,6 @@ function hideTooltip() {
 
 function bindAppTooltip(el) {
   if (el._tipBound) return;
-  if (el.closest('#bubble-menu')) return;
   el._tipBound = true;
   if (el.hasAttribute('title')) {
     el.setAttribute('data-tip', el.getAttribute('title'));
@@ -95838,9 +96856,9 @@ function bindAppTooltip(el) {
       const isFile = (tlink.getAttribute('href') || '').startsWith('file:///');
       tlink.setAttribute('data-tip', isFile ? 'Ctrl + 点击打开文件' : 'Ctrl + 点击打开');
     }
+    // 悬浮工具栏（bubble-menu）不再豁免：原生 title 提示框与全局 .app-tooltip 风格不一致（用户实测）
     const el = e.target.closest?.('[title], [data-tip]');
     if (!el || el._tipBound) return;
-    if (el.closest('#bubble-menu')) return;
     _hoverTarget = el;
     if (el.hasAttribute('title')) {
       el.setAttribute('data-tip', el.getAttribute('title'));
@@ -96235,6 +97253,13 @@ function listenQuickerMessages() {
 }
 
 function handleQuickerMessage(msg) {
+  // 速记：推荐字符串形式 "qc:text:<base64>" / "qc:image:<base64>"——
+  // Quicker「发送消息」要求内容是合法 JSON，带引号的字符串字面量即合法，且插值时没有大括号的坑
+  if (typeof msg === 'string') {
+    const m = msg.match(/^"?qc:(text|image):([\s\S]*?)"?$/);
+    if (m) handleQuickCapture({ kind: m[1], b64: m[2] });
+    return;
+  }
   if (!msg || !msg.type) return;
   switch (msg.type) {
     case 'show':
@@ -96260,8 +97285,84 @@ function handleQuickerMessage(msg) {
     case 'toast':
       toast(msg.message || '', msg.level || 'success');
       break;
+    case 'quick-capture': // 对象形式（等价于字符串 qc:…，两种都收）
+      handleQuickCapture(msg);
+      break;
   }
 }
+
+// ========== 速记（Quicker 端热键：剪贴板 → 笔记；枝记开着才生效） ==========
+
+/** base64 → UTF-8 文本（Quicker「加密/解密/哈希」的 Base64 编码按 UTF-8 处理） */
+function _qcB64ToText(b64) {
+  try { return new TextDecoder().decode(Uint8Array.from(atob(String(b64).replace(/\s+/g, '')), c => c.charCodeAt(0))); }
+  catch (_) { return ''; }
+}
+
+function handleQuickCapture(msg) {
+  const kind = msg.kind === 'image' ? 'image' : 'text';
+  const payload = { kind };
+  if (kind === 'text') {
+    payload.text = String(msg.text || (msg.b64 ? _qcB64ToText(msg.b64) : '')).replace(/\r\n/g, '\n').trim();
+    if (!payload.text) { toast('速记失败：剪贴板里没有文字', 'error'); return; }
+  } else {
+    // 剥空白/换行（有的 Base64 工具会折行），再试解码校验——坏数据（常见：图太大被截断）
+    // 绝不入笔记：否则正文出破图占位符，同步上传还会整轮失败（2026-07-28 用户实测踩过）
+    const b = String(msg.b64 || '').replace(/\s+/g, '');
+    if (!b) { toast('速记失败：剪贴板里没有图片', 'error'); return; }
+    payload.dataUrl = b.startsWith('data:') ? b : ('data:image/png;base64,' + b);
+    try { atob((payload.dataUrl.split(',')[1] || '').trim() || '!'); }
+    catch (_) { toast('速记失败：图片数据损坏或被截断（图太大时易发生，试试截小一点）', 'error'); return; }
+  }
+  // 没设置过 / 旧版遗留值 → 默认存到当前打开的笔记（在 设置 → 本地 → 速记 可改）
+  const pref = storage.getSetting('quickCapture');
+  doQuickCapture(pref && (pref.mode === 'current' || pref.mode === 'fixed') ? pref : { mode: 'current' }, payload);
+}
+
+function doQuickCapture(pref, payload) {
+  if (pref.mode === 'fixed') {
+    const n = storage.get(pref.noteId);
+    if (!n || n.deletedAt) { toast('速记的收集箱笔记不在了，请到 设置 → 本地 → 速记 重新选择', 'error'); return; }
+    appendCapture(pref.noteId, payload);
+  } else {
+    const id = editor.currentId?.();
+    if (!id) { toast('速记失败：当前没有打开的笔记', 'error'); return; }
+    appendCapture(id, payload);
+  }
+}
+
+/** 把速记内容追加到目标笔记末尾。目标正打开着 → 走编辑器（立即可见、正常保存管线）；
+ *  没打开 → 直接改存储正文（updateDoc 收图入仓、维护账本、标脏待同步） */
+function appendCapture(id, payload) {
+  const n = storage.get(id);
+  if (!n) { toast('速记失败：笔记不存在', 'error'); return; }
+  const nodes = [];
+  if (payload.kind === 'text') {
+    payload.text.split('\n').forEach(l => {
+      nodes.push(l.trim() ? { type: 'paragraph', content: [{ type: 'text', text: l }] } : { type: 'paragraph' });
+    });
+  } else {
+    nodes.push({ type: 'paragraph', content: [{ type: 'image', attrs: { src: payload.dataUrl } }] });
+  }
+  try {
+    if (editor.currentId?.() === id && editor.instance?.()) {
+      const ed = editor.instance();
+      ed.chain().insertContentAt(ed.state.doc.content.size, nodes).run();
+    } else {
+      const doc = n.doc ? JSON.parse(JSON.stringify(n.doc)) : { type: 'doc', content: [] };
+      doc.content = (doc.content || []).concat(nodes);
+      storage.updateDoc(id, doc);
+    }
+    toast('已速记到《' + (n.title || '无标题') + '》');
+  } catch (e) {
+    console.warn('[quick-capture] 追加失败', e);
+    toast('速记失败，请重试', 'error');
+  }
+}
+
+// 速记存法在 设置 → 本地 → 速记 里改（下拉框）；命令面板「速记设置」直达该页
+window.quickCaptureSetup = () => { try { openSettingsModal('backup'); } catch (_) {} };
+window._quickerMsg = handleQuickerMessage; // 调试/联调入口：控制台可模拟 Quicker 消息
 
 /** 统一窗口操作 → 子程序 WindowOp，用中文 mode 区分：隐藏/最小化/置顶/最大化/还原/顶边。
  *  - 存位置改由子程序「几何守门」判定：操作前量窗口是否铺满所在屏工作区，未铺满(=普通窗口)才写 zhinote_window_rect，
@@ -96280,6 +97381,11 @@ async function windowOp(mode, extra) {
     try { window.realtime && window.realtime.notifyShown && window.realtime.notifyShown(); } catch (_) {}
   }
   // 经宿主适配层：Quicker 宿主走 WindowOp 子程序；非 Quicker 宿主（浏览器/PWA）静默忽略。
+  // 诊断：Quicker 宿主下桥缺失（host 层会静默返回 null、按钮看似"没反应"）→ 控制台留痕，
+  // 供排查"预热开出的窗口顶栏按钮失灵"这类问题：F12 看有无本警告即可分辨桥断/子程序错。
+  if (window.host.isQuicker() && !window.host.caps.window) {
+    console.warn('[windowOp] $quickerSp 桥不可用，窗口操作被忽略：', mode);
+  }
   return await window.host.window.op(mode, extra);
 }
 window.windowOp = windowOp;
@@ -96304,6 +97410,8 @@ function _zhSyncError(err) {
   if (low.includes('503')) return '服务器繁忙（503），请稍后重试';
   if (low.includes('500') || low.includes('502')) return '服务器错误，请稍后重试';
   if (low.includes('certificate') || low.includes('ssl') || low.includes('cert')) return '证书/加密连接异常，请检查服务器地址';
+  // atob/base64 报错：云端某个文件的内容编码坏了（多为网盘写入被打断留下残文件）
+  if (low.includes('atob') || low.includes('not correctly encoded')) return '云端有个文件内容损坏（编码解析失败，多为网盘上次写入被打断），会随轮询自动重试；若反复出现，请把控制台（F12）里的红色报错发我定位';
   // 纯英文的 JSON 报错：保留原文方便定位是哪个文件坏了
   if (low.includes('json')) return '云端数据解析失败（' + s + '），请重试';
   return '同步出错（' + s + '），请重试';
@@ -97798,12 +98906,11 @@ function openSettingsModal(initialTab) {
         <div class="set-font-select-wrap">
           <button id="set-font-refresh" class="set-font-refresh-inline" title="重新扫描本机字体">⟳</button>
           <select id="set-font" class="has-inline-btn">
-            ${CONTENT_FONTS.map(f => `<option value="${f.id}"${(storage.getSetting('fontFamily')||'')===f.id?' selected':''}>${f.name}</option>`).join('')}
             ${(() => {
-              const sys = getDetectedSystemFonts();
-              if (!sys.length) return '';
-              const cur = storage.getSetting('fontFamily') || '';
-              return sys.map(f => `<option value="${escapeHtml(f.name)}"${cur===f.name?' selected':''}>${escapeHtml(f.name)}</option>`).join('');
+              // 打开设置：复查缓存；当前字体失效 → 自动回系统默认并提示
+              try { validateCachedSystemFonts(); } catch (_) {}
+              const cur = ensureContentFontValid({ notify: true });
+              return fontSelectOptionsHtml(cur);
             })()}
           </select>
         </div>
@@ -98009,7 +99116,7 @@ function openSettingsModal(initialTab) {
     </div>
     <div id="settings-tab-backup" class="${lastTab!=='backup'?'settings-tab-hidden':''}">
       <div id="images-dir-block" style="display:none;margin-bottom:18px;">
-        <label>图片文件夹</label>
+        <label class="settings-section">图片文件夹</label>
         <div style="display:flex;gap:8px;">
           <input type="text" id="set-images-dir" readonly style="flex:1;min-width:0;" title="笔记图片的本地存放位置（文件名为内容哈希）">
           <button id="set-images-browse" class="link-btn" title="选择新文件夹并迁移全部图片">更改…</button>
@@ -98017,7 +99124,18 @@ function openSettingsModal(initialTab) {
         </div>
         <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">笔记图片以独立文件存放于此（默认 文档\ZhiNote\images）；更改时自动迁移现有图片</div>
       </div>
-      <label>定时备份</label>
+      <div id="qc-block" style="display:none;margin-bottom:18px;">
+        <label class="settings-section">速记</label>
+        <select id="set-qc-mode" style="width:100%;">
+          <option value="current">存到当前打开的笔记</option>
+          <option value="fixed">固定存到一篇笔记（收集箱）</option>
+        </select>
+        <div id="qc-fixed-row" style="display:none;font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+          收集箱：<span id="qc-fixed-title"></span>　<button id="qc-fixed-repick" class="link-btn" style="font-size:12px;">更换…</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">Quicker 端按速记热键，把选中文字或剪贴板图片存进笔记（枝记开着才生效）</div>
+      </div>
+      <label class="settings-section">定时备份</label>
       <select id="set-backup-enabled" style="width:100%;">
         <option value="0">关闭</option>
         <option value="1">开启</option>
@@ -98230,7 +99348,9 @@ function openSettingsModal(initialTab) {
     footer: [
       { label: '保存', class: 'primary-btn', onClick: async () => {
         const size = parseInt(body.querySelector('#set-size').value) || 14;
-        const fontFamily = body.querySelector('#set-font')?.value || '';
+        // 笔记字体：只接受系统默认或本机仍可用的字体（失效项已 disabled）
+        let fontFamily = body.querySelector('#set-font')?.value || '';
+        if (fontFamily && !isContentFontUsable(fontFamily)) fontFamily = '';
         const themeId = body.querySelector('#set-theme-grid .theme-grid-item.active')?.dataset.theme || 'light';
         storage.setSetting('fontSize', size);
         storage.setSetting('fontFamily', fontFamily);
@@ -98923,6 +100043,54 @@ function openSettingsModal(initialTab) {
         catch (err) { toast('打开失败：' + (err?.message || err), 'error'); }
       });
     }
+
+    // 速记存法（仅 Quicker 端展示）：下拉二选一；选「固定一篇」时就地弹笔记选择浮层
+    {
+      const block = body.querySelector('#qc-block');
+      if (block && window.host?.isQuicker?.()) {
+        block.style.display = '';
+        const sel = body.querySelector('#set-qc-mode');
+        const fixedRow = body.querySelector('#qc-fixed-row');
+        const fixedTitle = body.querySelector('#qc-fixed-title');
+        let syncing = false; // 程序改值时也要 dispatch change（自绘下拉靠它同步文字标签），用旗标防止绕回本处理器
+        const refresh = () => {
+          const p = storage.getSetting('quickCapture');
+          const isFixed = p && p.mode === 'fixed';
+          const v = isFixed ? 'fixed' : 'current';
+          if (sel && sel.value !== v) {
+            syncing = true;
+            sel.value = v;
+            sel.dispatchEvent(new Event('change'));
+            syncing = false;
+          }
+          if (fixedRow) fixedRow.style.display = isFixed ? '' : 'none';
+          if (fixedTitle) fixedTitle.textContent = isFixed ? '《' + (p.title || '无标题') + '》' : '';
+        };
+        // 浮层必须锚在自绘下拉的可见触发器上——原生 select 被 upgradeSelect 隐藏，矩形为 0，锚它浮层会飘走
+        const anchorEl = () => sel?.closest('.md-select')?.querySelector('.md-select-trigger') || sel;
+        const pickFixed = (anchor) => {
+          window.mascot?.pickNote?.(anchor, null, (p) => {
+            const id = p.mode === 'current' ? editor.currentId?.() : p.id;
+            if (!id) { storage.setSetting('quickCapture', { mode: 'current' }); refresh(); return; }
+            const t = (p.mode === 'current' ? (storage.get(id) || {}).title : p.title) || '无标题';
+            storage.setSetting('quickCapture', { mode: 'fixed', noteId: id, title: t });
+            refresh();
+            toast('速记将固定存到《' + t + '》');
+          }, { noOff: true, onClose: (picked) => {
+            // 打开了选择层却没选：当做未选择，静默回到「当前笔记」（用户明确要求，无需提醒）
+            if (!picked) { storage.setSetting('quickCapture', { mode: 'current' }); refresh(); }
+          } });
+        };
+        refresh();
+        sel?.addEventListener('change', () => {
+          if (syncing) return;
+          if (sel.value === 'fixed') { pickFixed(anchorEl()); return; } // 选完/取消后由 refresh 落定
+          storage.setSetting('quickCapture', { mode: 'current' });
+          refresh();
+        });
+        body.querySelector('#qc-fixed-repick')?.addEventListener('click', (e) => pickFixed(e.currentTarget));
+      }
+    }
   }
 
   // 主题胶囊点击 — 立即预览（名字就在胶囊里，无需另行更新）
@@ -98967,7 +100135,7 @@ function openSettingsModal(initialTab) {
   }
 
 
-  // 字体刷新按钮：重新扫描本机已安装字体并重建下拉
+  // 字体刷新按钮：全量重扫候选池并重建下拉（含已卸载灰显项）
   const btnFontRefresh = body.querySelector('#set-font-refresh');
   if (btnFontRefresh) {
     btnFontRefresh.addEventListener('click', () => {
@@ -98977,23 +100145,12 @@ function openSettingsModal(initialTab) {
       setTimeout(() => {
         try {
           const list = refreshDetectedSystemFonts();
+          const cur = ensureContentFontValid({ notify: true });
           const sel = body.querySelector('#set-font');
-          if (sel) {
-            // 删除非预设的 option（预设字体数量固定）
-            const presetCount = CONTENT_FONTS.length;
-            while (sel.options.length > presetCount) sel.options[sel.options.length - 1].remove();
-            if (list.length) {
-              const cur = storage.getSetting('fontFamily') || '';
-              list.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f.name;
-                opt.textContent = f.name;
-                if (cur === f.name) opt.selected = true;
-                sel.appendChild(opt);
-              });
-            }
-          }
-          toast(`扫描到 ${list.length} 款本机字体`, 'success');
+          if (sel) refillFontSelect(sel, cur);
+          const okN = list.filter(f => f.ok).length;
+          const missN = list.length - okN;
+          toast(missN ? `可用 ${okN} 款，另有 ${missN} 款已卸载` : `扫描到 ${okN} 款本机字体`, 'success');
         } catch (e) { toast('字体扫描失败：' + e.message, 'error'); }
         finally { btnFontRefresh.disabled = false; btnFontRefresh.textContent = original; }
       }, 30);
@@ -99002,7 +100159,10 @@ function openSettingsModal(initialTab) {
 
   setTimeout(() => {
     const fontSel = body.querySelector('#set-font');
-    if (fontSel) fontSel.value = (storage.getSetting('fontFamily') || localStorage.getItem('zhinote-font') || '');
+    if (fontSel) {
+      const cur = readContentFontSetting();
+      fontSel.value = isContentFontUsable(cur) ? cur : '';
+    }
     body.querySelectorAll('select').forEach(s => upgradeSelect(s));
   }, 0);
 }
@@ -99016,22 +100176,26 @@ function upgradeSelect(select) {
   if (!select || select._upgraded) return;
   select._upgraded = true;
 
-  // 收集 options（含分组）
+  // groups/flat 在每次打开/同步时从原生 select 重读——字体列表刷新后不必拆掉再装
   const groups = [];
   const flat = [];
-  Array.from(select.children).forEach(child => {
-    if (child.tagName === 'OPTGROUP') {
-      const opts = Array.from(child.children).map(o => ({
-        value: o.value, label: o.textContent.trim(), disabled: o.disabled, title: o.title || '',
-      }));
-      groups.push({ label: child.label, options: opts });
-      flat.push(...opts);
-    } else if (child.tagName === 'OPTION') {
-      const opt = { value: child.value, label: child.textContent.trim(), disabled: child.disabled, title: child.title || '' };
-      groups.push({ label: '', options: [opt] });
-      flat.push(opt);
-    }
-  });
+  function rebuildFromSelect() {
+    groups.length = 0; flat.length = 0;
+    Array.from(select.children).forEach(child => {
+      if (child.tagName === 'OPTGROUP') {
+        const opts = Array.from(child.children).map(o => ({
+          value: o.value, label: o.textContent.trim(), disabled: o.disabled, title: o.title || '',
+        }));
+        groups.push({ label: child.label, options: opts });
+        flat.push(...opts);
+      } else if (child.tagName === 'OPTION') {
+        const opt = { value: child.value, label: child.textContent.trim(), disabled: child.disabled, title: child.title || '' };
+        groups.push({ label: '', options: [opt] });
+        flat.push(opt);
+      }
+    });
+  }
+  rebuildFromSelect();
 
   // 包裹器：把 select 隐藏在内，外面套 trigger
   const wrap = document.createElement('div');
@@ -99053,6 +100217,7 @@ function upgradeSelect(select) {
 
   const labelEl = trigger.querySelector('.md-select-label');
   const sync = () => {
+    rebuildFromSelect();
     const cur = flat.find(o => o.value === select.value);
     labelEl.textContent = cur?.label || flat[0]?.label || '';
   };
@@ -99089,6 +100254,7 @@ function upgradeSelect(select) {
 
   function open() {
     if (panel) { close(); return; }
+    rebuildFromSelect();
     panel = document.createElement('div');
     panel.className = 'md-select-panel';
     panel.innerHTML = groups.map(g => {
@@ -99836,12 +101002,19 @@ function initEditorContextMenu() {
 
     // 选中了文字且小枝开启 → 菜单顶部给一个「问小枝」子菜单（只这一项，不铺开占位）
     const _selForAI = (() => { try { const s = editor.instance?.().state.selection; return s && !s.empty; } catch (_) { return false; } })();
+    // 「问小枝」子菜单：按常用语分组显示（组名小标题 + 组内条目），点了就地插对话块发问；超长靠子菜单滚动
     const _aiMenu = (_selForAI && window.mascot?.isEnabled?.() && window.aiChat) ? [{
       label: '问小枝', icon: '🌱',
       submenu: [
-        { label: '问一问（带上选中内容）', action: () => window.mascot.askSelection('ask') },
-        { sep: true },
-        ...window.aiChat.ACTIONS.map(a => ({ label: a.emoji + ' ' + a.label, action: () => window.mascot.askSelection(a.id) })),
+        { label: '问一问', icon: '🌱', title: '在下方插入对话块，想问什么直接打', action: () => window.mascot.askSelection() },
+        ...window.aiChat.cmdGroups().flatMap(g => (g.items || []).length ? [
+          { header: g.n },
+          ...g.items.map(c => ({
+            label: c.e + ' ' + (c.n || (c.t.length > 10 ? c.t.slice(0, 10) + '…' : c.t)),
+            title: c.t,
+            action: () => window.mascot.askCmd(c),
+          })),
+        ] : []),
       ],
     }, { sep: true }] : [];
 
@@ -99935,6 +101108,13 @@ function initEditorContextMenu() {
             const sep = document.createElement('div');
             sep.className = 'md-ctx-sep';
             sub.appendChild(sep);
+            continue;
+          }
+          if (si.header) { // 分组小标题（不可点）：如「问小枝」子菜单里的常用语分组
+            const hd = document.createElement('div');
+            hd.className = 'md-ctx-subhead';
+            hd.textContent = si.header;
+            sub.appendChild(hd);
             continue;
           }
           const srow = document.createElement('div');

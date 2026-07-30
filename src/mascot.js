@@ -9,18 +9,31 @@
 
   var K = {
     enabled: 'zhinote.mascot.enabled',   // '0' 关闭；其它/缺省 = 开
-    resident: 'zhinote.mascot.resident', // '1' 常驻右下角
+    resident: 'zhinote.mascot.resident', // '1' 常驻
     avatar: 'zhinote.mascot.avatar',     // 常驻形象（emoji 字符）
+    pos: 'zhinote.mascot.pos',           // 常驻位置 {x,y}（视口像素，左上角）；没存 = 默认右下角
   };
-  // 常驻形象可选项（静态 emoji；对话里说话的动图表情与此无关）
-  var AVATARS = [
-    '🌱','🌿','☘️','🍀','🪴','🌵','🌻','🌸','🌷','🍄','🍂','🌈','⭐','🌙','☀️','🔥','💡','🎈','🍵','🫧','💎','🎐',
-    '🙂','😊','😀','😄','😁','😉','😌','🤔','😎','🤗','🥰','🤩','🥳','😇','😋','😴','🤓','🥸','🫠','😺',
-    '🤖','👻','👽','🐣','🐱','🐶','🐼','🦊','🐰','🐻','🐨','🐯','🦁','🐸','🐵','🐳','🐬','🦉','🦜','🐢','🐙','🦄',
-  ];
-  function avatarGlyph() { var v = lget(K.avatar); return (v && AVATARS.indexOf(v) >= 0) ? v : '🌱'; }
-  function lget(k) { try { return localStorage.getItem(k); } catch (_) { return null; } }
-  function lset(k, v) { try { localStorage.setItem(k, v); } catch (_) {} }
+  // 常驻形象：从谷歌动图全集（window.NOTO_EMOJI，mascot-emoji.js）里任选，存 emoji 字符
+  function avatarGlyph() { return lget(K.avatar) || '🌱'; }
+  // 持久化：主存走 storage 设置（'_'+键名 → 本机保存、不上云；Quicker 端随动作状态变量落盘，
+  // 重启 Quicker 不丢）。localStorage 只作旧值迁移来源 + 兜底双写——单独靠它在 Quicker 端
+  // 不可靠（预热建窗/进程被杀时浏览器缓存可能整体丢失，用户实测常驻/位置/形象全部重置）。
+  function lget(k) {
+    var st = window.storage;
+    try {
+      var v = st && st.getSetting ? st.getSetting('_' + k) : undefined;
+      if (v !== undefined && v !== null) return String(v);
+    } catch (_) {}
+    var lv = null;
+    try { lv = localStorage.getItem(k); } catch (_) {}
+    // 旧数据一次性迁移进 storage 设置（storage 未就绪时其内部为 no-op，下次读到再迁）
+    if (lv !== null && st && st.setSetting) { try { st.setSetting('_' + k, lv); } catch (_) {} }
+    return lv;
+  }
+  function lset(k, v) {
+    try { if (window.storage && window.storage.setSetting) window.storage.setSetting('_' + k, v); } catch (_) {}
+    try { localStorage.setItem(k, v); } catch (_) {}
+  }
 
   function isEnabled() { return lget(K.enabled) !== '0'; }
   function isResident() { return lget(K.resident) === '1'; }
@@ -46,7 +59,7 @@
   // 闲时随机小表情池（常驻按钮偶尔演一下，制造点惊喜）
   var IDLE_SET = ['sleep', 'yawn', 'hmm', 'smug', 'dizzy', 'hot', 'cold', 'upside', 'shush', 'halo', 'relieved', 'tongue', 'zany', 'wink', 'focus', 'think', 'idea', 'happy', 'drool', 'nerd'];
   function cpToGlyph(cp) {
-    try { return String.fromCodePoint.apply(null, cp.split('-').map(function (h) { return parseInt(h, 16); })); }
+    try { return String.fromCodePoint.apply(null, cp.split(/[-_]/).map(function (h) { return parseInt(h, 16); })); }
     catch (_) { return '\uD83D\uDE42'; }
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
@@ -133,8 +146,9 @@
       + '<div class="mascot-chat" id="mascot-chat"></div>'
       + '<div class="mascot-quick" id="mascot-quick"></div>'
     + '<div class="mascot-input">'
+    + '<button type="button" class="mascot-ctx mascot-cmdbtn" id="mascot-cmd" title="常用语（存下常问的话，一点就问）" aria-label="常用语">⚡</button>'
     + '<button type="button" class="mascot-ctx" id="mascot-ctx" title="选择随问题带上的笔记" aria-label="选择笔记">📄<span class="mascot-ctx-t"></span></button>'
-    + '<textarea id="mascot-ta" rows="1" placeholder="问小枝…（Enter 发送）"></textarea>'
+    + '<textarea id="mascot-ta" rows="1" placeholder="问小枝…" title="Enter 发送，Shift+Enter 换行"></textarea>'
       + '<button type="button" class="mascot-send" id="mascot-send" title="发送" aria-label="发送">'
       + '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="6 11 12 5 18 11"/></svg></button>'
       + '</div>'
@@ -143,16 +157,22 @@
       + '<span class="mascot-fallback">' + avatarGlyph() + '</span></button>';
     _avatar = _root.querySelector('#mascot-avatar');
     _panel = _root.querySelector('#mascot-panel');
+    renderAvatar(_avatar.querySelector('.mascot-fallback')); // 静态字形 → 谷歌矢量图（防空框）
     _avatar.addEventListener('click', function () {
+      if (_dragMoved) { _dragMoved = false; return; } // 刚拖完松手的那下不算点击
       var opening = !_panelOpen;
       toggle();
       // 点开时打个招呼（换个表情），别只干巴巴弹窗
       if (opening) playAvatarMood(['hi', 'happy', 'wink', 'love', 'done'][Math.floor(Math.random() * 5)]);
     });
-    // 右键：不弹窗，换个表情 + 冒句碎碎念（纯互动）
+    installDrag();
+    installHoverTree();
+    applyPos();
+    window.addEventListener('resize', function () { applyPos(); });
+    // 右键：不弹窗，冒句碎碎念（showQuip 内部自带配套表情，这里不再另演一场——
+    // 曾经两处各演一场，1ms 内连开两场互抢 = 闪一下，20260730 取证坐实）
     _avatar.addEventListener('contextmenu', function (e) {
       e.preventDefault(); e.stopPropagation();
-      playAvatarMood();
       showQuip(true);
     });
     _root.querySelector('#mascot-close').addEventListener('click', function () { closePanel(); });
@@ -170,6 +190,303 @@
     try { document.body.classList.toggle('mascot-off', !isEnabled()); } catch (_) {} // 悬浮工具栏的 🌱 按钮随开关显隐
   }
 
+  // ===== 常驻位置：整个屏幕随意拖，松手记住（没拖过 = 默认右下角）=====
+  var _dragMoved = false;
+  function savedPos() { try { var p = JSON.parse(lget(K.pos) || ''); if (p && isFinite(p.x) && isFinite(p.y)) return p; } catch (_) {} return null; }
+  function clampPos(x, y) {
+    var w = (_avatar && _avatar.offsetWidth) || 48, h = (_avatar && _avatar.offsetHeight) || 48;
+    return { x: Math.min(Math.max(4, x), window.innerWidth - w - 4), y: Math.min(Math.max(4, y), window.innerHeight - h - 4) };
+  }
+  function applyPos() {
+    if (!_root) return;
+    var p = savedPos();
+    if (!p) { _root.style.left = _root.style.top = _root.style.right = _root.style.bottom = ''; return; }
+    p = clampPos(p.x, p.y);
+    _root.style.left = p.x + 'px'; _root.style.top = p.y + 'px';
+    _root.style.right = 'auto'; _root.style.bottom = 'auto';
+  }
+  function installDrag() {
+    var sx = 0, sy = 0, ox = 0, oy = 0, dragging = false, pid = null;
+    _avatar.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var r = _root.getBoundingClientRect();
+      sx = e.clientX; sy = e.clientY; ox = r.left; oy = r.top; dragging = false; pid = e.pointerId;
+      var move = function (ev) {
+        if (ev.pointerId !== pid) return;
+        var dx = ev.clientX - sx, dy = ev.clientY - sy;
+        if (!dragging && Math.abs(dx) + Math.abs(dy) < 6) return; // 6px 内当点击，不进拖动
+        if (!dragging) { dragging = true; try { _avatar.setPointerCapture(pid); } catch (_) {} closeTree(); hideQuip(); }
+        var p = clampPos(ox + dx, oy + dy);
+        _root.style.left = p.x + 'px'; _root.style.top = p.y + 'px';
+        _root.style.right = 'auto'; _root.style.bottom = 'auto';
+      };
+      var up = function () {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+        if (dragging) {
+          _dragMoved = true; // 松手时抑制随之而来的 click
+          var r2 = _root.getBoundingClientRect();
+          lset(K.pos, JSON.stringify({ x: Math.round(r2.left), y: Math.round(r2.top) }));
+          setTimeout(function () { _dragMoved = false; }, 250);
+        }
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', up);
+    });
+  }
+  /** 拖过之后，面板/气泡不再固定往左上弹：哪边空间大放哪边 */
+  function placePanel() {
+    if (!_panel || !_avatar) return;
+    if (!savedPos()) { _panel.style.left = _panel.style.right = _panel.style.top = _panel.style.bottom = _panel.style.maxHeight = _panel.style.transformOrigin = ''; return; }
+    var r = _avatar.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    var below = (vh - r.bottom) > r.top;
+    var alignRight = (r.left + r.right) / 2 > vw / 2;
+    _panel.style.left = alignRight ? 'auto' : '0px';
+    _panel.style.right = alignRight ? '0px' : 'auto';
+    _panel.style.top = below ? 'calc(100% + 10px)' : 'auto';
+    _panel.style.bottom = below ? 'auto' : 'calc(100% + 10px)';
+    var avail = (below ? vh - r.bottom : r.top) - 26;
+    _panel.style.maxHeight = Math.max(240, Math.min(Math.round(vh * 0.72), avail)) + 'px';
+    _panel.style.transformOrigin = (below ? 'top' : 'bottom') + ' ' + (alignRight ? 'right' : 'left');
+  }
+
+  // ===== 悬浮常驻 → 常用语层级菜单（分组飞出式）；碎碎念挪到右键上 =====
+  var _treeEl = null, _treeTimer = null, _treeCloseTimer = null;
+  var _hoverAnimAt = 0;
+  function installHoverTree() {
+    _avatar.addEventListener('mouseenter', function () {
+      if (_panelOpen || !_visible || !isEnabled()) return;
+      // 摸它就动：悬停演自己的动图（3s 冷却，避免鼠标扫来扫去抽风）
+      var now = Date.now();
+      if (now - _hoverAnimAt > 3000) { _hoverAnimAt = now; playAvatarSelf(3800); }
+      clearTimeout(_treeTimer); clearTimeout(_treeCloseTimer);
+      _treeTimer = setTimeout(function () { if (!_panelOpen && !_dragMoved) openCmdTree(_avatar, { hover: true }); }, 240);
+    });
+    _avatar.addEventListener('mouseleave', function () { clearTimeout(_treeTimer); scheduleTreeClose(); });
+  }
+  function scheduleTreeClose() {
+    clearTimeout(_treeCloseTimer);
+    _treeCloseTimer = setTimeout(function () { closeTree(); }, 240);
+  }
+  function closeTree() { clearTimeout(_treeTimer); if (_treeEl) { _treeEl.remove(); _treeEl = null; } }
+  /** 常用语层级菜单：问一问 + 各分组（悬浮飞出子菜单）+ 管理入口。
+   *  常驻悬浮（hover:true，移开即收）与悬浮工具栏 🌱 点击（点外面关）共用。 */
+  function openCmdTree(anchor, opts) {
+    opts = opts || {};
+    closeTree(); closePicker();
+    var A = ai(); if (!A || !isEnabled() || !anchor) return;
+    var groups = A.cmdGroups();
+    var el = document.createElement('div'); el.className = 'mascot-tree';
+    function sepEl() { var s = document.createElement('div'); s.className = 'mascot-tree-sep'; return s; }
+    function mkRow(ico, label) {
+      var r = document.createElement('div'); r.className = 'mascot-tree-row';
+      r.innerHTML = '<span class="mascot-tree-ico">' + ico + '</span><span class="mascot-tree-lb">' + esc(label) + '</span>';
+      return r;
+    }
+    var ask = mkRow('🌱', '问一问');
+    ask.addEventListener('mousedown', function (e) { e.preventDefault(); closeTree(); askSelection('ask'); });
+    el.appendChild(ask);
+    var hasAny = false;
+    groups.forEach(function (grp) {
+      if (!grp.items || !grp.items.length) return;
+      if (!hasAny) { el.appendChild(sepEl()); hasAny = true; }
+      var g = document.createElement('div'); g.className = 'mascot-tree-row mascot-tree-grp';
+      g.innerHTML = '<span class="mascot-tree-ico">📂</span><span class="mascot-tree-lb">' + esc(grp.n) + '</span><span class="mascot-tree-caret">▸</span>';
+      var sub = document.createElement('div'); sub.className = 'mascot-tree-sub';
+      grp.items.forEach(function (it) {
+        var r = mkRow(esc(it.e || '⚡'), it.n || (it.t.length > 14 ? it.t.slice(0, 14) + '…' : it.t));
+        r.title = it.t;
+        r.addEventListener('mousedown', function (e) { e.preventDefault(); closeTree(); execCmdItem(it); });
+        sub.appendChild(r);
+      });
+      g.appendChild(sub);
+      el.appendChild(g);
+    });
+    el.appendChild(sepEl());
+    var mg = mkRow('⚙️', '管理常用语…');
+    mg.classList.add('mascot-tree-dim');
+    mg.addEventListener('mousedown', function (e) { e.preventDefault(); closeTree(); openMascotSettings('cmds'); });
+    el.appendChild(mg);
+    document.body.appendChild(el);
+    _treeEl = el;
+    var r = anchor.getBoundingClientRect(), vw = window.innerWidth, vh = window.innerHeight;
+    var w = el.offsetWidth, h = el.offsetHeight;
+    var above = r.top > vh - r.bottom;
+    var y = above ? r.top - h - 8 : r.bottom + 8;
+    y = Math.min(Math.max(8, y), vh - h - 8);
+    var alignRight = (r.left + r.right) / 2 > vw / 2;
+    var x = alignRight ? r.right - w : r.left;
+    x = Math.min(Math.max(8, x), vw - w - 8);
+    el.style.left = Math.round(x) + 'px'; el.style.top = Math.round(y) + 'px';
+    el.classList.add(alignRight ? 'mascot-tree-flyleft' : 'mascot-tree-flyright');
+    if (opts.hover) {
+      el.addEventListener('mouseenter', function () { clearTimeout(_treeCloseTimer); });
+      el.addEventListener('mouseleave', scheduleTreeClose);
+    } else {
+      setTimeout(function () {
+        document.addEventListener('mousedown', function onDoc(e) {
+          if (_treeEl !== el) { document.removeEventListener('mousedown', onDoc, true); return; }
+          if (!el.contains(e.target)) { closeTree(); document.removeEventListener('mousedown', onDoc, true); }
+        }, true);
+      }, 0);
+    }
+  }
+  /** 点一条常用语：默认就地插对话块自动发问（有选中文字则「指令＋选中段」一起问），
+   *  问答留在笔记里最丝滑；编辑器不可用（欢迎页/只读）才退回面板。 */
+  function execCmdItem(it) {
+    if (!it || !it.t) return;
+    var sel = ai() ? ai().getSelectionText() : '';
+    var instr = it.t.replace(/[\s:：]+$/, '');
+    var q = sel ? instr + '：\n\n' + sel : it.t;
+    if (insertBlockAt(q, true)) return;
+    // 兜底：面板（保留「替换原文」能力的老路径）
+    try { var ed = window.editor && window.editor.instance && window.editor.instance(); if (ed) { _selFrom = ed.state.selection.from; _selTo = ed.state.selection.to; } } catch (_) {}
+    openPanel();
+    if (sel) { _selText = sel; runCmdItem(it); }
+    else send(it.t);
+  }
+
+  // ===== 常用语图标：复用全项目统一的图标选择器（与笔记/笔记本图标同一套 UI 和备选池）=====
+  function openEmojiPick(anchor, cb, cur) {
+    if (!window.openIconPicker) return;
+    window.openIconPicker(anchor, { currentIcon: cur || '', defaultIcon: '⚡', onPick: cb, title: '选择图标' });
+  }
+
+  // ===== 常驻形象：谷歌动图全集选择器 =====
+  // 网格用谷歌矢量图渲染（新表情在旧系统字库里是空框，图片在任何系统长一样）；悬停播动画预览
+  var EMO_HOST = 'https://fonts.gstatic.com/s/e/notoemoji/latest/';
+  var _cpByChar = null;
+  function notoCp(ch) {
+    var NE = window.NOTO_EMOJI;
+    if (!NE || !ch) return '';
+    if (!_cpByChar) {
+      _cpByChar = {};
+      NE.items.forEach(function (it) {
+        var g = cpToGlyph(it[0]);
+        _cpByChar[g] = it[0];
+        _cpByChar[g.replace(/\uFE0F/g, '')] = it[0]; // 变体选择符两边可有可无，都能查到
+      });
+    }
+    return _cpByChar[ch] || _cpByChar[String(ch).replace(/\uFE0F/g, '')] || '';
+  }
+  /** 把当前常驻形象画进元素：优先谷歌矢量图（防空框），不在动图集/离线/加载失败就停在系统字形 */
+  function renderAvatar(el) {
+    if (!el) return;
+    var ch = avatarGlyph(), cp = notoCp(ch);
+    el.textContent = ch;
+    if (!cp) return;
+    var img = new Image();
+    img.className = 'mascot-avaimg';
+    img.alt = ch; img.draggable = false;
+    img.onload = function () { if (el.isConnected && el.textContent === ch) { el.textContent = ''; el.appendChild(img); } };
+    img.src = EMO_HOST + cp + '/emoji.svg';
+    // 快路：矢量图已在浏览器缓存（首次渲染就拉过）→ 立即换上，消掉"系统字符闪一帧再变图"的抖动
+    if (img.complete) { try { img.onload(); } catch (_) {} img.onload = null; }
+  }
+  var _avaPop = null, _avaPrev = null, _avaPrevTimer = null, _avaTab = 0;
+  function closeAvaPick() {
+    if (!_avaPop) return;
+    clearTimeout(_avaPrevTimer);
+    if (_avaPrev) { try { _avaPrev.stop(false); } catch (_) {} _avaPrev = null; }
+    _avaPop.remove(); _avaPop = null;
+  }
+  function openAvatarPicker(anchor, onPicked) {
+    closeAvaPick();
+    var NE = window.NOTO_EMOJI;
+    if (!NE) { if (window.toast) window.toast('表情清单没加载出来，稍后再试', 'error'); return; }
+    var pop = document.createElement('div');
+    pop.className = 'mascot-avapick';
+    pop.innerHTML = '<input type="text" class="mascot-inp mascot-avapick-q" placeholder="搜表情：开心 / 猫 / 爱心…">'
+      + '<div class="mascot-avapick-tabs">' + NE.cats.map(function (c, i) { return '<button type="button" class="mascot-avapick-tab' + (i === _avaTab ? ' on' : '') + '" data-i="' + i + '">' + esc(c) + '</button>'; }).join('') + '</div>'
+      + '<div class="mascot-avapick-grid"></div>'
+      + '<div class="mascot-avapick-foot"><span class="mascot-avapick-pv"></span><span class="mascot-avapick-pn">共 ' + NE.items.length + ' 个，全都会动；悬停预览，点选定</span></div>';
+    document.body.appendChild(pop);
+    _avaPop = pop;
+    var grid = pop.querySelector('.mascot-avapick-grid');
+    var inp = pop.querySelector('.mascot-avapick-q');
+    var pv = pop.querySelector('.mascot-avapick-pv');
+    var pn = pop.querySelector('.mascot-avapick-pn');
+    var curCh = avatarGlyph();
+    function cells(list) {
+      grid.innerHTML = list.map(function (it) {
+        var g = cpToGlyph(it[0]);
+        return '<button type="button" class="mascot-avapick-cell' + (g === curCh ? ' on' : '') + '" data-cp="' + it[0] + '" title="' + esc((it[2] || '').split(' ')[0]) + '">'
+          + '<img loading="lazy" src="' + EMO_HOST + it[0] + '/emoji.svg" alt="' + esc(g) + '" onerror="this.replaceWith(this.alt)">'
+          + '</button>';
+      }).join('') || '<div class="mascot-picker-none">没有找到相关表情</div>';
+      grid.scrollTop = 0;
+    }
+    function render() {
+      var q = inp.value.trim().toLowerCase();
+      pop.querySelectorAll('.mascot-avapick-tab').forEach(function (t) { t.classList.toggle('on', !q && +t.dataset.i === _avaTab); });
+      if (!q) { cells(NE.items.filter(function (it) { return it[1] === _avaTab; })); return; }
+      cells(NE.items.filter(function (it) { return (it[2] || '').toLowerCase().indexOf(q) >= 0 || cpToGlyph(it[0]) === q; }));
+    }
+    render();
+    function position() {
+      var r = anchor && anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : { left: 0, top: 0, bottom: 0 };
+      var w = pop.offsetWidth || 324, h = pop.offsetHeight || 400;
+      var x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+      var y = r.bottom + 8;
+      if (y + h > window.innerHeight - 8) y = Math.max(8, r.top - h - 8);
+      pop.style.left = x + 'px'; pop.style.top = y + 'px';
+    }
+    position();
+    var deb = null;
+    inp.addEventListener('input', function () { clearTimeout(deb); deb = setTimeout(render, 120); });
+    inp.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeAvaPick(); } });
+    // 分类标签单行超宽：滚轮横滚 + 按住拖动（滚动条隐藏，不然靠后的分组够不着）
+    var tabs = pop.querySelector('.mascot-avapick-tabs');
+    tabs.addEventListener('wheel', function (e) {
+      if (e.deltaY && !e.deltaX) { e.preventDefault(); tabs.scrollLeft += e.deltaY; }
+    }, { passive: false });
+    var _dragX = null, _dragScroll = 0, _dragged = false;
+    tabs.addEventListener('pointerdown', function (e) { _dragX = e.clientX; _dragScroll = tabs.scrollLeft; _dragged = false; });
+    tabs.addEventListener('pointermove', function (e) {
+      if (_dragX == null) return;
+      var dx = e.clientX - _dragX;
+      if (!_dragged && Math.abs(dx) > 4) { _dragged = true; try { tabs.setPointerCapture(e.pointerId); } catch (_) {} }
+      if (_dragged) tabs.scrollLeft = _dragScroll - dx;
+    });
+    tabs.addEventListener('pointerup', function () { _dragX = null; });
+    tabs.addEventListener('pointercancel', function () { _dragX = null; });
+    tabs.addEventListener('click', function (e) {
+      if (_dragged) { _dragged = false; return; } // 刚拖完松手的那下不算点选
+      var t = e.target.closest('.mascot-avapick-tab'); if (!t) return;
+      _avaTab = +t.dataset.i; inp.value = ''; render();
+      t.scrollIntoView({ block: 'nearest', inline: 'nearest' }); // 点到半露的标签时滚到全露
+    });
+    grid.addEventListener('mouseover', function (e) {
+      var c = e.target.closest('.mascot-avapick-cell'); if (!c) return;
+      var cp = c.dataset.cp;
+      clearTimeout(_avaPrevTimer);
+      _avaPrevTimer = setTimeout(function () {
+        if (!_avaPop) return;
+        if (_avaPrev) { try { _avaPrev.stop(false); } catch (_) {} }
+        _avaPrev = animEmoji(pv, cp);
+        pn.textContent = c.title || '';
+      }, 120);
+    });
+    grid.addEventListener('click', function (e) {
+      var c = e.target.closest('.mascot-avapick-cell'); if (!c) return;
+      lset(K.avatar, cpToGlyph(c.dataset.cp));
+      closeAvaPick();
+      var fb = _root && _root.querySelector('#mascot-avatar .mascot-fallback');
+      if (fb) renderAvatar(fb);
+      if (isResident()) showAvatar();
+      if (onPicked) onPicked();
+    });
+    setTimeout(function () {
+      document.addEventListener('mousedown', function onDoc(e) {
+        if (_avaPop !== pop) { document.removeEventListener('mousedown', onDoc, true); return; }
+        if (!pop.contains(e.target)) { closeAvaPick(); document.removeEventListener('mousedown', onDoc, true); }
+      }, true);
+    }, 0);
+    setTimeout(function () { try { inp.focus(); } catch (_) {} }, 20);
+  }
+
   // ===== 表情切换（带竞态保护 + 离线兜底）=====
   // 动图 emoji 演在「对话里最新一条小枝消息」的头像上（说话的人）；常驻按钮固定 🌱 不动。
   function setChatAvatar(el) {
@@ -179,7 +496,7 @@
     if (el) setMood(_curMood || 'idle');
   }
   function setMood(name) {
-    var cp = MOODS[name] || (/^[0-9a-f-]+$/i.test(name) ? name : MOODS.idle);
+    var cp = MOODS[name] || (/^[0-9a-f_-]+$/i.test(name) ? name : MOODS.idle);
     _curMood = name;
     var host = _chatAva;
     if (!host || !host.isConnected) return;
@@ -204,17 +521,21 @@
   }
 
   /** 在任意元素里播动图 emoji（面板头像之外的场景用：对话块说话人、常驻闲时小表情）。
-   *  返回 { stop(freeze) }：stop 销毁动画；freeze !== false 时留下静态字形。 */
-  function animEmoji(host, moodOrCp) {
-    var cp = MOODS[moodOrCp] || (/^[0-9a-f-]+$/i.test(moodOrCp) ? moodOrCp : MOODS.idle);
+   *  返回 { stop(freeze) }：stop 销毁动画；freeze !== false 时留下静态字形。
+   *  opts.defer：备好戏再登台——动图数据就绪前**完全不动**元素现有内容，失败也不动。
+   *    常驻按钮用它防"抽搐"：旧行为是先硬切成系统字符、加载完再换动图（两跳且画法不同），
+   *    网络慢/失败时还会卡出一个随机静态表情杵 5 秒。 */
+  function animEmoji(host, moodOrCp, opts) {
+    var cp = MOODS[moodOrCp] || (/^[0-9a-f_-]+$/i.test(moodOrCp) ? moodOrCp : MOODS.idle);
     var stopped = false, anim = null;
-    host.textContent = cpToGlyph(cp); // 先给静态字形，动图就绪再替换（离线时它就是最终形态）
+    var defer = !!(opts && opts.defer);
+    if (!defer) host.textContent = cpToGlyph(cp); // 先给静态字形，动图就绪再替换（离线时它就是最终形态）
     Promise.all([loadLottie(), getData(cp)]).then(function (r) {
       if (stopped || !host.isConnected) return;
       var box = document.createElement('div'); box.className = 'mascot-lottie';
       host.textContent = ''; host.appendChild(box);
       try { anim = r[0].loadAnimation({ container: box, renderer: 'svg', loop: true, autoplay: true, animationData: r[1] }); }
-      catch (_) { host.textContent = cpToGlyph(cp); }
+      catch (_) { if (defer) { try { renderAvatar(host); } catch (_) {} } else host.textContent = cpToGlyph(cp); }
     }).catch(function () {});
     return {
       stop: function (freeze) {
@@ -231,6 +552,7 @@
     if (!isEnabled()) return;
     _visible = true; applyState();
     setMood(mood || _curMood || 'idle');
+    playAvatarSelf(4200); // 每次现身（启动/开常驻/换形象）都动一下自己，别光杵着
   }
   function hideAvatar() {
     if (isResident() && isEnabled()) { _panelOpen = false; applyState(); return; }
@@ -239,6 +561,7 @@
   function openPanel() {
     if (!isEnabled()) return;
     _visible = true; _panelOpen = true; applyState();
+    placePanel(); closeTree();
     try { hideQuip(); } catch (_) {}
     refreshChat();
     var ta = taEl(); if (ta) setTimeout(function () { try { ta.focus(); } catch (_) {} }, 60);
@@ -255,7 +578,22 @@
 
   // ===== @ 智能触发（正文里输入 @ 冒出小提示，不挡打字）=====
   var _chip = null, _atQuery = '';
-  var _pendingBlockQ = '';   // @ 确认时预填给新对话块输入框的文字（挂载时取走）
+  var _pendingBlockQ = '';     // 新对话块输入框的预填文字（挂载时取走）
+  var _pendingBlockSendQ = ''; // 挂载后自动发送的问题（常用语点选：指令+选中文字，多行也行）
+
+  /** 在正文当前位置（选区所在段落之后）插入一个对话块。
+   *  q + autoSend=true：挂载后自动发问；autoSend=false：q 预填输入框等用户回车。
+   *  编辑器不可用/只读时返回 false（调用方兜底开面板）。 */
+  function insertBlockAt(q, autoSend) {
+    try {
+      var ed = window.editor && window.editor.instance && window.editor.instance();
+      if (!ed || !ed.isEditable) return false;
+      var pos = ed.state.selection.$to.after(1); // 顶层块之后，不劈开当前段落
+      if (autoSend) _pendingBlockSendQ = q || ''; else _pendingBlockQ = q || '';
+      ed.chain().insertContentAt(pos, { type: 'zhichatBlock', attrs: { data: JSON.stringify({ v: 1, items: [] }) } }).scrollIntoView().run();
+      return true;
+    } catch (_) { _pendingBlockSendQ = ''; _pendingBlockQ = ''; return false; }
+  }
   function ensureChip() {
     if (_chip) return;
     _chip = document.createElement('div');
@@ -312,6 +650,18 @@
     if (m) { _atQuery = m[2]; showChip(range); } else hideChip();
   }
 
+  /** 悬浮工具栏 🌱：hover 直接弹常用语层级菜单（不用 tooltip，少一步）；点按仍可弹（触屏没有 hover） */
+  function installBubbleHover() {
+    var btn = document.querySelector('#bubble-menu .bubble-mascot');
+    if (!btn) return;
+    btn.addEventListener('mouseenter', function () {
+      if (!isEnabled()) return;
+      clearTimeout(_treeTimer); clearTimeout(_treeCloseTimer);
+      _treeTimer = setTimeout(function () { openCmdTree(btn, { hover: true }); }, 160);
+    });
+    btn.addEventListener('mouseleave', function () { clearTimeout(_treeTimer); scheduleTreeClose(); });
+  }
+
   function installTrigger() {
     document.addEventListener('input', tryAt, true);
     document.addEventListener('keydown', function (e) {
@@ -347,9 +697,19 @@
 
   // ===== 选笔记浮层（面板与对话块共用；搜索复用 storage.searchAll 全文引擎）=====
   var _picker = null;
-  function closePicker() { if (_picker) { _picker.remove(); _picker = null; } }
-  function openNotePicker(anchor, cur, onPick) {
+  var _pickerOnClose = null; // opts.onClose：浮层关闭时回调（含选中与取消；调用方可据 picked 参数区分）
+  var _pickerPicked = false;
+  function closePicker() {
+    if (!_picker) return;
+    _picker.remove(); _picker = null;
+    var cb = _pickerOnClose; _pickerOnClose = null;
+    if (cb) { try { cb(_pickerPicked); } catch (_) {} }
+  }
+  function openNotePicker(anchor, cur, onPick, opts) {
+    opts = opts || {}; // noOff：不显示「不带笔记」（选目标笔记的场合，如速记，用不上）
     closePicker();
+    _pickerOnClose = opts.onClose || null;
+    _pickerPicked = false;
     var pop = document.createElement('div'); pop.className = 'mascot-picker';
     pop.innerHTML = '<input type="text" class="mascot-picker-inp" placeholder="搜标题或内容…">'
       + '<div class="mascot-picker-list"></div>';
@@ -366,7 +726,7 @@
       pop.style.left = Math.round(x) + 'px';
       pop.style.top = Math.round(Math.max(8, y)) + 'px';
     }
-    function pick(p) { closePicker(); onPick(p); }
+    function pick(p) { _pickerPicked = true; closePicker(); onPick(p); }
     function itemHtml(icon, title, sub, extra) {
       return '<span class="mascot-picker-ico">' + icon + '</span><span class="mascot-picker-m"><span class="mascot-picker-t">'
         + esc(title) + '</span>' + (sub ? '<span class="mascot-picker-s">' + esc(sub) + '</span>' : '') + '</span>' + (extra || '');
@@ -388,9 +748,12 @@
         return w ? (w.name || '') : '';
       } catch (_) { return ''; }
     }
-    function noteRow(n) {
-      return { el: mkRow(itemHtml(n.icon || '📄', n.title || '无标题', wsName(n.workspaceId)), cur && cur.mode === 'note' && cur.id === n.id), p: { mode: 'note', id: n.id, title: n.title || '无标题' } };
+    function noteRow(n, ind) {
+      var el = mkRow(itemHtml(n.icon || '📄', n.title || '无标题', ind ? '' : wsName(n.workspaceId)), cur && cur.mode === 'note' && cur.id === n.id);
+      if (ind) el.classList.add('mascot-picker-ind');
+      return { el: el, p: { mode: 'note', id: n.id, title: n.title || '无标题' } };
     }
+    var exp = null; // 笔记本展开状态（本次浮层内记住；null = 首次，默认只展开当前笔记本）
     function render(q) {
       list.innerHTML = '';
       var rows = [];
@@ -398,11 +761,35 @@
       try { curId = window.editor.currentId(); } catch (_) {}
       if (!q) {
         if (curId) rows.push({ el: mkRow(itemHtml('📝', '本篇（当前打开）', ''), cur && cur.mode === 'current'), p: { mode: 'current' } });
-        rows.push({ el: mkRow(itemHtml('🚫', '不带笔记', '只按对话内容回答'), cur && cur.mode === 'off'), p: { mode: 'off' } });
+        if (!opts.noOff) rows.push({ el: mkRow(itemHtml('🚫', '不带笔记', '只按对话内容回答'), cur && cur.mode === 'off'), p: { mode: 'off' } });
+        // 层级列表：笔记本 → 笔记（点笔记本行展开/收起；当前笔记本默认展开）
+        var groups = {};
         allNotes().forEach(function (n) {
           if (n.id === curId) return;
-          rows.push(noteRow(n));
+          var wid = n.workspaceId || '';
+          (groups[wid] = groups[wid] || []).push(n);
         });
+        var wss = [];
+        try { wss = window.storage.getWorkspaces() || []; } catch (_) {}
+        var activeId = '';
+        try { activeId = (window.storage.getActiveWorkspace() || {}).id || ''; } catch (_) {}
+        if (!exp) { exp = {}; exp[activeId] = true; }
+        var listWs = wss.filter(function (w) { return (groups[w.id] || []).length; });
+        // 不属于任何已知笔记本的散笔记（异常数据兜底）挂在最后
+        var known = {}; wss.forEach(function (w) { known[w.id] = 1; });
+        var strays = [];
+        for (var wid in groups) if (!known[wid]) strays = strays.concat(groups[wid]);
+        listWs.forEach(function (w) {
+          var open = !!exp[w.id];
+          var head = mkRow('<span class="mascot-mm-caret">' + (open ? '▾' : '▸') + '</span>'
+            + '<span class="mascot-picker-ico">' + esc(w.icon || '📔') + '</span>'
+            + '<span class="mascot-picker-m"><span class="mascot-picker-t mascot-picker-wst">' + esc(w.name || '未命名') + '</span></span>'
+            + '<span class="mascot-picker-n">' + groups[w.id].length + '</span>', false);
+          head.classList.add('mascot-picker-ws');
+          rows.push({ el: head, t: function () { exp[w.id] = !open; render(''); } });
+          if (open) groups[w.id].forEach(function (n) { rows.push(noteRow(n, true)); });
+        });
+        strays.forEach(function (n) { rows.push(noteRow(n)); });
       } else {
         // 全文搜索（当前笔记本）+ 标题匹配（所有笔记本）合并去重
         var seen = {};
@@ -422,7 +809,7 @@
         if (!rows.length) list.innerHTML = '<div class="mascot-picker-none">没有找到相关笔记</div>';
       }
       rows.forEach(function (r) {
-        r.el.addEventListener('mousedown', function (e) { e.preventDefault(); pick(r.p); });
+        r.el.addEventListener('mousedown', function (e) { e.preventDefault(); if (r.t) r.t(); else pick(r.p); });
         list.appendChild(r.el);
       });
       position();
@@ -535,6 +922,71 @@
     renderList();
   }
 
+  /** 自定义常用语菜单（面板 ⚡ 与对话块 ⚡ 共用）：点一条直接问；能把当前输入存成新常用语；可去设置管理。
+   *  opts.getInput() 返回当前输入框文字；opts.onPick({e,n,t}) 由调用方决定怎么发。 */
+  function openCmdMenu(anchor, opts) {
+    closePicker();
+    var A = ai(); if (!A) return;
+    opts = opts || {};
+    var pop = document.createElement('div'); pop.className = 'mascot-picker mascot-cmdmenu';
+    var list = document.createElement('div'); list.className = 'mascot-picker-list';
+    pop.appendChild(list);
+    document.body.appendChild(pop); _picker = pop;
+    function position() {
+      var r = anchor.getBoundingClientRect();
+      var w = pop.offsetWidth, h = pop.offsetHeight;
+      var x = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+      var y = r.top - h - 6;                              // 优先在按钮上方（按钮都在输入行，下方是屏幕边）
+      if (y < 8) y = Math.min(r.bottom + 6, window.innerHeight - h - 8);
+      pop.style.left = Math.round(x) + 'px';
+      pop.style.top = Math.round(Math.max(8, y)) + 'px';
+    }
+    function renderList() {
+      list.innerHTML = '';
+      var groups = A.cmdGroups(), any = false;
+      groups.forEach(function (grp) {
+        if (!grp.items || !grp.items.length) return;
+        any = true;
+        var hd = document.createElement('div'); hd.className = 'mascot-picker-ghead'; hd.textContent = grp.n;
+        list.appendChild(hd);
+        grp.items.forEach(function (c) {
+          var r = document.createElement('div'); r.className = 'mascot-picker-row';
+          r.innerHTML = '<span class="mascot-picker-ico">' + esc(c.e || '⚡') + '</span><span class="mascot-picker-m"><span class="mascot-picker-t">' + esc(c.n ? c.n + '　' + c.t : c.t) + '</span></span>';
+          r.title = c.t;
+          r.addEventListener('mousedown', function (e) {
+            e.preventDefault(); closePicker();
+            if (opts.onPick) opts.onPick({ e: c.e, n: c.n, t: c.t });
+          });
+          list.appendChild(r);
+        });
+      });
+      if (!any) {
+        var none = document.createElement('div'); none.className = 'mascot-picker-none';
+        none.textContent = '还没有常用语。把常问的话（如「总结一下」「帮我润色」）存起来，以后一点就问。';
+        list.appendChild(none);
+      }
+      var cur = String((opts.getInput && opts.getInput()) || '').trim();
+      if (cur) {
+        var add = document.createElement('div'); add.className = 'mascot-picker-row mascot-picker-clr';
+        add.innerHTML = '<span class="mascot-picker-ico">＋</span><span class="mascot-picker-m"><span class="mascot-picker-t">把当前输入存为常用语</span><span class="mascot-picker-s">' + esc(cur.length > 30 ? cur.slice(0, 30) + '…' : cur) + '</span></span>';
+        add.addEventListener('mousedown', function (e) { e.preventDefault(); A.cmdAdd(cur); renderList(); });
+        list.appendChild(add);
+      }
+      var mg = document.createElement('div'); mg.className = 'mascot-picker-row' + (cur ? '' : ' mascot-picker-clr');
+      mg.innerHTML = '<span class="mascot-picker-ico">⚙️</span><span class="mascot-picker-m"><span class="mascot-picker-s">管理常用语（增删改）…</span></span>';
+      mg.addEventListener('mousedown', function (e) { e.preventDefault(); closePicker(); openMascotSettings(); });
+      list.appendChild(mg);
+      position();
+    }
+    setTimeout(function () {
+      document.addEventListener('mousedown', function onDoc(e) {
+        if (_picker !== pop) { document.removeEventListener('mousedown', onDoc, true); return; }
+        if (!pop.contains(e.target)) { closePicker(); document.removeEventListener('mousedown', onDoc, true); }
+      }, true);
+    }, 0);
+    renderList();
+  }
+
   function setupCard() {
     return '<div class="mascot-setup">'
       + '<div class="mascot-setup-em">🌱</div>'
@@ -562,8 +1014,22 @@
     var b = _root.querySelector('#mascot-setup-go');
     if (b) b.addEventListener('click', function () { openMascotSettings(); });
   }
-  function openMascotSettings() {
-    try { closePanel(); if (typeof window.openSettingsModal === 'function') window.openSettingsModal('mascot'); } catch (_) {}
+  function openMascotSettings(sec) {
+    try {
+      closePanel();
+      if (typeof window.openSettingsModal !== 'function') return;
+      if (sec === 'cmds') _cmdFoldOpen = true; // 常用语折叠区渲染成展开
+      window.openSettingsModal('mascot');
+      if (sec === 'cmds') {
+        // 弹窗渲染是异步的：轮询到「常用语」折叠区出现后滚过去
+        var tries = 0;
+        (function seek() {
+          var el = document.getElementById('cmd-fold');
+          if (el) { el.open = true; try { el.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (_) { el.scrollIntoView(); } return; }
+          if (++tries < 15) setTimeout(seek, 100);
+        })();
+      }
+    } catch (_) {}
   }
 
   function renderQuick() {
@@ -571,8 +1037,12 @@
     _selText = ai().getSelectionText();
     try { var ed = window.editor && window.editor.instance && window.editor.instance(); if (ed) { _selFrom = ed.state.selection.from; _selTo = ed.state.selection.to; } } catch (_) {}
     if (_selText && ai().isConfigured() && !_streaming) {
-      q.innerHTML = '<span class="mascot-quick-hint">对选中的文字：</span>'
-        + ai().ACTIONS.map(function (a) { return '<button type="button" class="mascot-chip" data-act="' + a.id + '">' + a.emoji + ' ' + esc(a.label) + '</button>'; }).join('');
+      // 全部常用语（含预置的润色/翻译/总结…，都在 cmdItems 里）对选中文字一键执行
+      var chips = ai().cmdItems().map(function (c, i) {
+        var lbl = c.n || (c.t.length > 8 ? c.t.slice(0, 8) + '…' : c.t);
+        return '<button type="button" class="mascot-chip" data-cmdi="' + i + '" title="' + esc(c.t) + '">' + esc(c.e) + ' ' + esc(lbl) + '</button>';
+      });
+      q.innerHTML = '<span class="mascot-quick-hint">对选中的文字：</span>' + chips.join('');
       q.classList.add('on');
     } else { q.innerHTML = ''; q.classList.remove('on'); }
   }
@@ -734,10 +1204,16 @@
     s.classList.toggle('busy', !!busy); s.title = busy ? '停止' : '发送';
   }
 
-  function runAction(id) {
-    var act = ai() && ai().actionOf(id); if (!act || !_selText) return;
+  /** 用一条常用语对选中文字执行（结果可「替换原文」）；it = {e,n,t} */
+  function runCmdItem(it) {
+    if (!it || !it.t || !_selText) return;
     var range = { from: _selFrom, to: _selTo };
-    send(act.prompt + _selText, act.emoji + ' ' + act.label + '：' + preview(_selText), { range: range, mood: act.mood });
+    var instr = it.t.replace(/[\s:：]+$/, '');
+    send(instr + '：\n\n' + _selText, (it.e || '⚡') + ' ' + (it.n || preview(it.t)) + '：' + preview(_selText), { range: range });
+  }
+  function runCmdFlat(i) {
+    var items = (ai() && ai().cmdItems()) || [];
+    if (items[i]) runCmdItem(items[i]);
   }
 
   function newChat() {
@@ -829,7 +1305,22 @@
       if (!ta) return; var v = ta.value; ta.value = ''; autoGrow(ta); send(v);
     });
     if (model) model.addEventListener('click', function () { openModelMenu(model, populateModel); });
-    if (q) q.addEventListener('click', function (e) { var b = e.target.closest('.mascot-chip'); if (b) runAction(b.dataset.act); });
+    if (q) q.addEventListener('click', function (e) {
+      var b = e.target.closest('.mascot-chip'); if (!b) return;
+      if (b.dataset.cmdi != null) runCmdFlat(parseInt(b.dataset.cmdi, 10));
+    });
+    var cmdBtn = _root.querySelector('#mascot-cmd');
+    if (cmdBtn) cmdBtn.addEventListener('click', function () {
+      openCmdMenu(cmdBtn, {
+        getInput: function () { return ta ? ta.value : ''; },
+        onPick: function (it) {
+          if (ta) { ta.value = ''; autoGrow(ta); }
+          // 有选中文字就对选中执行，否则直接当问题发（带笔记与否按 📄 当前选择）
+          if (_selText) runCmdItem(it);
+          else send(it.t);
+        },
+      });
+    });
     var ctx = _root.querySelector('#mascot-ctx');
     if (ctx) {
       refreshCtxBtn();
@@ -966,10 +1457,21 @@
       modelBtnLabel(msel);
       msel.addEventListener('click', function (e) { e.stopPropagation(); openModelMenu(msel, function () { modelBtnLabel(msel); }); });
       msel.addEventListener('mousedown', function (e) { e.stopPropagation(); });
-      ask.appendChild(ctxBtn); ask.appendChild(inp); ask.appendChild(btn); ask.appendChild(msel);
+      var cmdBtn = document.createElement('button'); cmdBtn.type = 'button'; cmdBtn.className = 'zc-ctx zc-cmd'; cmdBtn.textContent = '⚡';
+      cmdBtn.title = '常用语（存下常问的话，一点就问）';
+      cmdBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openCmdMenu(cmdBtn, {
+          getInput: function () { return inp.value; },
+          onPick: function (it) { inp.value = it.t; submit(); },
+        });
+      });
+      cmdBtn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+      ask.appendChild(cmdBtn); ask.appendChild(ctxBtn); ask.appendChild(inp); ask.appendChild(btn); ask.appendChild(msel);
       body.appendChild(ask);
-      function submit() {
-        var q = (inp.value || '').trim();
+      function submit(forceQ) {
+        // 注意：submit 也直接挂在按钮 click 上，forceQ 可能是事件对象——只认字符串
+        var q = String(typeof forceQ === 'string' ? forceQ : (inp.value || '')).trim();
         if (!q || busy) return;
         // 阅读模式/同步保护下不可提问（.zc-ask 已由 CSS 隐藏，这里是兜底）
         try { var ed = window.editor.instance(); if (ed && !ed.isEditable) return; } catch (_) {}
@@ -1046,9 +1548,14 @@
         else if (e.key === 'Escape' && !st.items.length && !busy && onRemove) { e.preventDefault(); onRemove(); }
       });
       if (!st.items.length) {
-        // 空块没提问就点走 → 自动消失，不留空壳（焦点还在块内或选笔记浮层里则不算「点走」）
-        inp.addEventListener('blur', function () {
+        // 空块没提问就点走 → 自动消失，不留空壳（焦点还在块内或选笔记浮层里则不算「点走」）。
+        // 触屏不启用：虚拟键盘弹出/编辑器抢回焦点会误触发 blur，块刚冒出来就被删（用户实测）；
+        // 出生后 1.5s 内的 blur 一律忽略，兜住各端插入初期的焦点竞争。
+        var bornAt = Date.now();
+        var coarse = false; try { coarse = window.matchMedia('(pointer: coarse)').matches; } catch (_) {}
+        if (!coarse) inp.addEventListener('blur', function () {
           setTimeout(function () {
+            if (Date.now() - bornAt < 1500) return;
             var f = document.activeElement;
             if (f && (dom.contains(f) || f.closest('.mascot-picker'))) return;
             if (_picker) return; // 选笔记浮层开着（可能刚点开还没聚焦）
@@ -1056,10 +1563,23 @@
           }, 120);
         });
         if (_pendingBlockQ) { inp.value = _pendingBlockQ; _pendingBlockQ = ''; }
+        if (_pendingBlockSendQ) { // 常用语点选：块一出生就替用户把问题发出去（可能多行，绕过单行输入框）
+          var autoQ = _pendingBlockSendQ; _pendingBlockSendQ = '';
+          setTimeout(function () { submit(autoQ); }, 60);
+        }
         setTimeout(function () { try { inp.focus(); var n = inp.value.length; inp.setSelectionRange(n, n); } catch (_) {} }, 50);
       }
     }
-    function render() { dom.classList.toggle('zc-open', !collapsed); renderHead(); renderBody(); }
+    // 吸顶检测：块头贴住编辑区顶部滚动时纯 sticky 会顶出直角，加 .zc-stuck 换成
+    // 浮起的圆角胶囊（描边圈+投影），四角保持与静止态一致的圆润
+    var scEl = (dom.closest && dom.closest('#editor')) || document.getElementById('editor');
+    function updateStuck() {
+      if (!dom.isConnected) { head.classList.remove('zc-stuck'); return; }
+      var on = !collapsed && (head.getBoundingClientRect().top - dom.getBoundingClientRect().top) > 2;
+      head.classList.toggle('zc-stuck', on);
+    }
+    if (scEl) scEl.addEventListener('scroll', updateStuck, { passive: true });
+    function render() { dom.classList.toggle('zc-open', !collapsed); renderHead(); renderBody(); requestAnimationFrame(updateStuck); }
     render();
     if (!st.items.length) {
       // 刚被 @ / 命令面板唤出的空块：气泡冒出动画（已有内容的块是重开笔记加载的，不动）
@@ -1071,7 +1591,10 @@
     }
     return {
       update: function (s) { if (busy) return; st = parseData(s); render(); },
-      destroy: function () { if (abortCtl) { try { abortCtl.abort(); } catch (_) {} } },
+      destroy: function () {
+        if (abortCtl) { try { abortCtl.abort(); } catch (_) {} }
+        if (scEl) { try { scEl.removeEventListener('scroll', updateStuck); } catch (_) {} }
+      },
     };
   }
 
@@ -1096,13 +1619,13 @@
     var h = '<div class="mascot-set">';
     h += row('启用小枝', '你的 AI 笔记助手', '<span class="mascot-sw' + (en ? ' on' : '') + '" id="mascot-sw" role="switch" tabindex="0"></span>');
     if (en) {
-      h += row('唤出方式', '面板随时问；@ 就地插入对话块，问答留在笔记里', '<span class="mascot-hint"><span class="mascot-kbd">Alt</span>+<span class="mascot-kbd">A</span>，或正文输入 <span class="mascot-kbd">@</span></span>');
-      h += row('常驻右下角', '关闭后平时隐藏；Alt+Shift+A 也能随时切换', '<span class="mascot-sw' + (res ? ' on' : '') + '" id="mascot-res" role="switch" tabindex="0"></span>');
-      h += '<details class="mascot-row mascot-row-col mascot-avafold"><summary><span class="mascot-lbl">常驻形象<small>右下角的小家伙长什么样</small></span>'
-        + '<span class="mascot-ava-cur">' + avatarGlyph() + '</span><span class="mascot-avafold-caret">▾</span></summary>'
-        + '<div class="mascot-em-pick" id="mascot-ava-pick">'
-        + AVATARS.map(function (e) { return '<button type="button" class="mascot-em-opt' + (e === avatarGlyph() ? ' on' : '') + '" data-em="' + e + '">' + e + '</button>'; }).join('')
-        + '</div></details>';
+      h += row('唤出方式', '都在正文就地插对话块，问答留在笔记里；点屏幕上的常驻小枝才开小窗', '<span class="mascot-hint"><span class="mascot-kbd">Alt</span>+<span class="mascot-kbd">A</span>，或正文输入 <span class="mascot-kbd">@</span></span>');
+      h += row('常驻屏幕上', '默认在右下角，按住可拖到任意位置（会记住）；悬浮出常用语菜单，右键听它闲聊；Alt+Shift+A 随时切换', '<span class="mascot-sw' + (res ? ' on' : '') + '" id="mascot-res" role="switch" tabindex="0"></span>');
+      h += '<div class="mascot-row"><div class="mascot-lbl">常驻形象<small>谷歌动图表情'
+        + (window.NOTO_EMOJI ? ' ' + window.NOTO_EMOJI.items.length + ' 个随便挑' : '')
+        + '，会动、任何系统都能显示</small></div>'
+        + '<span class="mascot-ava-cur" id="mascot-ava-cur">' + esc(avatarGlyph()) + '</span>'
+        + '<button type="button" class="mascot-btn" id="mascot-ava-btn">更换…</button></div>';
       h += aiSettingsHtml();
     }
     return h + '</div>';
@@ -1130,7 +1653,42 @@
       + '<span class="mascot-status' + (A.isConfigured() ? ' ok' : '') + '" id="ai-status">' + (A.isConfigured() ? '已就绪' : '待配置') + '</span>'
       + '<button type="button" class="mascot-btn" id="ai-test">测试连接</button></div>';
     h += row('显示深度思考', '推理型模型答题前的思考过程，可随时点开/收起；关闭则只看答案', '<span class="mascot-sw' + (A.showThink() ? ' on' : '') + '" id="think-sw" role="switch" tabindex="0"></span>');
+    h += cmdSettingsHtml(A);
     h += memSettingsHtml(A);
+    return h;
+  }
+  function cmdSettingsHtml(A) {
+    var groups = A.cmdGroups(), total = 0;
+    groups.forEach(function (g) { total += (g.items || []).length; });
+    var del = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
+    var h = '<div class="mascot-sec">常用语</div>';
+    h += '<details class="mascot-row mascot-row-col mascot-avafold" id="cmd-fold"' + ((_cmdFoldOpen != null ? _cmdFoldOpen : !total) ? ' open' : '') + '>'
+      + '<summary><span class="mascot-lbl">自定义常用语<small>可分组、可换图标；常驻小枝悬浮菜单、正文右键「问小枝」、面板和对话块的 ⚡ 都用这份清单</small>'
+      + '<span class="mascot-fold-x">' + total + ' 条<span class="mascot-avafold-caret">▾</span></span></span></summary>'
+      + '<div id="cmd-groups">';
+    groups.forEach(function (g, gi) {
+      h += '<div class="mascot-cmdg">'
+        + '<div class="mascot-cmdg-head">'
+        + '<input type="text" class="mascot-inp mascot-cmdg-name" data-gi="' + gi + '" value="' + esc(g.n) + '" maxlength="12" title="分组名，改完即存">'
+        + '<span class="mascot-fold-n">' + (g.items || []).length + ' 条</span>'
+        + '<button type="button" class="mascot-memdel cmdg-del" data-gi="' + gi + '" title="删除整组（连同组内常用语）">' + del + '</button>'
+        + '</div><div class="mascot-memlist">';
+      (g.items || []).forEach(function (c, ii) {
+        h += '<div class="mascot-memrow">'
+          + '<button type="button" class="mascot-emobtn cmd-emo" data-gi="' + gi + '" data-ii="' + ii + '" title="换图标">' + esc(c.e || '⚡') + '</button>'
+          + '<input type="text" class="mascot-inp mascot-cmdname" data-gi="' + gi + '" data-ii="' + ii + '" value="' + esc(c.n || '') + '" maxlength="20" placeholder="名称" title="菜单里显示的短名（可空）">'
+          + '<input type="text" class="mascot-inp mascot-meminp mascot-cmdinp" data-gi="' + gi + '" data-ii="' + ii + '" value="' + esc(c.t) + '" maxlength="300" title="发给小枝的指令原文">'
+          + '<button type="button" class="mascot-memdel cmd-del" data-gi="' + gi + '" data-ii="' + ii + '" title="删除这条">' + del + '</button>'
+          + '</div>';
+      });
+      h += '<div class="mascot-memrow">'
+        + '<button type="button" class="mascot-emobtn cmd-newe" data-gi="' + gi + '" data-e="⚡" title="选个图标">⚡</button>'
+        + '<input type="text" class="mascot-inp mascot-meminp cmd-newt" data-gi="' + gi + '" placeholder="新常用语，回车或点添加" maxlength="300">'
+        + '<button type="button" class="mascot-btn cmd-addbtn" data-gi="' + gi + '">添加</button></div>';
+      h += '</div></div>';
+    });
+    h += '<div class="mascot-frow"><button type="button" class="mascot-btn" id="cmd-addgroup">＋ 新建分组</button></div>';
+    h += '</div></details>';
     return h;
   }
   function memSettingsHtml(A) {
@@ -1178,16 +1736,11 @@
       res.addEventListener('click', toggleRes);
       res.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleRes(); } });
     }
-    var avaPick = _panelSetEl.querySelector('#mascot-ava-pick');
-    if (avaPick) avaPick.addEventListener('click', function (e) {
-      var b = e.target.closest('.mascot-em-opt'); if (!b) return;
-      lset(K.avatar, b.dataset.em);
-      var fb = _root && _root.querySelector('#mascot-avatar .mascot-fallback');
-      if (fb) fb.textContent = b.dataset.em;
-      var cur = _panelSetEl.querySelector('.mascot-ava-cur');
-      if (cur) cur.textContent = b.dataset.em;
-      avaPick.querySelectorAll('.mascot-em-opt').forEach(function (x) { x.classList.toggle('on', x === b); });
-      if (isResident()) showAvatar(); // 立即看到效果
+    var avaCur = _panelSetEl.querySelector('#mascot-ava-cur');
+    if (avaCur) renderAvatar(avaCur);
+    var avaBtn = _panelSetEl.querySelector('#mascot-ava-btn');
+    if (avaBtn) avaBtn.addEventListener('click', function () {
+      openAvatarPicker(avaBtn, function () { if (avaCur) renderAvatar(avaCur); }); // 常驻按钮那份 openAvatarPicker 内部已刷新
     });
     aiBind();
   }
@@ -1217,7 +1770,54 @@
       tsw.addEventListener('click', tt);
       tsw.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tt(); } });
     }
+    cmdBind(A);
     memBind(A);
+  }
+  var _cmdFoldOpen = null; // 常用语折叠的展开状态：跨 rerender 保持（改一条就整段重绘）
+  function cmdBind(A) {
+    var fold = _panelSetEl.querySelector('#cmd-fold');
+    if (fold) fold.addEventListener('toggle', function () { _cmdFoldOpen = fold.open; });
+    var box = _panelSetEl.querySelector('#cmd-groups');
+    if (!box) return;
+    function gi(el) { return parseInt(el.dataset.gi, 10); }
+    function ii(el) { return parseInt(el.dataset.ii, 10); }
+    function doAdd(g) {
+      var inp = box.querySelector('.cmd-newt[data-gi="' + g + '"]');
+      var emo = box.querySelector('.cmd-newe[data-gi="' + g + '"]');
+      if (!inp || !inp.value.trim()) return;
+      _cmdFoldOpen = true;
+      A.cmdAddItem(g, { e: (emo && emo.dataset.e) || '⚡', t: inp.value });
+      rerender();
+      var n2 = _panelSetEl.querySelector('.cmd-newt[data-gi="' + g + '"]');
+      if (n2) try { n2.focus(); } catch (_) {}
+    }
+    box.addEventListener('change', function (e) {
+      var t = e.target;
+      if (t.classList.contains('mascot-cmdg-name')) { A.cmdRenameGroup(gi(t), t.value); rerender(); }
+      else if (t.classList.contains('mascot-cmdname')) { A.cmdUpdateItem(gi(t), ii(t), { n: t.value }); rerender(); }
+      else if (t.classList.contains('mascot-cmdinp')) { A.cmdUpdateItem(gi(t), ii(t), { t: t.value }); rerender(); }
+    });
+    box.addEventListener('click', function (e) {
+      var emo = e.target.closest('.cmd-emo');
+      if (emo) { openEmojiPick(emo, function (em) { A.cmdUpdateItem(gi(emo), ii(emo), { e: em }); rerender(); }, (emo.textContent || '').trim()); return; }
+      var ne = e.target.closest('.cmd-newe');
+      if (ne) { openEmojiPick(ne, function (em) { ne.dataset.e = em; ne.textContent = em; }, ne.dataset.e || ''); return; }
+      var del = e.target.closest('.cmd-del');
+      if (del) { A.cmdRemoveItem(gi(del), ii(del)); rerender(); return; }
+      var gdel = e.target.closest('.cmdg-del');
+      if (gdel) { // 删组连带删词条：先点一下变红确认，再点才删
+        if (gdel.dataset.arm) { A.cmdRemoveGroup(gi(gdel)); rerender(); }
+        else { gdel.dataset.arm = '1'; gdel.classList.add('arm'); gdel.title = '再点一次确认删除整组'; setTimeout(function () { if (gdel.isConnected) { delete gdel.dataset.arm; gdel.classList.remove('arm'); gdel.title = '删除整组（连同组内常用语）'; } }, 2500); }
+        return;
+      }
+      var addBtn = e.target.closest('.cmd-addbtn');
+      if (addBtn) doAdd(gi(addBtn));
+      var ag = e.target.closest('#cmd-addgroup');
+      if (ag) { _cmdFoldOpen = true; A.cmdAddGroup('新分组'); rerender(); }
+    });
+    box.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.isComposing && e.target.classList.contains('cmd-newt')) { e.preventDefault(); doAdd(gi(e.target)); }
+    });
   }
   function memBind(A) {
     var sw = _panelSetEl.querySelector('#mem-sw');
@@ -1287,14 +1887,21 @@
     return v;
   }
 
-  // ===== 从编辑区带着选中文字进对话（正文右键 / 悬浮工具栏入口）=====
-  // kind：'ask' = 只打开面板（快捷动作条会自动出现）；其余 = ai.js ACTIONS 里的动作 id（润色/翻译/总结…）
-  function askSelection(kind) {
+  // ===== 「问一问」（正文右键 / 悬浮工具栏 / 悬浮层级菜单）=====
+  // 用户定的交互：除了主动点常驻图标，对话一律在编辑区里以对话块进行——就地插空块等提问
+  //（块默认「带上本篇」，选中的内容也在本篇里）；编辑器不可用才退回面板。
+  function askSelection() {
     if (!isEnabled()) return;
+    if (insertBlockAt('', false)) return;
     try { var ed = window.editor && window.editor.instance && window.editor.instance(); if (ed) { _selFrom = ed.state.selection.from; _selTo = ed.state.selection.to; } } catch (_) {}
-    var txt = ai() ? ai().getSelectionText() : '';
     openPanel(); // openPanel → refreshChat → renderQuick 会重读选区并亮出快捷动作
-    if (kind && kind !== 'ask' && txt) { _selText = txt; runAction(kind); }
+  }
+  /** Alt+A / 命令面板「问小枝」：面板开着 = 收起；否则在正文插对话块，编辑器不可用才开面板 */
+  function summon() {
+    if (!isEnabled()) return;
+    if (_panelOpen) { closePanel(); return; }
+    if (insertBlockAt('', false)) return;
+    openPanel();
   }
 
   // ===== 常驻小动作：闲时偶尔换个表情，悬浮冒一句闲话（让它更像个活物）=====
@@ -1304,23 +1911,28 @@
     var fb = _avatar && _avatar.querySelector('.mascot-fallback');
     if (!fb) return;
     clearTimeout(_avatarAnimTimer);
-    if (_avatarAnim) _avatarAnim.stop(false);
-    _avatarAnim = animEmoji(fb, name || IDLE_SET[Math.floor(Math.random() * IDLE_SET.length)]);
+    // 接续场：先把上一场收干净、回到形象本体（矢量图有缓存 → 单跳瞬回），再备下一场
+    if (_avatarAnim) { _avatarAnim.stop(false); _avatarAnim = null; renderAvatar(fb); }
+    // defer：动图数据备好才登台，就绪前形象纹丝不动；加载失败整场取消（防"抽搐闪烁/卡随机静态表情"）
+    _avatarAnim = animEmoji(fb, name || IDLE_SET[Math.floor(Math.random() * IDLE_SET.length)], { defer: true });
     _avatarAnimTimer = setTimeout(function () {
       if (_avatarAnim) { _avatarAnim.stop(false); _avatarAnim = null; }
-      if (fb.isConnected) fb.textContent = avatarGlyph();
+      if (fb.isConnected) renderAvatar(fb);
     }, ms || 5200);
   }
+  /** 演常驻形象「自己」的动图（选了 😺 就动 😺）；形象不在动图集里时退回随机小表情 */
+  function playAvatarSelf(ms) { playAvatarMood(notoCp(avatarGlyph()) || null, ms); }
   var _idlePlayTimer = null;
   function scheduleIdlePlay() {
     clearTimeout(_idlePlayTimer);
-    _idlePlayTimer = setTimeout(idlePlay, 30000 + Math.random() * 30000); // 30s~1min 随机一次（用户嫌 45s~2.5min 太冷清）
+    _idlePlayTimer = setTimeout(idlePlay, 25000 + Math.random() * 30000); // 25~55s 随机一次
   }
   function idlePlay() {
     scheduleIdlePlay();
     if (!isEnabled() || !_visible || _panelOpen || _streaming) return;
     if (document.visibilityState !== 'visible') return;
-    playAvatarMood();
+    // 一半演自己的动图（存在感），一半演随机小表情（惊喜感）
+    if (Math.random() < 0.5) playAvatarSelf(); else playAvatarMood();
   }
 
   // 闲话池：让 AI 一次生成一批「小枝会自言自语的话」缓存在本机，悬浮时随机冒一句——
@@ -1357,7 +1969,18 @@
     _quipLast = now;
     if (!_quipEl) { _quipEl = document.createElement('div'); _quipEl.className = 'mascot-quip'; _root.appendChild(_quipEl); }
     _quipEl.textContent = pickQuip();
+    // 拖到过别处时按剩余空间决定气泡朝向（默认右下角 = 往上冒）
+    if (savedPos() && _avatar) {
+      var ar = _avatar.getBoundingClientRect();
+      var below = (window.innerHeight - ar.bottom) > ar.top;
+      var alignRight = (ar.left + ar.right) / 2 > window.innerWidth / 2;
+      _quipEl.style.top = below ? 'calc(100% + 10px)' : 'auto';
+      _quipEl.style.bottom = below ? 'auto' : 'calc(100% + 10px)';
+      _quipEl.style.left = alignRight ? 'auto' : '0';
+      _quipEl.style.right = alignRight ? '0' : 'auto';
+    } else if (_quipEl) { _quipEl.style.top = _quipEl.style.bottom = _quipEl.style.left = _quipEl.style.right = ''; }
     _quipEl.classList.add('on');
+    closeTree();
     playAvatarMood(); // 碎碎念时配一个表情，像真在说话
     clearTimeout(_quipHideTimer);
     _quipHideTimer = setTimeout(hideQuip, 4200);
@@ -1368,9 +1991,10 @@
   function init() {
     ensureDom();
     installTrigger();
+    installBubbleHover();
     if (isEnabled() && isResident()) showAvatar('idle');
     else applyState();
-    _avatar.addEventListener('mouseenter', function () { showQuip(false); }); // 不能直接传 showQuip：事件对象会被当成 force
+    // 悬浮改为弹常用语层级菜单（installHoverTree）；碎碎念保留在右键上
     scheduleIdlePlay();
     // 云端带下来的加密 key：本机没 key 时尝试用网盘密码解出（换设备免重填）
     try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
@@ -1389,10 +2013,14 @@
     toggleResident: toggleResident,
     isResident: isResident,
     askSelection: askSelection,
+    summon: summon,           // Alt+A / 命令面板：编辑区插对话块（面板开着则收起；编辑器不可用退面板）
+    askCmd: execCmdItem,      // 执行一条常用语 {e,n,t}：就地插块自动发问（正文右键子菜单用）
+    openCmdTree: openCmdTree, // 常用语层级菜单（悬浮工具栏 🌱 等入口用）
     isEnabled: isEnabled,
     mountSettings: mountSettings,
     renderMdInto: renderMd,
     mountChatBlock: mountChatBlock,
     insertChatBlock: insertChatBlock,
+    pickNote: openNotePicker, // 层级选笔记浮层（笔记本→笔记），供其它模块复用
   };
 })();

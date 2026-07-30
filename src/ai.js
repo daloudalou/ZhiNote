@@ -196,6 +196,86 @@
     _memSave(cards);
     ss(v ? '_aiMemory' : 'aiMemory', '');
   }
+  // ===== 自定义常用语（分组 + 图标）=====
+  // 一句话指令（如「总结一下」「帮我润色」），一键调用省打字。数据随设置云同步（aiQuickCmds）。
+  // v2 结构：{ v:2, groups:[{ n:分组名, items:[{ e:图标emoji, n:短名(可空), t:指令文本 }] }] }。
+  // 预置组来自原「问小枝」右键菜单的动作（润色/续写/总结/整理/翻译），当普通常用语一样可删可改。
+  var CMD_GMAX = 20, CMD_MAX = 200, MY_GROUP = '我的常用语';
+  function _cmdDefaults() {
+    return [
+      { n: '写作', items: [
+        { e: '✨', n: '润色', t: '请在保持原意和语言的前提下润色下面这段文字，使其更通顺自然、简洁得体，只输出润色后的文本' },
+        { e: '✍️', n: '续写', t: '请顺着下面这段文字的语气和主题自然续写一段，只输出续写的内容' },
+      ] },
+      { n: '整理', items: [
+        { e: '📌', n: '总结', t: '请用简洁的要点总结下面这段内容，只输出总结' },
+        { e: '🧭', n: '整理', t: '请把下面这段内容整理成条理清晰的结构（标题+要点/列表），用 Markdown 输出' },
+      ] },
+      { n: '翻译', items: [
+        { e: '🌐', n: '翻译', t: '请翻译下面这段文字：中文译为英文，其它语言译为中文。只输出译文' },
+      ] },
+    ];
+  }
+  function _cmdClean(it) {
+    return { e: String(it.e || '⚡').slice(0, 8), n: String(it.n || '').replace(/\s+/g, ' ').trim().slice(0, 20), t: String(it.t || '').replace(/\s+/g, ' ').trim().slice(0, 300) };
+  }
+  function cmdGroups() {
+    var raw = gs('aiQuickCmds', '');
+    if (!raw) { var d = _cmdDefaults(); _cmdSaveGroups(d); return d; } // 首次：写入预置，之后随便删改
+    try {
+      var o = JSON.parse(raw);
+      if (Array.isArray(o)) { // v1 平铺数组 → 预置组 + 归入「我的常用语」
+        var g = _cmdDefaults();
+        var mine = o.map(function (c) { return _cmdClean({ e: '⚡', t: c.t }); }).filter(function (i) { return i.t; });
+        if (mine.length) g.push({ n: MY_GROUP, items: mine });
+        _cmdSaveGroups(g); return g;
+      }
+      if (o && o.v === 2 && Array.isArray(o.groups)) return o.groups;
+    } catch (_) {}
+    return _cmdDefaults();
+  }
+  function _cmdSaveGroups(g) {
+    g = (g || []).slice(0, CMD_GMAX);
+    var total = 0;
+    g.forEach(function (grp) { grp.items = (grp.items || []).filter(function (it) { total++; return total <= CMD_MAX; }); });
+    ss('aiQuickCmds', JSON.stringify({ v: 2, groups: g }));
+  }
+  /** 平铺所有词条（带组内定位），给快捷条/右键菜单等用 */
+  function cmdItems() {
+    var out = [];
+    cmdGroups().forEach(function (grp, gi) {
+      (grp.items || []).forEach(function (it, ii) { out.push({ e: it.e || '⚡', n: it.n || '', t: it.t || '', gi: gi, ii: ii }); });
+    });
+    return out;
+  }
+  /** 快存一条（面板/块的「把当前输入存为常用语」）：进「我的常用语」组，没有就建 */
+  function cmdAdd(t) {
+    var it = _cmdClean({ e: '⚡', t: t }); if (!it.t) return false;
+    var g = cmdGroups();
+    for (var i = 0; i < g.length; i++) for (var j = 0; j < (g[i].items || []).length; j++) if (g[i].items[j].t === it.t) return false;
+    var mine = null;
+    for (var k = 0; k < g.length; k++) if (g[k].n === MY_GROUP) { mine = g[k]; break; }
+    if (!mine) { mine = { n: MY_GROUP, items: [] }; g.push(mine); }
+    mine.items.push(it);
+    _cmdSaveGroups(g); return true;
+  }
+  function cmdAddItem(gi, it) { var g = cmdGroups(); if (!g[gi]) return; it = _cmdClean(it); if (!it.t) return; (g[gi].items = g[gi].items || []).push(it); _cmdSaveGroups(g); }
+  function cmdUpdateItem(gi, ii, patch) {
+    var g = cmdGroups(); var grp = g[gi]; if (!grp || !grp.items || !grp.items[ii]) return;
+    var it = grp.items[ii];
+    var merged = _cmdClean({ e: patch.e != null ? patch.e : it.e, n: patch.n != null ? patch.n : it.n, t: patch.t != null ? patch.t : it.t });
+    if (!merged.t) grp.items.splice(ii, 1); else grp.items[ii] = merged;
+    _cmdSaveGroups(g);
+  }
+  function cmdRemoveItem(gi, ii) { var g = cmdGroups(); if (g[gi] && g[gi].items && g[gi].items[ii]) { g[gi].items.splice(ii, 1); _cmdSaveGroups(g); } }
+  function cmdAddGroup(name) {
+    name = String(name || '').trim().slice(0, 12) || '新分组';
+    var g = cmdGroups(); if (g.length >= CMD_GMAX) return -1;
+    g.push({ n: name, items: [] }); _cmdSaveGroups(g); return g.length - 1;
+  }
+  function cmdRenameGroup(gi, name) { var g = cmdGroups(); if (!g[gi]) return; g[gi].n = String(name || '').trim().slice(0, 12) || g[gi].n; _cmdSaveGroups(g); }
+  function cmdRemoveGroup(gi) { var g = cmdGroups(); if (g[gi]) { g.splice(gi, 1); _cmdSaveGroups(g); } }
+
   // 回复末尾的「想记住」标记：[[记住: 内容]]。stripMemoryMarks 把它从显示文本剥掉并取出内容。
   var _memRe = /\s*\[\[记住[:：]\s*([\s\S]*?)\]\]\s*/g;
   function stripMemoryMarks(text) {
@@ -317,6 +397,11 @@
       }
     }
     var body = { model: c.model, messages: messages, stream: true, temperature: c.temp };
+    // 联网检索：有服务端开关的服务商默认打开（能用就用，不做开关——用户拍板）。
+    // 通义兼容口用 enable_search；智谱用 web_search 工具。其它家没有这种"一个参数就联网"的
+    // 服务端开关（Kimi 的要多轮工具调用），乱塞参数会被严格接口拒收，所以不加。
+    if (c.providerId === 'qwen') body.enable_search = true;
+    else if (c.providerId === 'glm') body.tools = [{ type: 'web_search', web_search: { enable: true } }];
 
     fetch(requestUrl(c.base), {
       method: 'POST',
@@ -396,15 +481,7 @@
     return e instanceof Error ? e : new Error(String(m || '未知错误'));
   }
 
-  // ===== 选中文字动作 =====
-  var ACTIONS = [
-    { id: 'polish',    label: '润色',   emoji: '✨', mood: 'focus', prompt: '请在保持原意和语言的前提下润色下面这段文字，使其更通顺自然、简洁得体，只输出润色后的文本：\n\n' },
-    { id: 'continue',  label: '续写',   emoji: '✍️', mood: 'idea',  prompt: '请顺着下面这段文字的语气和主题自然续写一段，只输出续写的内容：\n\n' },
-    { id: 'translate', label: '翻译',   emoji: '🌐', mood: 'think', prompt: '请翻译下面这段文字：中文译为英文，其它语言译为中文。只输出译文：\n\n' },
-    { id: 'summary',   label: '总结',   emoji: '📌', mood: 'think', prompt: '请用简洁的要点总结下面这段内容，只输出总结：\n\n' },
-    { id: 'structure', label: '整理',   emoji: '🧭', mood: 'focus', prompt: '请把下面这段内容整理成条理清晰的结构（标题+要点/列表），用 Markdown 输出：\n\n' },
-  ];
-  function actionOf(id) { for (var i = 0; i < ACTIONS.length; i++) if (ACTIONS[i].id === id) return ACTIONS[i]; return null; }
+  // （原「选中文字动作」ACTIONS 已并入常用语预置组 _cmdDefaults：润色/续写/翻译/总结/整理，可删可改）
 
   /** 读取编辑器当前选中的纯文本（没有则空串）。只读，不改文档。 */
   function getSelectionText() {
@@ -423,8 +500,7 @@
   }
 
   window.aiChat = {
-    PROVIDERS: PROVIDERS, ACTIONS: ACTIONS,
-    provOf: provOf, actionOf: actionOf,
+    PROVIDERS: PROVIDERS, provOf: provOf,
     getConfig: getConfig, isConfigured: isConfigured, hasKey: hasKey,
     getKey: getKey, getKeyFor: getKeyFor, setKey: setKey, trySyncKeyDown: trySyncKeyDown,
     setProvider: setProvider, setModel: setModel, setBase: setBase,
@@ -437,6 +513,9 @@
     memEnabled: memEnabled, memSetEnabled: memSetEnabled,
     memCloud: memCloud, memSetCloud: memSetCloud,
     memList: memList, memAdd: memAdd, memUpdate: memUpdate, memRemove: memRemove, memClear: memClear,
+    cmdGroups: cmdGroups, cmdItems: cmdItems, cmdAdd: cmdAdd,
+    cmdAddItem: cmdAddItem, cmdUpdateItem: cmdUpdateItem, cmdRemoveItem: cmdRemoveItem,
+    cmdAddGroup: cmdAddGroup, cmdRenameGroup: cmdRenameGroup, cmdRemoveGroup: cmdRemoveGroup,
     stripMemoryMarks: stripMemoryMarks,
     stripMoodMark: stripMoodMark, MOOD_WORDS: MOOD_WORDS,
   };

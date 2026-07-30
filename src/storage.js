@@ -2029,6 +2029,9 @@ const storage = (() => {
       const s = Object.assign({}, _data.settings);
       delete s.webdavCryptoPass;
       for (const k in s) { if (k.indexOf('webdav_') === 0) delete s[k]; }
+      // 本机同步状态（'_webdav' 前缀：设备号/三方基准/世代标记/覆盖留底，见 webdav-sync.js _ssGet）：
+      // 纯本机运行态、留底可达 1.5MB，进备份既泄露无关状态又白白撑大文件 → 一律剔除。
+      for (const k in s) { if (k.indexOf('_webdav') === 0) delete s[k]; }
       clone.settings = s;
     }
     return JSON.stringify(clone, null, 2);

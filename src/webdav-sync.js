@@ -182,8 +182,13 @@
   // 同一用户的多台设备账号/口令/笔记编号都相同 → 进同一房间。不可逆、不可猜。
   async function rtRoomId(seed) {
     const pass = _userCryptoPass() || AES_PASSPHRASE;
-    let acct = '';
-    try { if (_config) acct = (_config.url || '') + '|' + (_config.user || ''); } catch (_) {}
+    // 【闸】配置未加载完（启动竞态：realtime 先跑 / aesDecrypt 慢 / 解密失败）时绝不派生房间号：
+    //   否则账号按空串参与哈希 → 不同网盘账号（坚果云 vs Koofr）甚至不同用户（都用内置口令时
+    //   密文互可解！）会落进同一"默认房间"，互亮紫点、互收结构直推——正是用户报过的
+    //   "两台设备服务商不同还进即时同步"。抛错让调用方（_ensureSignal/_ensureRoom 均 catch）
+    //   本轮放弃连接；配置就绪后由 applyConfig / 看门狗（6s 周期）自动重连，只慢几秒、不落错房。
+    if (!_config) throw new Error('WebDAV 配置未加载，拒绝派生房间号');
+    const acct = (_config.url || '') + '|' + (_config.user || '');
     const data = new TextEncoder().encode('zhinote-room:' + acct + ':' + pass + ':' + (seed || ''));
     const digest = await crypto.subtle.digest('SHA-256', data);
     const u8 = new Uint8Array(digest);
@@ -739,20 +744,46 @@
     return btoa(binary);
   }
   function _base64ToBuf(b64) {
-    const binary = atob(b64);
+    // 容错：剥掉 base64 里可能混入的换行/空白（部分网盘/代理传输会加），防 atob 抛错
+    const binary = atob(String(b64 || '').replace(/\s+/g, ''));
     const buf = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) buf[i] = binary.charCodeAt(i);
     return buf;
+  }
+
+  // ─── 本机同步状态持久化（双存）──────────────────────────────────────────────
+  // clientId / 三方基准 / 已采纳世代 / 覆盖留底原先只存 localStorage：Quicker 端网页缓存
+  // 不可靠（预热建窗/进程被杀可能整体清空——小枝设置曾因此重置，20260729t1）。这些状态一旦丢：
+  //   基准缺失 → 上传防护 _guardUploadConflicts "无基准保守放行"，防裸覆盖的闸门失效；
+  //   世代标记缺失 → 错过采纳模式，被权威淘汰的本地笔记会涌回云端复活；
+  //   留底蒸发 → "误覆盖 100% 可找回"的终极兜底不成立；clientId 重生 → 误弹他机保护条。
+  // 故改为主存 storage 设置（'_webdav…'，'_' 前缀=只存本机不上云；Quicker 端随动作状态
+  // 变量 zhinote_data 落盘，重启/清缓存不丢）。localStorage 保留为旧值迁移来源 + 兜底双写。
+  // 注意：这些键已在 storage.exportJSON 里排除（'_webdav' 前缀），不进备份文件。
+  function _ssGet(key, lsKey) {
+    try {
+      const v = window.storage && window.storage.getSetting ? window.storage.getSetting(key) : undefined;
+      if (v !== undefined && v !== null) return String(v);
+    } catch (_) {}
+    let lv = null;
+    try { lv = localStorage.getItem(lsKey); } catch (_) {}
+    // 旧数据一次性迁移（storage 未就绪时其内部为 no-op，下次读到再迁）
+    if (lv !== null) { try { window.storage && window.storage.setSetting && window.storage.setSetting(key, lv); } catch (_) {} }
+    return lv;
+  }
+  function _ssSet(key, lsKey, val) {
+    try { window.storage && window.storage.setSetting && window.storage.setSetting(key, val); } catch (_) {}
+    try { localStorage.setItem(lsKey, val); } catch (_) {}
   }
 
   // ─── clientId 管理 ──────────────────────────────────────────────────────────
   function _ensureClientId() {
     if (_clientId) return _clientId;
     const key = 'zhinote-webdav-clientId';
-    _clientId = localStorage.getItem(key);
+    _clientId = _ssGet('_webdavClientId', key);
     if (!_clientId) {
       _clientId = 'dev-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-      localStorage.setItem(key, _clientId);
+      _ssSet('_webdavClientId', key, _clientId);
     }
     return _clientId;
   }
@@ -772,7 +803,7 @@
     if (_syncBase) return _syncBase;
     _syncBase = {};
     try {
-      const raw = localStorage.getItem(SYNC_BASE_KEY);
+      const raw = _ssGet('_webdavSyncBase', SYNC_BASE_KEY);
       if (raw) {
         const obj = JSON.parse(raw);
         // 账号不一致（切换了服务商/账号）→ 丢弃旧基准，从零开始（安全：退回时间戳逻辑）
@@ -784,7 +815,7 @@
   function _flushSyncBase() {
     if (!_syncBaseDirty) return;
     _syncBaseDirty = false;
-    try { localStorage.setItem(SYNC_BASE_KEY, JSON.stringify({ account: _accountTag(), map: _syncBase || {} })); } catch (_) {}
+    try { _ssSet('_webdavSyncBase', SYNC_BASE_KEY, JSON.stringify({ account: _accountTag(), map: _syncBase || {} })); } catch (_) {}
   }
   function _getBase(id) { return _loadSyncBase()[id] || null; }
   function _setBase(id, hash, ts) { _loadSyncBase(); _syncBase[id] = { h: hash, t: ts || 0 }; _syncBaseDirty = true; }
@@ -799,13 +830,13 @@
   const ADOPTED_EPOCH_KEY = 'zhinote-webdav-epoch';
   function _getAdoptedEpoch() {
     try {
-      const raw = localStorage.getItem(ADOPTED_EPOCH_KEY);
+      const raw = _ssGet('_webdavEpoch', ADOPTED_EPOCH_KEY);
       if (raw) { const o = JSON.parse(raw); if (o && o.account === _accountTag() && typeof o.epoch === 'number') return o.epoch; }
     } catch (_) {}
     return null; // null = 本账号从未记录过（首次遇到）
   }
   function _setAdoptedEpoch(epoch) {
-    try { localStorage.setItem(ADOPTED_EPOCH_KEY, JSON.stringify({ account: _accountTag(), epoch: epoch || 1 })); } catch (_) {}
+    try { _ssSet('_webdavEpoch', ADOPTED_EPOCH_KEY, JSON.stringify({ account: _accountTag(), epoch: epoch || 1 })); } catch (_) {}
   }
 
   // cyrb53：快速、低碰撞的字符串哈希
@@ -908,14 +939,14 @@
   const BACKUP_MAX_BYTES = 1_500_000;
 
   function _readBackups() {
-    try { const raw = localStorage.getItem(BACKUP_KEY); return raw ? JSON.parse(raw) : []; }
+    try { const raw = _ssGet('_webdavBackups', BACKUP_KEY); return raw ? JSON.parse(raw) : []; }
     catch (_) { return []; }
   }
   function _writeBackups(list) {
     // 先按条数截断，再按总体积截断（都保留最新的，丢最旧的）
     let arr = list.slice(0, BACKUP_MAX_ENTRIES);
     while (arr.length > 1 && JSON.stringify(arr).length > BACKUP_MAX_BYTES) arr.pop();
-    try { localStorage.setItem(BACKUP_KEY, JSON.stringify(arr)); } catch (_) {}
+    try { _ssSet('_webdavBackups', BACKUP_KEY, JSON.stringify(arr)); } catch (_) {}
   }
   /** 覆盖/删除本地笔记前留底。note 为本地旧笔记对象，reason 说明触发原因。 */
   function _backupBeforeOverwrite(id, note, reason) {
@@ -970,7 +1001,10 @@
       return newId;
     } catch (e) { console.warn('[webdav] 还原留底失败', e); return null; }
   }
-  function clearLocalBackups() { try { localStorage.removeItem(BACKUP_KEY); } catch (_) {} }
+  function clearLocalBackups() {
+    try { _ssSet('_webdavBackups', BACKUP_KEY, ''); } catch (_) {}
+    try { localStorage.removeItem(BACKUP_KEY); } catch (_) {}
+  }
 
   // ─── 配置加载 ────────────────────────────────────────────────────────────────
   async function loadConfig() {
@@ -2454,8 +2488,13 @@
     const match = dataUrl.match(/^data:image\/([a-z+]+);base64,(.+)$/i);
     if (!match) return { ext: 'bin', binary: new Uint8Array(0) };
     const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
-    const binary = _base64ToBuf(match[2]);
-    return { ext, binary };
+    try {
+      return { ext, binary: _base64ToBuf(match[2]) };
+    } catch (e) {
+      // 坏图（base64 残缺，曾见速记录入被截断的图片）：跳过这一张继续传，绝不拖垮整轮 PUT
+      console.warn('[webdav] 图片 base64 损坏，跳过上传:', String(dataUrl).slice(0, 48) + '…', e && e.message);
+      return { ext: 'bin', binary: new Uint8Array(0) };
+    }
   }
 
   function _extToMime(ext) {

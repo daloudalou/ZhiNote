@@ -1140,6 +1140,9 @@
       var sumEl = dom.querySelector('.cal-summary');
       var calCard = dom.querySelector('.calendar-block');
       if (!sumEl || !calCard) { dom.classList.remove('has-summary', 'side', 'below'); return; }
+      // 保住滚动位置：下面把 height 清空的一瞬间容器不可滚、scrollTop 归零——
+      // 聚焦记事会触发 refreshCalOnly→本函数，列表若被弹回顶部，正在编辑的那条就跑出视野
+      var st = sumEl.scrollTop || 0;
       dom.classList.add('has-summary');
       dom.classList.remove('side');
       sumEl.style.width = '';
@@ -1153,6 +1156,7 @@
       // 右侧：固定为日历高度（内容多则内部滚动），与日历齐平；下方：只锁宽度、不限高度。
       if (side) sumEl.style.height = (calCard.offsetHeight || 0) + 'px';
       else sumEl.style.width = (calCard.offsetWidth || 0) + 'px';
+      if (st) sumEl.scrollTop = st;
     }
 
     // 只构建日历卡内部（头部 + 网格）HTML；外层 .calendar-block 由 render/refreshCalOnly 提供。
@@ -1756,8 +1760,9 @@
       document.body.appendChild(cardMask);
       cardMask.addEventListener('mousedown', function (ev) { if (ev.target === cardMask) closeCard(); });
       document.addEventListener('keydown', cardEsc, true);
-      // 触屏/iOS：输入框获得焦点时滚到可见位置，避免被软键盘遮挡
+      // 触屏/iOS：输入框获得焦点时滚到可见位置，避免被软键盘遮挡（仅触屏；桌面 scrollIntoView 会滚外层容器造成跳动）
       card.addEventListener('focusin', function (ev) {
+        if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
         var t = ev.target; if (!t || !t.matches || !t.matches('input,textarea')) return;
         setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
       });
@@ -2132,8 +2137,11 @@
       else if (cmd === 'copyText') { try { navigator.clipboard.writeText(buildSummaryText()); } catch (_) {} }
       else if (cmd === 'copySource') { try { navigator.clipboard.writeText('```calendar\n' + canon(toObj(S)) + '\n```'); } catch (_) {} }
     });
-    // 触屏/iOS：汇总/日程里输入框获得焦点时滚到可见位置，避免被软键盘遮挡（挂在常驻容器上、只挂一次）
+    // 触屏/iOS：汇总/日程里输入框获得焦点时滚到可见位置，避免被软键盘遮挡（挂在常驻容器上、只挂一次）。
+    // 必须仅触屏生效：scrollIntoView 会连外层 overflow:hidden 容器一起滚，桌面端点记事时
+    // 造成滚轮跳动、甚至整窗内容被顶上去且不复原（用户实测踩过）
     dom.addEventListener('focusin', function (ev) {
+      if (!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) return;
       var t = ev.target; if (!t || !t.matches || !t.matches('.cal-summary input, .cal-summary textarea')) return;
       setTimeout(function () { try { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (_) {} }, 60);
     });

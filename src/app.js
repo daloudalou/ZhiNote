@@ -40,7 +40,9 @@ const WIN_MIN_H = 400;
 
 async function bootstrap() {
   // 显眼的版本水印——在控制台第一行就能看到，确认 cache 是否刷新
-  console.log('%c[ZhiNote] build 20260515b ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
+  // 这行是「当前跑的是哪一次构建」的唯一可靠标记（__MD_VER__ 打包后恒为 vX.Y.Z-dev 分不出轮次）。
+  // 每轮改动随 index.html 的 ?v= 一起更新，否则没法判断 Quicker 常驻窗口里跑的是不是新包。
+  console.log('%c[ZhiNote] build 20260730t6 ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
   console.log('[ZhiNote] 调试开关：在控制台运行 window.__MD_DEBUG__=true 后再输入 / 或 ;; 可看判定过程');
 
   // 宿主标记：非 Quicker 宿主（浏览器/PWA）→ body.host-web，CSS 据此隐藏窗口控制等桌面专属 UI。
@@ -114,26 +116,40 @@ async function bootstrap() {
   // 窗口自愈放最前（在 storage.init() 等耗时操作之前），尽快复位，减少"一条线"残留时间。
   // isQuicker() 只看 $quicker / chrome.webview 是否注入，不依赖 storage，已可用。
   if (storage.isQuicker()) {
-    // 锁定原生四边缩放的最小尺寸（子程序内 WM_GETMINMAXINFO 子类化，OS 级）。一次性挂钩，子程序侧按 hWnd 去重。
-    const _dpr = window.devicePixelRatio || 1;
-    try {
-      await windowOp('最小尺寸', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
-    } catch (_) {}
-    // 窗口异常过小（"一条线"/被压扁/存盘尺寸损坏）时，复位到最小尺寸并在工作区内居中。
-    try {
-      const innerW = window.innerWidth, innerH = window.innerHeight;
-      if (innerW < WIN_MIN_W - 24 || innerH < WIN_MIN_H - 24) {
-        try {
-          await windowOp('复位窗口', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
-        } catch (_) {
-          // 子程序还没加「复位窗口」模式时的兜底：先最大化，至少让窗口可见可用
-          try { await windowOp('最大化'); _isMaximized = true; } catch (_) {}
+    const _winInit = async () => {
+      // 锁定原生四边缩放的最小尺寸（子程序内 WM_GETMINMAXINFO 子类化，OS 级）。一次性挂钩，子程序侧按 hWnd 去重。
+      const _dpr = window.devicePixelRatio || 1;
+      try {
+        await windowOp('最小尺寸', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
+      } catch (_) {}
+      // 窗口异常过小（"一条线"/被压扁/存盘尺寸损坏）时，复位到最小尺寸并在工作区内居中。
+      try {
+        const innerW = window.innerWidth, innerH = window.innerHeight;
+        if (innerW < WIN_MIN_W - 24 || innerH < WIN_MIN_H - 24) {
+          try {
+            await windowOp('复位窗口', { minW: Math.round(WIN_MIN_W * _dpr), minH: Math.round(WIN_MIN_H * _dpr) });
+          } catch (_) {
+            // 子程序还没加「复位窗口」模式时的兜底：先最大化，至少让窗口可见可用
+            try { await windowOp('最大化'); _isMaximized = true; } catch (_) {}
+          }
         }
-      }
-    } catch (_) {}
-    // 关闭 WebView2 通用自动填充（原生「保存的信息」弹窗）。反射只依赖微软 WebView2 公开 API、
-    // 不碰 Quicker 内部类型；子程序未加该模式时会被吞掉、无副作用。不阻塞启动。
-    try { windowOp('关闭自动填充').catch(() => {}); } catch (_) {}
+      } catch (_) {}
+      // 关闭 WebView2 通用自动填充（原生「保存的信息」弹窗）。反射只依赖微软 WebView2 公开 API、
+      // 不碰 Quicker 内部类型；子程序未加该模式时会被吞掉、无副作用。不阻塞启动。
+      try { windowOp('关闭自动填充').catch(() => {}); } catch (_) {}
+    };
+    if (window.host.caps.window) {
+      await _winInit();
+    } else {
+      // 预热路径（Quicker 冷启动、窗口隐藏加载）时 $quickerSp 桥可能晚于本代码注入。
+      // 原先直接调用会被 host 层静默吞掉 → 最小尺寸挂钩/自动填充关闭整段丢失。
+      // 改为不阻塞启动，等桥就绪后补跑（与 waitAndRemoveBorder 同款轮询）。
+      (function waitBridge(n) {
+        if (window.host.caps.window) { _winInit(); return; }
+        if (n > 0) setTimeout(() => waitBridge(n - 1), 300);
+        else console.warn('[app] $quickerSp 桥 9 秒未注入，窗口初始化（最小尺寸/复位/自动填充）未执行');
+      })(30);
+    }
   }
 
   try {
@@ -208,10 +224,16 @@ async function bootstrap() {
   listenQuickerMessages();
   startBackupScheduler();
 
-  // 加载本机字体缓存；首次没缓存就异步探测一次
+  // 本机字体：读缓存；空则首次异步全量扫。当前选中已失效/旧预设 → 静默改回系统默认（开设置时再提示）
   loadCachedSystemFonts();
+  try { ensureContentFontValid({ notify: false }); } catch (_) {}
   if (!getDetectedSystemFonts().length) {
-    setTimeout(() => { try { refreshDetectedSystemFonts(); } catch (_) {} }, 1500);
+    setTimeout(() => {
+      try {
+        refreshDetectedSystemFonts();
+        ensureContentFontValid({ notify: false });
+      } catch (_) {}
+    }, 1500);
   }
 
   // 当前打开的笔记若已不存在（被同步/导入/采纳等移除）→ 关闭编辑器，不残留陈旧标题/正文。
@@ -541,21 +563,13 @@ function applyTheme(themeId) {
   }, 0);
 }
 
-/** 正文字体预设（精选） */
-const CONTENT_FONTS = [
-  { id: '',        name: '系统默认', stack: '' },
-  { id: 'song',    name: '宋体（思源宋体）', stack: '"Source Han Serif SC", "Noto Serif SC", "Songti SC", SimSun, serif' },
-  { id: 'kai',     name: '楷体（霞鹜文楷）', stack: '"LXGW WenKai", "LXGW WenKai Screen", "KaiTi", "STKaiti", serif' },
-  { id: 'sans',    name: '黑体（思源黑体）', stack: '"HarmonyOS Sans SC", "Source Han Sans SC", "Noto Sans SC", "PingFang SC", sans-serif' },
-  { id: 'inter',   name: 'Inter（西文）',   stack: 'Inter, "PingFang SC", sans-serif' },
-  { id: 'serif',   name: 'Georgia（西文）', stack: 'Georgia, "Times New Roman", "Source Han Serif SC", serif' },
-  { id: 'mono',    name: '等宽（JetBrains Mono）', stack: '"JetBrains Mono", "Fira Code", Consolas, monospace' },
-];
-window.CONTENT_FONTS = CONTENT_FONTS;
+/** 旧版写死预设 id（song/kai/…）：已取消预设，读到这些值一律回退「系统默认」 */
+const LEGACY_FONT_PRESET_IDS = new Set(['song', 'kai', 'sans', 'inter', 'serif', 'mono']);
 
 /** ====== 本机字体探测（canvas 字体宽度差异法，无需权限） ======
- *  常见 Windows / macOS / 中文字体候选清单，启动时探测哪些已安装，缓存到 localStorage
- *  设置面板会把"探测到的本机字体"追加到下拉的【系统字体】分组里
+ *  方案：不做挂名预设。候选清单仅作扫描池；首次/点 ⟳ 全量扫，结果缓存到 localStorage。
+ *  设置下拉 =「系统默认」+ 缓存名单；缓存里有、复查探测不到 → 灰显不可选（保留痕迹）；
+ *  当前正选中已失效字体 → 自动改回系统默认并提示。
  */
 const SYSTEM_FONT_CANDIDATES = [
   // Windows 中文
@@ -580,7 +594,7 @@ const SYSTEM_FONT_CANDIDATES = [
   'Segoe UI', 'Segoe UI Emoji', 'Segoe Print', 'Segoe Script',
 ];
 
-let _detectedSystemFonts = null; // [{ name }]，懒加载
+let _detectedSystemFonts = null; // [{ name, ok }]，ok=false 表示缓存里有、本机复查已不可用（灰显）
 
 /** Canvas 字体宽度差异法（无需 Local Font Access 权限，所有 Chromium 内核都能用）
  *  原理：用基准字体（monospace）测某个字符串的宽度，再用候选字体兜底测一次，
@@ -604,55 +618,140 @@ function fontExistsByCanvas(name) {
   return false;
 }
 
-/** 探测一遍候选字体，返回本机已安装的列表 */
-function detectSystemFonts() {
+/** 探测一遍候选字体，返回本机当前已安装的名字列表（去重） */
+function detectInstalledFontNames() {
   const found = [];
-  for (const name of SYSTEM_FONT_CANDIDATES) {
-    if (fontExistsByCanvas(name)) found.push({ name });
-  }
-  // 去重（不同 alias 同一字体名）
   const seen = new Set();
-  const dedup = found.filter(f => {
-    const k = f.name.toLowerCase();
-    if (seen.has(k)) return false;
-    seen.add(k); return true;
-  });
-  return dedup;
+  for (const name of SYSTEM_FONT_CANDIDATES) {
+    if (!fontExistsByCanvas(name)) continue;
+    const k = name.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    found.push(name);
+  }
+  return found;
+}
+
+function _normFontEntry(x) {
+  if (!x) return null;
+  if (typeof x === 'string') return { name: x, ok: true };
+  if (x.name) return { name: String(x.name), ok: x.ok !== false };
+  return null;
 }
 
 function loadCachedSystemFonts() {
   try {
     const raw = localStorage.getItem('zhinote-sys-fonts');
-    if (raw) _detectedSystemFonts = JSON.parse(raw);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return;
+    _detectedSystemFonts = arr.map(_normFontEntry).filter(Boolean);
   } catch (_) {}
 }
 function saveCachedSystemFonts(list) {
   try { localStorage.setItem('zhinote-sys-fonts', JSON.stringify(list || [])); } catch (_) {}
 }
 function getDetectedSystemFonts() { return _detectedSystemFonts || []; }
+
+/** 全量重扫候选池：已装的 ok:true；曾在缓存、现探测不到的保留为 ok:false（灰显不可选） */
 function refreshDetectedSystemFonts() {
-  _detectedSystemFonts = detectSystemFonts();
-  saveCachedSystemFonts(_detectedSystemFonts);
-  return _detectedSystemFonts;
+  const installed = detectInstalledFontNames();
+  const instSet = new Set(installed.map(n => n.toLowerCase()));
+  const prev = getDetectedSystemFonts();
+  const out = installed.map(name => ({ name, ok: true }));
+  const seen = new Set(instSet);
+  for (const e of prev) {
+    const k = (e.name || '').toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ name: e.name, ok: false });
+  }
+  out.sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1; // 可用的在前
+    return a.name.localeCompare(b.name, 'zh');
+  });
+  _detectedSystemFonts = out;
+  saveCachedSystemFonts(out);
+  return out;
 }
+
+/** 打开设置时复查缓存：不重扫整份候选，只对已缓存名字再探一次 */
+function validateCachedSystemFonts() {
+  const prev = getDetectedSystemFonts();
+  if (!prev.length) return refreshDetectedSystemFonts();
+  const out = prev.map(e => ({ name: e.name, ok: fontExistsByCanvas(e.name) }));
+  out.sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1;
+    return a.name.localeCompare(b.name, 'zh');
+  });
+  _detectedSystemFonts = out;
+  saveCachedSystemFonts(out);
+  return out;
+}
+
 window.refreshDetectedSystemFonts = refreshDetectedSystemFonts;
 window.getDetectedSystemFonts = getDetectedSystemFonts;
 
 function applyFontFamily(id) {
-  // 优先按预设 id 查；没有就把 id 当作字体名直接用（系统字体走这条）
-  const preset = CONTENT_FONTS.find(x => x.id === id);
-  if (preset) {
-    const stack = preset.stack || '';
+  // '' / 空 = 系统默认（跟界面字体）；具体字体名则优先用它，没有再退回界面字体
+  if (id && !LEGACY_FONT_PRESET_IDS.has(id)) {
     document.documentElement.style.setProperty('--font-content',
-      stack ? stack : 'var(--font-ui)');
-    return;
-  }
-  if (id) {
-    document.documentElement.style.setProperty('--font-content',
-      `"${id.replace(/"/g, '')}", var(--font-ui)`);
+      `"${String(id).replace(/"/g, '')}", var(--font-ui)`);
   } else {
     document.documentElement.style.setProperty('--font-content', 'var(--font-ui)');
   }
+}
+
+/** 读当前笔记字体设置；旧预设 id 或本机已不可用 → 视为失效 */
+function readContentFontSetting() {
+  const raw = storage.getSetting('fontFamily') || localStorage.getItem('zhinote-font') || '';
+  return String(raw || '');
+}
+function isContentFontUsable(id) {
+  if (!id || LEGACY_FONT_PRESET_IDS.has(id)) return false;
+  return fontExistsByCanvas(id);
+}
+/** 失效则写回「系统默认」并套用；notify 时 toast 一句。返回最终生效的值。 */
+function ensureContentFontValid(opts) {
+  const notify = !!(opts && opts.notify);
+  const cur = readContentFontSetting();
+  if (!cur) { applyFontFamily(''); return ''; }
+  if (isContentFontUsable(cur)) { applyFontFamily(cur); return cur; }
+  try { storage.setSetting('fontFamily', ''); } catch (_) {}
+  try { localStorage.setItem('zhinote-font', ''); } catch (_) {}
+  applyFontFamily('');
+  if (notify) {
+    const why = LEGACY_FONT_PRESET_IDS.has(cur)
+      ? '原「预设字体」已取消，已改回系统默认'
+      : '原笔记字体本机已不可用，已改回系统默认';
+    try { toast(why); } catch (_) {}
+  }
+  return '';
+}
+
+/** 生成 #set-font 的 option 列表 HTML（系统默认 + 本机缓存；失效项 disabled） */
+function fontSelectOptionsHtml(selected) {
+  const cur = selected == null ? '' : String(selected);
+  const list = getDetectedSystemFonts();
+  let html = `<option value=""${cur === '' ? ' selected' : ''}>系统默认</option>`;
+  for (const f of list) {
+    const name = f.name;
+    const ok = f.ok !== false;
+    const sel = cur === name && ok ? ' selected' : '';
+    const dis = ok ? '' : ' disabled';
+    const label = ok ? name : (name + '（已卸载）');
+    const title = ok ? '' : ' title="本机已检测不到此字体"';
+    html += `<option value="${escapeHtml(name)}"${sel}${dis}${title}>${escapeHtml(label)}</option>`;
+  }
+  return html;
+}
+/** 重建 #set-font 的 option（自绘下拉会在打开/change 时重读原生 option，无需拆掉重装） */
+function refillFontSelect(sel, selected) {
+  if (!sel) return;
+  sel.innerHTML = fontSelectOptionsHtml(selected);
+  sel.value = selected || '';
+  if (![...sel.options].some(o => o.value === sel.value && !o.disabled)) sel.value = '';
+  try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (_) {}
 }
 
 const CLOZE_COLOR_MAP = {
@@ -678,7 +777,7 @@ function applySavedSettings() {
   // 优先读 localStorage（Quicker 变量异步、可能被云端覆盖；localStorage 是这台设备的"最后一选"）
   const theme = (localStorage.getItem('zhinote-theme') || storage.getSetting('theme') || 'light');
   applyTheme(theme);
-  applyFontFamily(storage.getSetting('fontFamily') || localStorage.getItem('zhinote-font') || '');
+  ensureContentFontValid({ notify: false });
   applyClozeColor(storage.getSetting('clozeColor') || 'black');
   applyOutlinePosition(storage.getSetting('outlinePosition') || 'left');
 
@@ -753,6 +852,14 @@ window.applyEditorLineHeight = applyEditorLineHeight;
 function applyEditorPadding(em) {
   const v = parseFloat(em);
   document.documentElement.style.setProperty('--editor-pad', (isFinite(v) ? v : 1) + 'em');
+  // 同步给出像素值：吸顶元素（如小枝块头）的负 top 若直接用 em 变量，会按自身字号解析，
+  // 与 #editor 按 14px 解析的 padding 差几像素，吸附点偏低漏出一条缝（用户实测）。
+  let px = (isFinite(v) ? v : 1) * 14;
+  try {
+    const ed = document.getElementById('editor');
+    if (ed) { const m = parseFloat(getComputedStyle(ed).paddingTop); if (isFinite(m)) px = m; }
+  } catch (_) {}
+  document.documentElement.style.setProperty('--editor-pad-px', px + 'px');
 }
 window.applyEditorPadding = applyEditorPadding;
 
@@ -1168,9 +1275,9 @@ function _isNonEditorTextTarget() {
 function onGlobalKey(e) {
   const ctrl = e.ctrlKey || e.metaKey;
   if (!ctrl && e.altKey && !e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
-    // 唤出 / 收起小枝
+    // 唤出小枝：优先在正文就地插对话块（用户定的交互）；面板开着则收起
     e.preventDefault();
-    try { window.mascot && window.mascot.toggle(); } catch (_) {}
+    try { (window.mascot?.summon || window.mascot?.toggle)?.call(window.mascot); } catch (_) {}
     return;
   }
   if (!ctrl && e.altKey && e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
@@ -2215,6 +2322,7 @@ function setupMobileLayout() {
   }
 
   if (window.matchMedia('(pointer: coarse)').matches) setupTouchGestures(mq);
+  setupRootScrollGuard();
 
   // 从树里打开笔记后自动收起抽屉——**仅窄屏**生效；宽屏（含最大化）不收起。
   // 刚新建的笔记除外（新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作）。
@@ -2641,6 +2749,38 @@ function setupKeyboardViewportTracking() {
   window._mdKbLift = lift; // 手势层在 touchend 时补调（按压期间暂缓的滚动纠正）
 }
 
+/** 布局视口滚动归零守卫（全端，桌面/触屏都挂）：本应用是 100dvh 全屏布局，文档根/body 永远不该滚动。
+ *  但 overflow:hidden 挡不住"聚焦屏外元素/输入法"触发的浏览器自动滚动——根或 body 被偷偷滚下去
+ *  几像素后整页上移：顶栏图标贴上边缘、底部离下边缘一截（用户报的"所有元素往上移了一点"，
+ *  与 iOS 键盘场景 lift 纠正的是同一症状，但 lift 只在触屏路径注册）。三重防护（实测缺一不可）：
+ *  ① 捕获阶段监听 document 全部 scroll，目标是根/body 才纠正（根滚动只在值变化那一刻发一次事件，
+ *     错过就永久错位；body 滚动不冒泡到 window，必须捕获）；② 注册时先纠正一次存量偏移；
+ *  ③ 关掉浏览器"刷新后恢复滚动位置"（会在本守卫注册前把旧偏移原样还回来）。
+ *  iOS 键盘期与编辑器选字期让路（同 lift 的约束，避免打断系统选字/键盘避让）。 */
+function setupRootScrollGuard() {
+  const selActive = () => {
+    const s = window.getSelection && window.getSelection();
+    if (!s || s.rangeCount === 0 || s.isCollapsed) return false;
+    const a = s.anchorNode;
+    const node = a && (a.nodeType === 3 ? a.parentElement : a);
+    return !!(node && node.closest && node.closest('#editor .ProseMirror'));
+  };
+  const fix = () => {
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+    const h = document.documentElement, b = document.body;
+    if (h.scrollTop || h.scrollLeft) { h.scrollTop = 0; h.scrollLeft = 0; }
+    if (b && (b.scrollTop || b.scrollLeft)) { b.scrollTop = 0; b.scrollLeft = 0; }
+  };
+  document.addEventListener('scroll', (e) => {
+    const t = e.target;
+    if (t !== document && t !== document.documentElement && t !== document.body) return;
+    if (document.body.classList.contains('kb-open') || window._mdTouchActive || selActive()) return;
+    fix();
+  }, { capture: true, passive: true });
+  try { history.scrollRestoration = 'manual'; } catch (_) {}
+  fix();
+}
+
 /** 大纲分隔条拖拽调宽。大纲在左时拖右缘（宽 = 起始 + dx），在右时拖左缘（宽 = 起始 - dx）。 */
 function setupOutlineResizer() {
   const resizer = document.getElementById('outline-resizer');
@@ -2901,6 +3041,9 @@ const WS_EMOJI_PRESETS = [
   // 自然/天气
   '☀️','🌙','⭐','🌟','🔥','⚡','❄️','🌈','🌊','🌸','🌹','🍀','🍂','🌍','🌌','✨',
   '🌺','🌻','🌷','💐','🌿','🪴','🌵','🍄','🐚','🪨','💧','🫧','☁️','🌤️','🌧️','🌪️',
+  // 表情/心情
+  '😀','😄','😁','😊','🙂','😉','😌','😎','🤔','🤗','🥰','😍','🤩','🥳','😇','😋',
+  '😜','🤪','🫠','😴','🥱','😮','🥹','🥺','😢','😅','😬','🤓','🥸','🤖','👻','😺',
   // 动物
   '🐱','🐶','🐰','🦊','🐻','🐼','🐨','🦁','🐯','🦄','🐝','🦋','🐠','🐳','🦅','🦉',
   // 标记/状态
@@ -3782,7 +3925,6 @@ function hideTooltip() {
 
 function bindAppTooltip(el) {
   if (el._tipBound) return;
-  if (el.closest('#bubble-menu')) return;
   el._tipBound = true;
   if (el.hasAttribute('title')) {
     el.setAttribute('data-tip', el.getAttribute('title'));
@@ -3810,9 +3952,9 @@ function bindAppTooltip(el) {
       const isFile = (tlink.getAttribute('href') || '').startsWith('file:///');
       tlink.setAttribute('data-tip', isFile ? 'Ctrl + 点击打开文件' : 'Ctrl + 点击打开');
     }
+    // 悬浮工具栏（bubble-menu）不再豁免：原生 title 提示框与全局 .app-tooltip 风格不一致（用户实测）
     const el = e.target.closest?.('[title], [data-tip]');
     if (!el || el._tipBound) return;
-    if (el.closest('#bubble-menu')) return;
     _hoverTarget = el;
     if (el.hasAttribute('title')) {
       el.setAttribute('data-tip', el.getAttribute('title'));
@@ -4207,6 +4349,13 @@ function listenQuickerMessages() {
 }
 
 function handleQuickerMessage(msg) {
+  // 速记：推荐字符串形式 "qc:text:<base64>" / "qc:image:<base64>"——
+  // Quicker「发送消息」要求内容是合法 JSON，带引号的字符串字面量即合法，且插值时没有大括号的坑
+  if (typeof msg === 'string') {
+    const m = msg.match(/^"?qc:(text|image):([\s\S]*?)"?$/);
+    if (m) handleQuickCapture({ kind: m[1], b64: m[2] });
+    return;
+  }
   if (!msg || !msg.type) return;
   switch (msg.type) {
     case 'show':
@@ -4232,8 +4381,84 @@ function handleQuickerMessage(msg) {
     case 'toast':
       toast(msg.message || '', msg.level || 'success');
       break;
+    case 'quick-capture': // 对象形式（等价于字符串 qc:…，两种都收）
+      handleQuickCapture(msg);
+      break;
   }
 }
+
+// ========== 速记（Quicker 端热键：剪贴板 → 笔记；枝记开着才生效） ==========
+
+/** base64 → UTF-8 文本（Quicker「加密/解密/哈希」的 Base64 编码按 UTF-8 处理） */
+function _qcB64ToText(b64) {
+  try { return new TextDecoder().decode(Uint8Array.from(atob(String(b64).replace(/\s+/g, '')), c => c.charCodeAt(0))); }
+  catch (_) { return ''; }
+}
+
+function handleQuickCapture(msg) {
+  const kind = msg.kind === 'image' ? 'image' : 'text';
+  const payload = { kind };
+  if (kind === 'text') {
+    payload.text = String(msg.text || (msg.b64 ? _qcB64ToText(msg.b64) : '')).replace(/\r\n/g, '\n').trim();
+    if (!payload.text) { toast('速记失败：剪贴板里没有文字', 'error'); return; }
+  } else {
+    // 剥空白/换行（有的 Base64 工具会折行），再试解码校验——坏数据（常见：图太大被截断）
+    // 绝不入笔记：否则正文出破图占位符，同步上传还会整轮失败（2026-07-28 用户实测踩过）
+    const b = String(msg.b64 || '').replace(/\s+/g, '');
+    if (!b) { toast('速记失败：剪贴板里没有图片', 'error'); return; }
+    payload.dataUrl = b.startsWith('data:') ? b : ('data:image/png;base64,' + b);
+    try { atob((payload.dataUrl.split(',')[1] || '').trim() || '!'); }
+    catch (_) { toast('速记失败：图片数据损坏或被截断（图太大时易发生，试试截小一点）', 'error'); return; }
+  }
+  // 没设置过 / 旧版遗留值 → 默认存到当前打开的笔记（在 设置 → 本地 → 速记 可改）
+  const pref = storage.getSetting('quickCapture');
+  doQuickCapture(pref && (pref.mode === 'current' || pref.mode === 'fixed') ? pref : { mode: 'current' }, payload);
+}
+
+function doQuickCapture(pref, payload) {
+  if (pref.mode === 'fixed') {
+    const n = storage.get(pref.noteId);
+    if (!n || n.deletedAt) { toast('速记的收集箱笔记不在了，请到 设置 → 本地 → 速记 重新选择', 'error'); return; }
+    appendCapture(pref.noteId, payload);
+  } else {
+    const id = editor.currentId?.();
+    if (!id) { toast('速记失败：当前没有打开的笔记', 'error'); return; }
+    appendCapture(id, payload);
+  }
+}
+
+/** 把速记内容追加到目标笔记末尾。目标正打开着 → 走编辑器（立即可见、正常保存管线）；
+ *  没打开 → 直接改存储正文（updateDoc 收图入仓、维护账本、标脏待同步） */
+function appendCapture(id, payload) {
+  const n = storage.get(id);
+  if (!n) { toast('速记失败：笔记不存在', 'error'); return; }
+  const nodes = [];
+  if (payload.kind === 'text') {
+    payload.text.split('\n').forEach(l => {
+      nodes.push(l.trim() ? { type: 'paragraph', content: [{ type: 'text', text: l }] } : { type: 'paragraph' });
+    });
+  } else {
+    nodes.push({ type: 'paragraph', content: [{ type: 'image', attrs: { src: payload.dataUrl } }] });
+  }
+  try {
+    if (editor.currentId?.() === id && editor.instance?.()) {
+      const ed = editor.instance();
+      ed.chain().insertContentAt(ed.state.doc.content.size, nodes).run();
+    } else {
+      const doc = n.doc ? JSON.parse(JSON.stringify(n.doc)) : { type: 'doc', content: [] };
+      doc.content = (doc.content || []).concat(nodes);
+      storage.updateDoc(id, doc);
+    }
+    toast('已速记到《' + (n.title || '无标题') + '》');
+  } catch (e) {
+    console.warn('[quick-capture] 追加失败', e);
+    toast('速记失败，请重试', 'error');
+  }
+}
+
+// 速记存法在 设置 → 本地 → 速记 里改（下拉框）；命令面板「速记设置」直达该页
+window.quickCaptureSetup = () => { try { openSettingsModal('backup'); } catch (_) {} };
+window._quickerMsg = handleQuickerMessage; // 调试/联调入口：控制台可模拟 Quicker 消息
 
 /** 统一窗口操作 → 子程序 WindowOp，用中文 mode 区分：隐藏/最小化/置顶/最大化/还原/顶边。
  *  - 存位置改由子程序「几何守门」判定：操作前量窗口是否铺满所在屏工作区，未铺满(=普通窗口)才写 zhinote_window_rect，
@@ -4252,6 +4477,11 @@ async function windowOp(mode, extra) {
     try { window.realtime && window.realtime.notifyShown && window.realtime.notifyShown(); } catch (_) {}
   }
   // 经宿主适配层：Quicker 宿主走 WindowOp 子程序；非 Quicker 宿主（浏览器/PWA）静默忽略。
+  // 诊断：Quicker 宿主下桥缺失（host 层会静默返回 null、按钮看似"没反应"）→ 控制台留痕，
+  // 供排查"预热开出的窗口顶栏按钮失灵"这类问题：F12 看有无本警告即可分辨桥断/子程序错。
+  if (window.host.isQuicker() && !window.host.caps.window) {
+    console.warn('[windowOp] $quickerSp 桥不可用，窗口操作被忽略：', mode);
+  }
   return await window.host.window.op(mode, extra);
 }
 window.windowOp = windowOp;
@@ -4276,6 +4506,8 @@ function _zhSyncError(err) {
   if (low.includes('503')) return '服务器繁忙（503），请稍后重试';
   if (low.includes('500') || low.includes('502')) return '服务器错误，请稍后重试';
   if (low.includes('certificate') || low.includes('ssl') || low.includes('cert')) return '证书/加密连接异常，请检查服务器地址';
+  // atob/base64 报错：云端某个文件的内容编码坏了（多为网盘写入被打断留下残文件）
+  if (low.includes('atob') || low.includes('not correctly encoded')) return '云端有个文件内容损坏（编码解析失败，多为网盘上次写入被打断），会随轮询自动重试；若反复出现，请把控制台（F12）里的红色报错发我定位';
   // 纯英文的 JSON 报错：保留原文方便定位是哪个文件坏了
   if (low.includes('json')) return '云端数据解析失败（' + s + '），请重试';
   return '同步出错（' + s + '），请重试';
@@ -5770,12 +6002,11 @@ function openSettingsModal(initialTab) {
         <div class="set-font-select-wrap">
           <button id="set-font-refresh" class="set-font-refresh-inline" title="重新扫描本机字体">⟳</button>
           <select id="set-font" class="has-inline-btn">
-            ${CONTENT_FONTS.map(f => `<option value="${f.id}"${(storage.getSetting('fontFamily')||'')===f.id?' selected':''}>${f.name}</option>`).join('')}
             ${(() => {
-              const sys = getDetectedSystemFonts();
-              if (!sys.length) return '';
-              const cur = storage.getSetting('fontFamily') || '';
-              return sys.map(f => `<option value="${escapeHtml(f.name)}"${cur===f.name?' selected':''}>${escapeHtml(f.name)}</option>`).join('');
+              // 打开设置：复查缓存；当前字体失效 → 自动回系统默认并提示
+              try { validateCachedSystemFonts(); } catch (_) {}
+              const cur = ensureContentFontValid({ notify: true });
+              return fontSelectOptionsHtml(cur);
             })()}
           </select>
         </div>
@@ -5981,7 +6212,7 @@ function openSettingsModal(initialTab) {
     </div>
     <div id="settings-tab-backup" class="${lastTab!=='backup'?'settings-tab-hidden':''}">
       <div id="images-dir-block" style="display:none;margin-bottom:18px;">
-        <label>图片文件夹</label>
+        <label class="settings-section">图片文件夹</label>
         <div style="display:flex;gap:8px;">
           <input type="text" id="set-images-dir" readonly style="flex:1;min-width:0;" title="笔记图片的本地存放位置（文件名为内容哈希）">
           <button id="set-images-browse" class="link-btn" title="选择新文件夹并迁移全部图片">更改…</button>
@@ -5989,7 +6220,18 @@ function openSettingsModal(initialTab) {
         </div>
         <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">笔记图片以独立文件存放于此（默认 文档\ZhiNote\images）；更改时自动迁移现有图片</div>
       </div>
-      <label>定时备份</label>
+      <div id="qc-block" style="display:none;margin-bottom:18px;">
+        <label class="settings-section">速记</label>
+        <select id="set-qc-mode" style="width:100%;">
+          <option value="current">存到当前打开的笔记</option>
+          <option value="fixed">固定存到一篇笔记（收集箱）</option>
+        </select>
+        <div id="qc-fixed-row" style="display:none;font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+          收集箱：<span id="qc-fixed-title"></span>　<button id="qc-fixed-repick" class="link-btn" style="font-size:12px;">更换…</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">Quicker 端按速记热键，把选中文字或剪贴板图片存进笔记（枝记开着才生效）</div>
+      </div>
+      <label class="settings-section">定时备份</label>
       <select id="set-backup-enabled" style="width:100%;">
         <option value="0">关闭</option>
         <option value="1">开启</option>
@@ -6202,7 +6444,9 @@ function openSettingsModal(initialTab) {
     footer: [
       { label: '保存', class: 'primary-btn', onClick: async () => {
         const size = parseInt(body.querySelector('#set-size').value) || 14;
-        const fontFamily = body.querySelector('#set-font')?.value || '';
+        // 笔记字体：只接受系统默认或本机仍可用的字体（失效项已 disabled）
+        let fontFamily = body.querySelector('#set-font')?.value || '';
+        if (fontFamily && !isContentFontUsable(fontFamily)) fontFamily = '';
         const themeId = body.querySelector('#set-theme-grid .theme-grid-item.active')?.dataset.theme || 'light';
         storage.setSetting('fontSize', size);
         storage.setSetting('fontFamily', fontFamily);
@@ -6895,6 +7139,54 @@ function openSettingsModal(initialTab) {
         catch (err) { toast('打开失败：' + (err?.message || err), 'error'); }
       });
     }
+
+    // 速记存法（仅 Quicker 端展示）：下拉二选一；选「固定一篇」时就地弹笔记选择浮层
+    {
+      const block = body.querySelector('#qc-block');
+      if (block && window.host?.isQuicker?.()) {
+        block.style.display = '';
+        const sel = body.querySelector('#set-qc-mode');
+        const fixedRow = body.querySelector('#qc-fixed-row');
+        const fixedTitle = body.querySelector('#qc-fixed-title');
+        let syncing = false; // 程序改值时也要 dispatch change（自绘下拉靠它同步文字标签），用旗标防止绕回本处理器
+        const refresh = () => {
+          const p = storage.getSetting('quickCapture');
+          const isFixed = p && p.mode === 'fixed';
+          const v = isFixed ? 'fixed' : 'current';
+          if (sel && sel.value !== v) {
+            syncing = true;
+            sel.value = v;
+            sel.dispatchEvent(new Event('change'));
+            syncing = false;
+          }
+          if (fixedRow) fixedRow.style.display = isFixed ? '' : 'none';
+          if (fixedTitle) fixedTitle.textContent = isFixed ? '《' + (p.title || '无标题') + '》' : '';
+        };
+        // 浮层必须锚在自绘下拉的可见触发器上——原生 select 被 upgradeSelect 隐藏，矩形为 0，锚它浮层会飘走
+        const anchorEl = () => sel?.closest('.md-select')?.querySelector('.md-select-trigger') || sel;
+        const pickFixed = (anchor) => {
+          window.mascot?.pickNote?.(anchor, null, (p) => {
+            const id = p.mode === 'current' ? editor.currentId?.() : p.id;
+            if (!id) { storage.setSetting('quickCapture', { mode: 'current' }); refresh(); return; }
+            const t = (p.mode === 'current' ? (storage.get(id) || {}).title : p.title) || '无标题';
+            storage.setSetting('quickCapture', { mode: 'fixed', noteId: id, title: t });
+            refresh();
+            toast('速记将固定存到《' + t + '》');
+          }, { noOff: true, onClose: (picked) => {
+            // 打开了选择层却没选：当做未选择，静默回到「当前笔记」（用户明确要求，无需提醒）
+            if (!picked) { storage.setSetting('quickCapture', { mode: 'current' }); refresh(); }
+          } });
+        };
+        refresh();
+        sel?.addEventListener('change', () => {
+          if (syncing) return;
+          if (sel.value === 'fixed') { pickFixed(anchorEl()); return; } // 选完/取消后由 refresh 落定
+          storage.setSetting('quickCapture', { mode: 'current' });
+          refresh();
+        });
+        body.querySelector('#qc-fixed-repick')?.addEventListener('click', (e) => pickFixed(e.currentTarget));
+      }
+    }
   }
 
   // 主题胶囊点击 — 立即预览（名字就在胶囊里，无需另行更新）
@@ -6939,7 +7231,7 @@ function openSettingsModal(initialTab) {
   }
 
 
-  // 字体刷新按钮：重新扫描本机已安装字体并重建下拉
+  // 字体刷新按钮：全量重扫候选池并重建下拉（含已卸载灰显项）
   const btnFontRefresh = body.querySelector('#set-font-refresh');
   if (btnFontRefresh) {
     btnFontRefresh.addEventListener('click', () => {
@@ -6949,23 +7241,12 @@ function openSettingsModal(initialTab) {
       setTimeout(() => {
         try {
           const list = refreshDetectedSystemFonts();
+          const cur = ensureContentFontValid({ notify: true });
           const sel = body.querySelector('#set-font');
-          if (sel) {
-            // 删除非预设的 option（预设字体数量固定）
-            const presetCount = CONTENT_FONTS.length;
-            while (sel.options.length > presetCount) sel.options[sel.options.length - 1].remove();
-            if (list.length) {
-              const cur = storage.getSetting('fontFamily') || '';
-              list.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f.name;
-                opt.textContent = f.name;
-                if (cur === f.name) opt.selected = true;
-                sel.appendChild(opt);
-              });
-            }
-          }
-          toast(`扫描到 ${list.length} 款本机字体`, 'success');
+          if (sel) refillFontSelect(sel, cur);
+          const okN = list.filter(f => f.ok).length;
+          const missN = list.length - okN;
+          toast(missN ? `可用 ${okN} 款，另有 ${missN} 款已卸载` : `扫描到 ${okN} 款本机字体`, 'success');
         } catch (e) { toast('字体扫描失败：' + e.message, 'error'); }
         finally { btnFontRefresh.disabled = false; btnFontRefresh.textContent = original; }
       }, 30);
@@ -6974,7 +7255,10 @@ function openSettingsModal(initialTab) {
 
   setTimeout(() => {
     const fontSel = body.querySelector('#set-font');
-    if (fontSel) fontSel.value = (storage.getSetting('fontFamily') || localStorage.getItem('zhinote-font') || '');
+    if (fontSel) {
+      const cur = readContentFontSetting();
+      fontSel.value = isContentFontUsable(cur) ? cur : '';
+    }
     body.querySelectorAll('select').forEach(s => upgradeSelect(s));
   }, 0);
 }
@@ -6988,22 +7272,26 @@ function upgradeSelect(select) {
   if (!select || select._upgraded) return;
   select._upgraded = true;
 
-  // 收集 options（含分组）
+  // groups/flat 在每次打开/同步时从原生 select 重读——字体列表刷新后不必拆掉再装
   const groups = [];
   const flat = [];
-  Array.from(select.children).forEach(child => {
-    if (child.tagName === 'OPTGROUP') {
-      const opts = Array.from(child.children).map(o => ({
-        value: o.value, label: o.textContent.trim(), disabled: o.disabled, title: o.title || '',
-      }));
-      groups.push({ label: child.label, options: opts });
-      flat.push(...opts);
-    } else if (child.tagName === 'OPTION') {
-      const opt = { value: child.value, label: child.textContent.trim(), disabled: child.disabled, title: child.title || '' };
-      groups.push({ label: '', options: [opt] });
-      flat.push(opt);
-    }
-  });
+  function rebuildFromSelect() {
+    groups.length = 0; flat.length = 0;
+    Array.from(select.children).forEach(child => {
+      if (child.tagName === 'OPTGROUP') {
+        const opts = Array.from(child.children).map(o => ({
+          value: o.value, label: o.textContent.trim(), disabled: o.disabled, title: o.title || '',
+        }));
+        groups.push({ label: child.label, options: opts });
+        flat.push(...opts);
+      } else if (child.tagName === 'OPTION') {
+        const opt = { value: child.value, label: child.textContent.trim(), disabled: child.disabled, title: child.title || '' };
+        groups.push({ label: '', options: [opt] });
+        flat.push(opt);
+      }
+    });
+  }
+  rebuildFromSelect();
 
   // 包裹器：把 select 隐藏在内，外面套 trigger
   const wrap = document.createElement('div');
@@ -7025,6 +7313,7 @@ function upgradeSelect(select) {
 
   const labelEl = trigger.querySelector('.md-select-label');
   const sync = () => {
+    rebuildFromSelect();
     const cur = flat.find(o => o.value === select.value);
     labelEl.textContent = cur?.label || flat[0]?.label || '';
   };
@@ -7061,6 +7350,7 @@ function upgradeSelect(select) {
 
   function open() {
     if (panel) { close(); return; }
+    rebuildFromSelect();
     panel = document.createElement('div');
     panel.className = 'md-select-panel';
     panel.innerHTML = groups.map(g => {
@@ -7808,12 +8098,19 @@ function initEditorContextMenu() {
 
     // 选中了文字且小枝开启 → 菜单顶部给一个「问小枝」子菜单（只这一项，不铺开占位）
     const _selForAI = (() => { try { const s = editor.instance?.().state.selection; return s && !s.empty; } catch (_) { return false; } })();
+    // 「问小枝」子菜单：按常用语分组显示（组名小标题 + 组内条目），点了就地插对话块发问；超长靠子菜单滚动
     const _aiMenu = (_selForAI && window.mascot?.isEnabled?.() && window.aiChat) ? [{
       label: '问小枝', icon: '🌱',
       submenu: [
-        { label: '问一问（带上选中内容）', action: () => window.mascot.askSelection('ask') },
-        { sep: true },
-        ...window.aiChat.ACTIONS.map(a => ({ label: a.emoji + ' ' + a.label, action: () => window.mascot.askSelection(a.id) })),
+        { label: '问一问', icon: '🌱', title: '在下方插入对话块，想问什么直接打', action: () => window.mascot.askSelection() },
+        ...window.aiChat.cmdGroups().flatMap(g => (g.items || []).length ? [
+          { header: g.n },
+          ...g.items.map(c => ({
+            label: c.e + ' ' + (c.n || (c.t.length > 10 ? c.t.slice(0, 10) + '…' : c.t)),
+            title: c.t,
+            action: () => window.mascot.askCmd(c),
+          })),
+        ] : []),
       ],
     }, { sep: true }] : [];
 
@@ -7907,6 +8204,13 @@ function initEditorContextMenu() {
             const sep = document.createElement('div');
             sep.className = 'md-ctx-sep';
             sub.appendChild(sep);
+            continue;
+          }
+          if (si.header) { // 分组小标题（不可点）：如「问小枝」子菜单里的常用语分组
+            const hd = document.createElement('div');
+            hd.className = 'md-ctx-subhead';
+            hd.textContent = si.header;
+            sub.appendChild(hd);
             continue;
           }
           const srow = document.createElement('div');
