@@ -3407,9 +3407,13 @@ function insertEmojiUnicode(u) {
   if (!inserted) {
     const v = window.editor?.instance?.();
     if (v) {
-      // 正文插入原子表情节点（落盘仍摊成 Unicode）；其它输入框仍走上方 insertText
+      // 绑定模式：只插 Unicode（避免 znEmoji 进活账本导致双端合并翻倍）；非绑定仍用原子节点
       try {
-        v.chain().focus().insertContent({ type: 'znEmoji', attrs: { emoji: u } }).run();
+        if (window.editor && window.editor.isCrdtBound && window.editor.isCrdtBound()) {
+          v.chain().focus().insertContent(u).run();
+        } else {
+          v.chain().focus().insertContent({ type: 'znEmoji', attrs: { emoji: u } }).run();
+        }
       } catch (_) {
         v.chain().focus().insertContent(u).run();
       }

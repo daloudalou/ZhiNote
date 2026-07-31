@@ -14,6 +14,13 @@ const {
 const _pmState = window.__tiptapBundle.pmState || {};
 const TextSelection = _pmState.TextSelection;
 
+// 绑定模式开启时为 true：禁止把 Unicode 表情「收成」znEmoji 写进活账本。
+// y-prosemirror 会把 PM→Y 的每次改写同步进 Y.Doc；若对端补丁后再 expand，会把 znEmoji
+// 写进账本并触发保存回推，再叠加「按正文重算账本」就会合并出重复正文（小枝块/文字翻倍）。
+let _znCrdtBoundActive = false;
+// 正在把对端/云端账本 apply 进活账本：挡住 onUpdate→scheduleSave 回声。
+let _crdtApplyingRemote = false;
+
 /**
  * TextAlign — 段落/标题对齐（左/居中/右/两端）。内核 bundle 未打包官方扩展，这里按官方实现自写：
  * 用 addGlobalAttributes 给 paragraph/heading 加 textAlign 属性（无需改动 StarterKit 节点），
@@ -908,8 +915,9 @@ const ZnEmoji = Node.create({
     return [new Plugin({
       key: new PluginKey('znEmojiExpand'),
       appendTransaction(trs, _old, state) {
+        if (_znCrdtBoundActive) return null; // 绑定模式：账本里只留 Unicode，不收成 znEmoji
         if (!trs.some((tr) => tr.docChanged)) return null;
-        if (trs.some((tr) => tr.getMeta('znEmojiExpand'))) return null;
+        if (trs.some((tr) => tr.getMeta('znEmojiExpand') || tr.getMeta('znEmojiFlatten'))) return null;
         try {
           if (document.querySelector('#editor .ProseMirror.zn-ime-composing')) return null;
         } catch (_) {}
@@ -957,10 +965,12 @@ const ZnEmoji = Node.create({
           },
           compositionend(view) {
             try { view.dom.classList.remove('zn-ime-composing'); } catch (_) {}
-            try {
-              const tr = _znEmojiExpandTr(view.state, emojiType);
-              if (tr) view.dispatch(tr);
-            } catch (_) {}
+            if (!_znCrdtBoundActive) {
+              try {
+                const tr = _znEmojiExpandTr(view.state, emojiType);
+                if (tr) view.dispatch(tr);
+              } catch (_) {}
+            }
             return false;
           },
           mousedown(view, event) {
@@ -1607,32 +1617,62 @@ const editor = (() => {
   function applyRemoteUpdate(id, b64) {
     if (!_bound || !_yDoc || id !== _currentId || !b64) return false;
     try {
+      _crdtApplyingRemote = true;
       _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(b64), 'remote');
-      // 对端/云端账本只含 Unicode 表情字 → 收成编辑器用的 znEmoji 节点
-      _ensureEmojisExpanded();
+      // 绑定模式不 expand（避免 znEmoji 写回 Y）；把活账本原样落库，绝不按正文重算。
+      const yb = _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc));
+      const doc = _flattenZnEmojiDoc(_editor.getJSON());
+      try {
+        if (window.storage && window.storage._realtimeApply) {
+          window.storage._realtimeApply(id, doc, yb);
+        } else {
+          window.storage._setNoteYdoc(id, yb);
+        }
+      } catch (_) {
+        try { window.storage._setNoteYdoc(id, yb); } catch (__) {}
+      }
+      try { _openedDoc = JSON.stringify(doc); } catch (_) {}
       return true;
-    } catch (_) { return false; }
+    } catch (_) {
+      return false;
+    } finally {
+      _crdtApplyingRemote = false;
+    }
   }
 
-  /** 绑定模式下写出 note.ydoc：必须与摊平后的 note.doc 同形（只含 Unicode 表情），
-   *  绝不把编辑器专用 znEmoji 节点打进账本——旧版客户端不认该节点，同步时会丢掉表情再回传污染。 */
-  function _persistFlatYdoc(flatDoc) {
-    if (!_currentId || !flatDoc) return;
-    try {
-      const Yutil = window.__ydoc;
-      if (!Yutil || !Yutil.ready || !Yutil.ready()) {
-        // 引擎未就绪：退回活账本（仍可能含 znEmoji；下次保存再洗）
-        if (_yDoc) window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
-        return;
-      }
-      const prev = window.storage.get(_currentId);
-      const b64 = (prev && prev.ydoc) ? Yutil.update(prev.ydoc, flatDoc) : Yutil.build(flatDoc);
-      window.storage._setNoteYdoc(_currentId, b64);
-    } catch (_) {
-      try {
-        if (_yDoc) window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
-      } catch (__) {}
+  /** 把编辑器里残留的 znEmoji 摊成 Unicode 文本（会经 ySync 写进活账本）。绑定保存前调用。 */
+  function _flattenZnEmojiInEditor() {
+    if (!_editor) return;
+    const replacements = [];
+    _editor.state.doc.descendants((node, pos) => {
+      if (node.type.name !== 'znEmoji') return;
+      replacements.push({
+        from: pos,
+        to: pos + node.nodeSize,
+        ch: (node.attrs && node.attrs.emoji) || '',
+        marks: node.marks,
+      });
+    });
+    if (!replacements.length) return;
+    let tr = _editor.state.tr;
+    for (let i = replacements.length - 1; i >= 0; i--) {
+      const r = replacements[i];
+      if (!r.ch) tr = tr.delete(r.from, r.to);
+      else tr = tr.replaceWith(r.from, r.to, _editor.state.schema.text(r.ch, r.marks));
     }
+    tr = tr.setMeta('znEmojiFlatten', true).setMeta('addToHistory', false);
+    _editor.view.dispatch(tr);
+  }
+
+  /** 绑定模式写出 note.ydoc：必须 encode 活账本（保留 CRDT 轨迹）。
+   *  禁止再用「摊平 doc → update/build 重算账本」——那会另起一套插入记录，双端合并即正文翻倍。 */
+  function _persistLiveYdoc() {
+    if (!_currentId || !_yDoc) return;
+    try {
+      // 若仍有 znEmoji（旧会话残留/误插入），先摊平进活账本再 encode
+      _flattenZnEmojiInEditor();
+      window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
+    } catch (_) {}
   }
   // 双击空格跳出续写：记录上一次空格的时间与「插入后光标位置」，
   // 只有「窗口内、原地连按第二下空格、且当前光标处有激活的行内格式」才触发。
@@ -1740,6 +1780,7 @@ const editor = (() => {
     // 阶段 C 绑定开关：仅在 init 时定一次（运行时切换需刷新页面重建编辑器）。
     // 绑定开 → 关掉 StarterKit 自带历史，改用 yUndoPlugin（两套历史会打架）。
     _bound = _readBindFlag() && _crdtReady();
+    _znCrdtBoundActive = !!_bound;
 
     const bubbleMenuEl = document.getElementById('bubble-menu');
     // 触屏：iOS 系统选择菜单固定出现在选区上方且无法屏蔽，浮动条改到选区下方错位共存
@@ -2082,7 +2123,15 @@ const editor = (() => {
         transformPastedHTML: (html) => html.replace(/<img\b[^>]*src=["']?webkit-fake-url:[^>]*>/gi, ''),
       },
       onUpdate: ({ editor: ed }) => {
-        if (_suppressInput) return;
+        if (_suppressInput || _crdtApplyingRemote) return;
+        // 对端 Y→PM 补丁：ySync 会标 isChangeOrigin，绝不能再 scheduleSave→回推（否则易触发账本分叉）
+        if (_bound) {
+          try {
+            const key = _crdt() && _crdt().ySyncPluginKey;
+            const st = key && key.getState(ed.state);
+            if (st && st.isChangeOrigin) return;
+          } catch (_) {}
+        }
         _scrubForeignImageSrcs();
         scheduleSave(null);
       },
@@ -3517,7 +3566,7 @@ const editor = (() => {
   // 把笔记灌进编辑器：有 doc(JSON) 走零往返 JSON 路径（全保真、无抖动）；
   // 旧笔记（仅 content/md，尚未迁移）退回 markdown 解析路径，保证存量笔记照常打开。
   function _ensureEmojisExpanded() {
-    if (!_editor) return;
+    if (!_editor || _znCrdtBoundActive) return; // 绑定模式：不收成 znEmoji，避免写回活账本
     try {
       const type = _editor.schema.nodes.znEmoji;
       const tr = _znEmojiExpandTr(_editor.state, type);
@@ -3567,10 +3616,10 @@ const editor = (() => {
         console.warn('[editor.flushSave] 拒绝保存：doc 判空但编辑器仍有内容（疑似异常态）');
         return;
       }
-      // 绑定模式：跳过 storage._maintainLedger；账本按「摊平 doc」演进写出（与 note.doc 同形），
-      //   编辑器里仍可继续用 znEmoji 节点，但上云/即时同步的 ydoc 不含该节点，旧版不会剥表情。
+      // 绑定模式：跳过 storage._maintainLedger；账本 = encode(活 Y.Doc)（保留合并轨迹）。
+      //   note.doc 仍摊平为 Unicode；绑定下编辑器也不再把表情收成 znEmoji。
       // ⚠️ 顺序：先写 note.ydoc 再 updateDoc——realtime 监听 content 时读的是 note.ydoc。
-      if (_bound && _yDoc) _persistFlatYdoc(doc);
+      if (_bound && _yDoc) _persistLiveYdoc();
       window.storage.updateDoc(_currentId, doc, _bound ? { skipLedger: true } : undefined);
       window.storage.save({ immediate: true });
       // 保存成功后把基线推进到当前 doc，后续无新编辑则不再重复标脏。
