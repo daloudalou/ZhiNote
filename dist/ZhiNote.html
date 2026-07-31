@@ -300,7 +300,7 @@ body.pwa-standalone #titlebar { display: none !important; }
 }
 .titlebar-app-icon:hover {
   opacity: 1;
-  background: var(--bg-hover);
+  background-color: var(--bg-hover);
 }
 
 .titlebar-title-text {
@@ -595,7 +595,7 @@ body.is-resizing #tree-container .tree-children {
   width: 26px; height: 26px;
   border: none;
   border-radius: 6px;
-  background: transparent;
+  background-color: transparent;
   cursor: pointer;
   font-size: 16px;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
@@ -604,9 +604,9 @@ body.is-resizing #tree-container .tree-children {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s ease, transform 0.08s ease;
+  transition: background-color 0.15s ease, transform 0.08s ease;
 }
-.workspace-popup-item .ws-icon-btn:hover { background: var(--bg-tertiary); transform: scale(1.08); }
+.workspace-popup-item .ws-icon-btn:hover { background-color: var(--bg-tertiary); transform: scale(1.08); }
 .workspace-popup-item .ws-icon-btn:active { transform: scale(0.95); }
 .workspace-popup-divider {
   height: 1px;
@@ -962,7 +962,7 @@ body.theme-gruvbox .tree-row.selected .tree-title { color: #21252b; }
   padding: 0;
   border: none;
   border-radius: 5px;
-  background: transparent;
+  background-color: transparent;
   font-size: 15px;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji", "Twemoji Mozilla", sans-serif;
   line-height: 1;
@@ -972,12 +972,12 @@ body.theme-gruvbox .tree-row.selected .tree-title { color: #21252b; }
   flex-shrink: 0;
   cursor: pointer;
   color: var(--text-secondary);
-  transition: background 0.15s ease, transform 0.08s ease;
+  transition: background-color 0.15s ease, transform 0.08s ease;
 }
-.tree-note-icon:hover { background: var(--bg-tertiary); transform: scale(1.1); }
+.tree-note-icon:hover { background-color: var(--bg-tertiary); transform: scale(1.1); }
 .tree-note-icon:active { transform: scale(0.92); }
 .tree-note-icon.is-pinned-row { cursor: default; }
-.tree-note-icon.is-pinned-row:hover { background: transparent; transform: none; }
+.tree-note-icon.is-pinned-row:hover { background-color: transparent; transform: none; }
 /* 颜色角标：右下角小色块，提示已有颜色标记 */
 .tree-note-icon.has-color::after {
   content: '';
@@ -1071,7 +1071,7 @@ body.theme-gruvbox .tree-row.selected .tree-title { color: #21252b; }
   flex-shrink: 0;
   cursor: default;
 }
-.search-result-row .tree-note-icon:hover { background: transparent; transform: none; }
+.search-result-row .tree-note-icon:hover { background-color: transparent; transform: none; }
 .search-result-row .tree-note-icon:active { transform: none; }
 
 .search-result-meta {
@@ -1540,6 +1540,36 @@ body.theme-dark .rt-badge { background: #a394e6; }
 }
 #editor .ProseMirror img {
   cursor: grab;
+}
+/* 正文表情原子节点（znEmoji）：固定盒宽画 Twemoji；相邻留缝给插入符 */
+#editor .ProseMirror .zn-emoji {
+  display: inline-block;
+  width: 1.25em;
+  height: 1.25em;
+  line-height: 1.25em;
+  vertical-align: -0.2em;
+  overflow: hidden;
+  background-repeat: no-repeat;
+  background-position: center center;
+  background-size: 1.15em 1.15em;
+  margin-inline-end: 2px;
+  cursor: text;
+  user-select: none;
+  -webkit-user-select: none;
+  color: transparent;
+  font-size: 1.15em;
+  text-align: center;
+}
+#editor .ProseMirror .zn-emoji.is-empty {
+  background-color: rgba(128, 128, 128, 0.18);
+  border-radius: 3px;
+}
+/* Twemoji 没有时：露系统彩色脸（成熟兜底） */
+#editor .ProseMirror .zn-emoji.is-native {
+  background-image: none !important;
+  background-color: transparent;
+  color: inherit;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
 #editor .ProseMirror img:active {
   cursor: grabbing;
@@ -3061,31 +3091,123 @@ body.theme-gruvbox .context-menu-divider { background: rgba(255,255,255,0.08); }
 .theme-swatch .ts-line { height: 2px; border-radius: 1px; width: 100%; }
 .theme-swatch .ts-line.ts-short { width: 60%; }
 
-/* ===== Emoji Popover ===== */
-#emoji-popover { position: fixed; z-index: 3500; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); overflow: hidden; animation: mdPopIn 0.12s cubic-bezier(0.2,0,0,1); padding: 0; }
-#emoji-popover emoji-picker { --background: var(--bg-elevated); --border-color: var(--border); --border-size: 0; --button-active-background: var(--accent-bg); --button-hover-background: var(--bg-tertiary); --indicator-color: var(--accent); --input-border-color: var(--border); --input-font-color: var(--text); --input-placeholder-color: var(--text-tertiary); --input-background: var(--bg); --category-font-color: var(--text-secondary); --category-emoji-size: 1rem; --emoji-size: 1.25rem; --num-columns: 8; width: 300px; height: 260px; display: block; background-color: var(--bg-elevated) !important; border-radius: 12px; }
-body.theme-dark #emoji-popover emoji-picker { --background: var(--bg-elevated); --input-background: var(--bg-secondary); }
-body.theme-dark #emoji-popover emoji-picker::part(picker) { background: var(--bg-elevated) !important; }
-#emoji-recent-row { width: 300px; box-sizing: border-box; padding: 8px 10px 6px; border-bottom: 1px solid var(--border); background: var(--bg-elevated); }
-#emoji-recent-row.hidden { display: none; }
-#emoji-recent-row .emoji-recent-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; }
-/* 单行横向滚动：滚轮前后翻看更多；滚动条默认隐藏，hover 才显示细条 */
-#emoji-recent-row .emoji-recent-grid {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 2px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 2px;
-  scrollbar-width: none;            /* Firefox：默认隐藏 */
+/* ===== 第二套统一表情选择器（Twemoji / emoji-ui.js）===== */
+#emoji-popover.eui-pop, .eui-pop {
+  position: fixed; z-index: 3500; width: 320px; max-width: calc(100vw - 16px);
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow-lg); overflow: hidden; animation: mdPopIn 0.12s cubic-bezier(0.2,0,0,1);
+  display: flex; flex-direction: column; max-height: min(420px, calc(100dvh - 16px));
+  /* 实际高度由 emoji-ui position() 按光标上下空间再压 max-height，避免挡住输入 */
 }
-#emoji-recent-row:hover .emoji-recent-grid { scrollbar-width: thin; }
-#emoji-recent-row .emoji-recent-grid::-webkit-scrollbar { height: 4px; }
-#emoji-recent-row .emoji-recent-grid::-webkit-scrollbar-thumb { background: transparent; border-radius: 2px; }
-#emoji-recent-row:hover .emoji-recent-grid::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text, #888) 25%, transparent); }
-#emoji-recent-row .emoji-recent-grid > button { flex-shrink: 0; }
-#emoji-recent-row .emoji-recent-grid button { width: 28px; height: 28px; border: none; background: transparent; border-radius: 6px; font-size: 17px; line-height: 1; cursor: pointer; padding: 0; font-family: 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif; }
-#emoji-recent-row .emoji-recent-grid button:hover { background: var(--bg-tertiary); }
+.eui-pop.hidden { display: none; }
+.eui-loading { padding: 24px 16px; text-align: center; color: var(--text-tertiary); font-size: 13px; }
+.eui-head { padding: 10px 10px 6px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.eui-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; }
+.eui-q {
+  width: 100%; box-sizing: border-box; padding: 7px 10px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 13px;
+}
+.eui-q:focus { outline: none; border-color: var(--accent); }
+.eui-pickbar {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 8px 10px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.eui-custom {
+  flex: 1; min-width: 80px; padding: 6px 8px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); font-size: 16px; text-align: center;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.eui-btn {
+  padding: 6px 10px; border-radius: 7px; border: 1px solid var(--border);
+  background: var(--bg-secondary); color: var(--text); font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.eui-btn:hover { background: var(--bg-hover); }
+.eui-recent { padding: 8px 10px 4px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.eui-recent-label { font-size: 11px; font-weight: 600; color: var(--text-tertiary); letter-spacing: .4px; margin-bottom: 4px; }
+/* 横滑区：隐藏滚动条，用左右淡出提示「还能滑」 */
+.eui-hfade { position: relative; }
+.eui-hfade::before, .eui-hfade::after {
+  content: ''; position: absolute; top: 0; bottom: 0; width: 22px; z-index: 2;
+  pointer-events: none; opacity: 0; transition: opacity .15s ease;
+}
+.eui-hfade::before { left: 0; background: linear-gradient(to right, var(--bg-elevated), transparent); }
+.eui-hfade::after { right: 0; background: linear-gradient(to left, var(--bg-elevated), transparent); }
+.eui-hfade.fade-l::before, .eui-hfade.fade-r::after { opacity: 1; }
+.eui-hfade.can-scroll { cursor: grab; }
+.eui-recent-grid, .eui-cats {
+  display: flex; flex-wrap: nowrap; gap: 2px; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch; touch-action: pan-x;
+}
+.eui-recent-grid::-webkit-scrollbar, .eui-cats::-webkit-scrollbar { display: none; height: 0; }
+.eui-cats-wrap { border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.eui-cats { gap: 4px; padding: 6px 10px; }
+.eui-cat {
+  flex: 0 0 auto; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border);
+  background: transparent; color: var(--text-secondary); font-size: 11.5px; cursor: pointer; white-space: nowrap;
+}
+.eui-cat.on { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+.eui-grid {
+  display: grid; grid-template-columns: repeat(8, 1fr); grid-auto-rows: 36px;
+  gap: 2px; padding: 8px; overflow-y: auto; flex: 1; min-height: 0; align-content: start;
+}
+.eui-grid .eui-cell {
+  position: relative; width: 100%; height: 36px; border: none; border-radius: 7px; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1;
+  overflow: hidden; min-width: 0; box-sizing: border-box;
+  /* 屏外格子少算绘制（开源选择器常用思路） */
+  content-visibility: auto;
+  contain-intrinsic-size: 36px 36px;
+}
+.eui-recent-grid .eui-cell {
+  position: relative; flex: 0 0 36px; width: 36px; height: 36px;
+  border: none; border-radius: 7px; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; padding: 0; line-height: 1;
+  overflow: hidden; box-sizing: border-box;
+}
+.eui-grid .eui-cell:hover, .eui-recent-grid .eui-cell:hover { background: var(--bg-tertiary); }
+.eui-cell img {
+  width: 22px; height: 22px; max-width: 22px; max-height: 22px;
+  display: block; object-fit: contain; flex: none; position: relative; z-index: 1;
+}
+.eui-cell img.eui-gone { display: none; }
+.eui-ph {
+  display: none; width: 22px; height: 22px; line-height: 22px; text-align: center;
+  font-size: 20px; pointer-events: none;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.eui-cell.eui-miss img { display: none; }
+.eui-cell.eui-miss .eui-ph { display: block; }
+.eui-more { grid-column: 1 / -1; font-size: 11px; color: var(--text-tertiary); padding: 6px 4px; }
+.eui-foot {
+  flex-shrink: 0; padding: 5px 10px; font-size: 10.5px; color: var(--text-tertiary);
+  border-top: 1px solid var(--border); line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-icon-pick-btn {
+  width: 44px; height: 44px; border-radius: 10px; border: 1px solid var(--border);
+  background-color: var(--bg-secondary); font-size: 22px; line-height: 1; cursor: pointer;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.ws-icon-pick-btn:hover { background-color: var(--bg-hover); }
+/* 第二套图标：Twemoji 底图，文字透明；缺图时去掉本类、露系统脸 */
+.zn-twemoji-icon {
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+  background-size: 1.1em 1.1em !important;
+  color: transparent !important;
+}
+.zn-twemoji-icon.is-native,
+.is-native.tree-note-icon,
+.is-native.ws-icon {
+  color: inherit !important;
+  background-image: none !important;
+}
+.titlebar-app-icon.zn-twemoji-icon { background-size: 1em 1em !important; }
+.ws-icon-pick-btn.zn-twemoji-icon { background-size: 1.35em 1.35em !important; }
+.cmd-item-icon.zn-twemoji-icon,
+.ctx-icon-emoji.zn-twemoji-icon,
+.mascot-picker-ico.zn-twemoji-icon { background-size: 1em 1em !important; }
 
 /* ===== 云端数据管理弹窗 ===== */
 /* 标签栏 */
@@ -5486,6 +5608,7 @@ html.applock-showing body.pwa-standalone .applock-overlay { top: 0; }
 .mascot-avapick-pv { flex: 0 0 auto; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center; font-size: 30px; line-height: 1; }
 .mascot-avapick-pv .mascot-lottie { width: 38px; height: 38px; }
 .mascot-avapick-pn { font-size: 12px; color: var(--text-tertiary); line-height: 1.5; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mascot-avapick-attr { font-size: 10.5px; color: var(--text-tertiary); line-height: 1.4; padding-top: 2px; }
 /* 折叠收纳行（常用语等用） */
 details.mascot-avafold > summary { display: flex; align-items: center; gap: 10px; cursor: pointer; list-style: none; user-select: none; }
 details.mascot-avafold > summary::-webkit-details-marker { display: none; }
@@ -5532,7 +5655,7 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .mascot-keywrap .mascot-inp { flex: 1; padding-right: 34px; }
 .mascot-keywrap .pass-eye-btn { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); }
 
-/* 小枝回复的 Markdown 排版（紧凑；用于面板气泡 .mascot-bubble 与对话块 .zc-a/.zc-live） */
+/* 小枝回复的 Markdown 排版（面板气泡保持紧凑；笔记里 .zc-shell 跟正文同字号） */
 .mascot-md { white-space: normal; }
 .mascot-md > :first-child { margin-top: 0; }
 .mascot-md > :last-child { margin-bottom: 0; }
@@ -5548,6 +5671,15 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .mascot-md th, .mascot-md td { border: 1px solid var(--border-strong); padding: 3px 8px; }
 .mascot-md img { max-width: 100%; height: auto; }
 .mascot-md hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+/* 笔记内小枝块：标题/代码相对正文比例，与编辑器层级接近 */
+.zc-shell .mascot-md h1 { font-size: 1.8em; }
+.zc-shell .mascot-md h2 { font-size: 1.5em; }
+.zc-shell .mascot-md h3 { font-size: 1.3em; }
+.zc-shell .mascot-md h4 { font-size: 1.15em; }
+.zc-shell .mascot-md h5 { font-size: 1.05em; }
+.zc-shell .mascot-md h6 { font-size: 1em; }
+.zc-shell .mascot-md code { font-size: 0.9em; }
+.zc-shell .mascot-md table { font-size: 0.92em; }
 
 /* ===== 编辑器内「小枝对话块」（对齐日历块的做法：纯 border-radius，不用任何裁切） ===== */
 /* clip-path 方案两版都在用户机器上出四角缺损（非整数 DPI 缩放下裁切线与边框弧对不齐），弃用。
@@ -5581,17 +5713,19 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .zc-shell.zc-appear { animation: zcPop .32s cubic-bezier(.28,1.5,.42,1); transform-origin: 14px 14px; }
 @keyframes zcPop { 0% { opacity: 0; transform: scale(.45); } 100% { opacity: 1; transform: scale(1); } }
 @keyframes zcBodyIn { 0% { opacity: 0; transform: translateY(-5px); } 100% { opacity: 1; transform: translateY(0); } }
-.zc-q { margin: 10px 0 4px; font-size: 12.5px; font-weight: 600; color: var(--text); }
+/* 正文区字号：继承编辑器（跟设置/滚轮缩放一起变） */
+.zc-q { margin: 10px 0 4px; font-size: 1em; font-weight: 600; color: var(--text); }
 .zc-q::before { content: '💬'; margin-right: 6px; font-weight: 400; }
 /* 多轮问答之间用一条淡虚线分组，扫一眼就知道哪问对哪答 */
 .zc-a ~ .zc-q { border-top: 1px dashed var(--border); padding-top: 12px; margin-top: 14px; }
 /* 回答 = 说话人头像 + 内容（同面板：最新一条的头像演动图，旧的定格静态字形） */
-.zc-a { font-size: 13px; line-height: 1.65; color: var(--text-secondary); display: flex; align-items: flex-start; gap: 7px; }
+.zc-a { font-size: 1em; line-height: inherit; color: var(--text-secondary); display: flex; align-items: flex-start; gap: 7px; }
 .zc-live { margin-top: 4px; }
 .zc-live.zc-err { color: #d05a4e; }
-.zc-a .zc-ava { flex: none; width: 20px; height: 20px; margin-top: 2px; font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center; }
-.zc-a .zc-ava .mascot-lottie { width: 20px; height: 20px; }
-.zc-a .zc-ava .mascot-lottie svg { display: block; }
+/* 说话人头像随正文 em 缩放（勿写死 px，否则字号变大表情仍钉死） */
+.zc-a .zc-ava { flex: none; font-size: 1.25em; width: 1em; height: 1em; margin-top: 0.1em; line-height: 1; display: flex; align-items: center; justify-content: center; }
+.zc-a .zc-ava .mascot-lottie { width: 1em; height: 1em; }
+.zc-a .zc-ava .mascot-lottie svg { display: block; width: 100%; height: 100%; }
 .zc-a-c { flex: 1; min-width: 0; }
 .zc-a-c.mascot-md { white-space: normal; }
 .zc-think { margin-left: 20px; }
@@ -5601,7 +5735,7 @@ details.mascot-avafold[open] > summary { margin-bottom: 10px; }
 .zc-ctx:hover { color: var(--text); border-color: var(--border-strong); }
 .zc-ctx.on { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
 .zc-ctx-t { max-width: 64px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.zc-ask input { flex: 1; min-width: 0; height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--text); font-size: 12.5px; outline: none; transition: background .15s, border-color .15s; }
+.zc-ask input { flex: 1; min-width: 0; height: 1.9em; min-height: 28px; padding: 0 9px; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--text); font-size: 1em; outline: none; transition: background .15s, border-color .15s; }
 .zc-ask input::placeholder { color: var(--text-tertiary); opacity: .8; }
 .zc-ask:hover input { background: var(--bg); border-color: var(--border); }
 .zc-ask input:focus { background: var(--bg); border-color: var(--accent); }
@@ -5977,10 +6111,11 @@ body.readonly-mode .zc-ask, body.sync-protection-mode .zc-ask { display: none; }
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
-  <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.21.3/index.js"></script>
-
   <script>
-    window.__MD_VER__ = 'v1.2.0';
+    window.__MD_VER__ = 'v1.2.2';
+    // 小枝第一套：Cloudflare 代取（见 docs/emoji-proxy-worker.js）；未部署前会自动回退谷歌
+    // 已部署 Worker：https://emoji.daloud.workers.dev （也可再绑 emoji.zhinote.net）
+    window.__NOTO_EMO_HOST__ = 'https://emoji.daloud.workers.dev';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script>
@@ -74697,8 +74832,48 @@ const storage = (() => {
   // 结构/属性的唯一权威 = 结构总账(CRDT)。按篇网盘文件**只管正文**，不再仲裁这些字段（Stage B 收口）。
   //   归属(parentId/workspaceId)、排序(frac/order)、置顶/颜色/图标/展开，一律以总账为准。
   const _LEDGER_OWNED = ['title', 'parentId', 'workspaceId', 'pinnedAt', 'color', 'icon', 'expanded', 'frac', 'order'];
+  /** 下行笔记正文：若仍带编辑器专用 znEmoji 节点，摊成 Unicode 并洗一遍 ydoc。
+   *  旧版不认 znEmoji，留在云端会被剥掉再回传；新版落盘本应已摊平，这里作防污染兜底。 */
+  function _sanitizeIncomingNoteBody(noteData) {
+    if (!noteData || typeof noteData !== 'object') return noteData;
+    let doc = noteData.doc;
+    let ydoc = noteData.ydoc;
+    let changed = false;
+    try {
+      if (doc && window.znEmojiUtil && window.znEmojiUtil.flattenZnEmojiDocJSON) {
+        const before = JSON.stringify(doc);
+        if (before.indexOf('"znEmoji"') >= 0) {
+          const flat = window.znEmojiUtil.flattenZnEmojiDocJSON(doc);
+          if (flat) { doc = flat; changed = true; }
+        }
+      }
+    } catch (_) {}
+    try {
+      const Y = window.__ydoc;
+      if (ydoc && doc && Y && Y.ready && Y.ready()) {
+        let needWash = changed;
+        if (!needWash) {
+          try {
+            const asDoc = Y.toDoc(ydoc);
+            needWash = !!(asDoc && JSON.stringify(asDoc).indexOf('"znEmoji"') >= 0);
+          } catch (_) { needWash = false; }
+        }
+        if (needWash) {
+          ydoc = Y.update(ydoc, doc);
+          changed = true;
+        }
+      }
+    } catch (_) {}
+    if (!changed) return noteData;
+    const out = Object.assign({}, noteData);
+    if (doc) out.doc = doc;
+    if (ydoc) out.ydoc = ydoc;
+    return out;
+  }
+
   function _webdavApplyNote(id, noteData) {
     if (!_data.notes) _data.notes = {};
+    noteData = _sanitizeIncomingNoteBody(noteData);
     const prev = _data.notes[id];
     // 本地已存在的笔记：应用远端时**保留本地的结构/属性字段**，绝不被文件里(可能陈旧、且走另一套时间-LWW
     //   仲裁)的值覆盖 → 杜绝「按篇通道 vs 总账」两条路互踩（反复重排/绿点狂转/两端不一致的总病根）。
@@ -78235,6 +78410,7 @@ const tree = (() => {
     }
     _applySelClasses();
     _updateSelBar();
+    try { window.emojiUi?.paintAll?.(container); } catch (_) {}
   }
 
   function renderPinnedRow(note) {
@@ -79058,6 +79234,7 @@ const tree = (() => {
       }
       menu.appendChild(el);
     }
+    try { window.emojiUi?.paintAll?.(menu); } catch (_) {}
   }
 
   // 「其他」子菜单：把不常用项收纳进来，主菜单更清爽
@@ -79079,6 +79256,7 @@ const tree = (() => {
           item.addEventListener('click', () => { hideContextMenu(); it.onClick(); });
           el.appendChild(item);
         }
+        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
         return el;
       }
     };
@@ -79204,6 +79382,7 @@ const tree = (() => {
           });
           el.appendChild(item);
         }
+        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
         return el;
       }
     };
@@ -79288,6 +79467,7 @@ const tree = (() => {
           }
           el.appendChild(item);
         }
+        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
         return el;
       }
     };
@@ -79303,6 +79483,7 @@ const tree = (() => {
     sub.style.position = 'fixed';
     sub.style.visibility = 'hidden';
     document.body.appendChild(sub);
+    try { window.emojiUi?.paintAll?.(sub); } catch (_) {}
 
     const margin = 8;
     const vw = window.innerWidth, vh = window.innerHeight;
@@ -79838,6 +80019,7 @@ const tree = (() => {
       });
       menu.appendChild(item);
     }
+    try { window.emojiUi?.paintAll?.(menu); } catch (_) {}
     menu.classList.remove('hidden');
     const r = anchorEl.getBoundingClientRect();
     positionMenu(menu, r.left, r.top);
@@ -80512,6 +80694,7 @@ const search = (() => {
         iconEl.classList.add('has-color');
         iconEl.style.setProperty('--note-color-dot', note.color);
       }
+      try { window.emojiUi?.paintIcon?.(iconEl, iconEl.textContent); } catch (_) {}
       const titleText = document.createElement('span');
       titleText.className = 'search-result-title-text';
       titleText.innerHTML = highlightHtml(h.title || '无标题', q);
@@ -81523,6 +81706,7 @@ const palette = (() => {
       });
       list.appendChild(el);
     });
+    try { window.emojiUi?.paintAll?.(list); } catch (_) {}
   }
 
   /** 在某条笔记的多个命中之间切换：就地更新该行的摘要与 n/m 计数，不重渲整列、不打开笔记。 */
@@ -87069,7 +87253,8 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
   window.aiChat = {
     PROVIDERS: PROVIDERS, provOf: provOf,
     getConfig: getConfig, isConfigured: isConfigured, hasKey: hasKey,
-    getKey: getKey, getKeyFor: getKeyFor, setKey: setKey, trySyncKeyDown: trySyncKeyDown,
+    getKey: getKey, getKeyFor: getKeyFor, setKey: setKey,
+    syncKeyUp: syncKeyUp, trySyncKeyDown: trySyncKeyDown,
     setProvider: setProvider, setModel: setModel, setBase: setBase,
     setTemp: function (t) { ss(SK.temp, String(t)); },
     setSysPrompt: function (s) { ss(SK.sysPrompt, (s || '').trim()); },
@@ -87087,6 +87272,1561 @@ ${n.toString()}`)},ds=class{constructor(t){this.patterns=[],this.$state=t}if(t,n
     stripMoodMark: stripMoodMark, MOOD_WORDS: MOOD_WORDS,
   };
 })();
+
+</script>
+  <script>
+/* 第二套图标：Twemoji 统一画风（除小枝动图外）。
+ * - Quicker：权威在「我的文档\ZhiNote\twemoji」（清单+图+meta）；网页库只是加速
+ * - 网页版：权威在 IndexedDB；重启浏览器一般不用重下
+ * - 显示：本机优先 → CDN → 系统脸兜底（勿永久灰块）；blob 会话内不 revoke
+ * 暴露 window.emojiUi
+ */
+(function () {
+  'use strict';
+
+  var DATA_URL = 'https://cdn.jsdelivr.net/npm/emoji-picker-element-data@1/zh/emojibase/data.json';
+  // 15.1 缺 Unicode 16/17 新表情（眼袋/虎鲸/萨克旗等）；升到 17.x 后 CDN 均有图
+  var TWEMOJI_VER = '17.0.3';
+  var TWEMOJI_BASE = 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@' + TWEMOJI_VER + '/assets/svg/';
+  var LIST_KEY = 'list:emojibase-zh@3';
+  var PACK_META_KEY = 'pack:meta@' + TWEMOJI_VER;
+  var ATTR = '图标 Twemoji © Twitter · CC-BY 4.0';
+
+  var GROUP_LABELS = {
+    '0': '表情', '1': '人物', '3': '动物自然', '4': '饮食',
+    '5': '出行', '6': '活动', '7': '物品', '8': '符号', '9': '旗帜',
+  };
+  var HIDDEN_GROUPS = { '2': 1 };
+
+  var _data = null;
+  var _dataP = null;
+  var _byGroup = null;   // 分类 → 列表（切标签免全表过滤）
+  var _groupOrder = null;
+  var _pop = null;
+  var _cat = '';
+  var _q = '';
+  var _opts = null;
+  var _onDoc = null;
+  var _onKey = null;
+  var _scroll = { grid: 0, cats: 0, recent: 0 };
+  var _anchorEl = null; // 用于插入后跟随光标重定位
+  var _gridList = [];    // 当前过滤结果
+  var _gridShown = 0;    // 已渲染条数（分页）
+  var PAGE = 64;         // 约一屏（8×8），滚动再补
+
+  // 本机包进度（仅选择器脚注用）
+  var _pack = { total: 0, have: 0, running: false, done: false, downloading: false };
+  var _packMetaReady = false;
+  var _packMetaP = null;
+  var _failHard = Object.create(null); // hex → true 确认 CDN/本机都无
+  var _failSoft = Object.create(null); // hex → 连续失败次数
+  var _memUrl = Object.create(null);   // hex → blob: URL（离线显示）
+  var _ensuring = Object.create(null);
+
+  // ===== IndexedDB =====
+  var _db = null, _dbP = null;
+  function db() {
+    if (_db) return Promise.resolve(_db);
+    if (_dbP) return _dbP;
+    _dbP = new Promise(function (res) {
+      try {
+        var r = indexedDB.open('zhinote-emoji-ui', 1);
+        r.onupgradeneeded = function () {
+          try { r.result.createObjectStore('kv'); } catch (_) {}
+        };
+        r.onsuccess = function () { _db = r.result; res(_db); };
+        r.onerror = function () { res(null); };
+      } catch (_) { res(null); }
+    });
+    return _dbP;
+  }
+  function idbGet(key) {
+    return db().then(function (d) {
+      if (!d) return null;
+      return new Promise(function (res) {
+        try {
+          var t = d.transaction('kv', 'readonly').objectStore('kv').get(key);
+          t.onsuccess = function () { res(t.result != null ? t.result : null); };
+          t.onerror = function () { res(null); };
+        } catch (_) { res(null); }
+      });
+    });
+  }
+  function idbPut(key, val) {
+    return db().then(function (d) {
+      if (!d) return;
+      return new Promise(function (res) {
+        try {
+          var t = d.transaction('kv', 'readwrite').objectStore('kv').put(val, key);
+          t.onsuccess = function () { res(); };
+          t.onerror = function () { res(); };
+        } catch (_) { res(); }
+      });
+    });
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  function groupKey(g) {
+    if (g == null || g === '') return '其它';
+    var k = String(g);
+    return GROUP_LABELS[k] || k;
+  }
+
+  function normalizeRaw(raw) {
+    return (Array.isArray(raw) ? raw : []).map(function (em) {
+      var g = em.group;
+      if (g == null && em.category != null) g = em.category;
+      if (HIDDEN_GROUPS[String(g)]) return null;
+      return {
+        unicode: em.emoji || em.unicode,
+        annotation: em.annotation || em.name || '',
+        tags: em.tags || [],
+        shortcodes: em.shortcodes || [],
+        group: groupKey(g),
+      };
+    }).filter(function (em) { return em && em.unicode; });
+  }
+
+  function toDashHex(u, keepFe0f) {
+    var cps = [], i, cp;
+    for (i = 0; i < u.length; i++) {
+      cp = u.codePointAt(i);
+      if (cp > 0xffff) i++;
+      if (cp === 0xfe0f && !keepFe0f) continue;
+      cps.push(cp.toString(16));
+    }
+    return cps.join('-');
+  }
+  function twemojiUrl(u) { return TWEMOJI_BASE + toDashHex(u, false) + '.svg'; }
+  function twemojiUrlFe0f(u) { return TWEMOJI_BASE + toDashHex(u, true) + '.svg'; }
+  function svgKey(u) { return 'svg:' + toDashHex(u, false); }
+
+  /**
+   * CDN 文件名：有的必须带 fe0f（如 😶‍🌫️ / 🙂‍↕），有的带了反而 404（如 ❤）。
+   * ZWJ 组合优先试带 fe0f；其余先试不带。命中后写入 _cdnHit，避免 background 404 后永不换图。
+   */
+  var _cdnHit = Object.create(null); // hex → 已验证可下的 CDN url
+  function twemojiCandidates(u) {
+    var a = twemojiUrl(u);
+    var b = twemojiUrlFe0f(u);
+    if (a === b) return [a];
+    if (u.indexOf('\u200d') >= 0) return [b, a];
+    return [a, b];
+  }
+
+  function isOnline() {
+    try { return navigator.onLine !== false; } catch (_) { return true; }
+  }
+
+  function svgTextToUrl(text) {
+    try {
+      return URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+    } catch (_) { return ''; }
+  }
+
+  /** 同步：内存里的本机 blob */
+  function localUrlSync(u) {
+    var h = toDashHex(u, false);
+    return _memUrl[h] || '';
+  }
+
+  /**
+   * 主显示：本机包优先 → 已验证的 CDN →（可选）猜一个 CDN → 空。
+   * opts.body：正文装饰专用——绝不瞎猜 CDN（猜错 404 后 CSS 底图不重试，表现为一直空白）。
+   */
+  function displayUrl(u, opts) {
+    if (!u) return '';
+    var loc = localUrlSync(u);
+    if (loc) return loc;
+    var h = toDashHex(u, false);
+    if (_cdnHit[h]) return _cdnHit[h];
+    if (opts && opts.body) return '';
+    if (!isOnline()) return '';
+    return twemojiCandidates(u)[0] || '';
+  }
+
+  /** 本机图刚进内存时，通知正文重画装饰（打开笔记时 CDN 空白 → 落库后补脸） */
+  var _cachedNotifyTimer = null;
+  function notifyBodyRefresh() {
+    if (_cachedNotifyTimer) return;
+    _cachedNotifyTimer = setTimeout(function () {
+      _cachedNotifyTimer = null;
+      try {
+        if (typeof window.__znTwemojiOnCached === 'function') window.__znTwemojiOnCached();
+      } catch (_) {}
+    }, 50);
+  }
+
+  /** 会话内同一表情固定同一 blob，绝不 revoke（避免切标签把图「作废」裂开） */
+  function rememberSvg(u, text) {
+    if (!text || text.indexOf('<svg') < 0) return '';
+    var h = toDashHex(u, false);
+    if (_memUrl[h]) return _memUrl[h];
+    var url = svgTextToUrl(text);
+    if (url) {
+      _memUrl[h] = url;
+      notifyBodyRefresh();
+    }
+    return url;
+  }
+
+  /** 把一批表情暖进内存：先网页库，Quicker 再补磁盘 */
+  function warmMany(unicodes) {
+    var need = [];
+    var seen = Object.create(null);
+    (unicodes || []).forEach(function (u) {
+      if (!u || seen[u] || localUrlSync(u)) return;
+      seen[u] = 1;
+      need.push(u);
+    });
+    if (!need.length) return Promise.resolve();
+    return db().then(function (d) {
+      if (!d) return;
+      return new Promise(function (res) {
+        var finished = false;
+        function finish() { if (!finished) { finished = true; res(); } }
+        try {
+          var tx = d.transaction('kv', 'readonly');
+          var st = tx.objectStore('kv');
+          var left = need.length;
+          need.forEach(function (u) {
+            var req = st.get(svgKey(u));
+            req.onsuccess = function () {
+              var v = req.result;
+              if (typeof v === 'string' && v.indexOf('<svg') >= 0) rememberSvg(u, v);
+              if (--left <= 0) finish();
+            };
+            req.onerror = function () { if (--left <= 0) finish(); };
+          });
+        } catch (_) { finish(); }
+      });
+    }).then(function () {
+      if (!isQuickerHost()) return;
+      var still = need.filter(function (u) { return !localUrlSync(u); });
+      if (!still.length) return;
+      var i = 0;
+      var conc = 4;
+      var active = 0;
+      return new Promise(function (res) {
+        function tick() {
+          while (active < conc && i < still.length) {
+            (function (u) {
+              active++;
+              var h = toDashHex(u, false);
+              diskReadSvg(h).then(function (t) {
+                if (t) {
+                  rememberSvg(u, t);
+                  idbPut(svgKey(u), t);
+                }
+                active--;
+                if (i >= still.length && active === 0) res();
+                else tick();
+              });
+            })(still[i++]);
+          }
+          if (i >= still.length && active === 0) res();
+        }
+        tick();
+      });
+    });
+  }
+
+  /** 拉一张进本机库。返回 'mem'|'idb'|'net'|'' */
+  function ensureCached(u) {
+    if (!u || !looksLikeEmoji(u)) return Promise.resolve('');
+    var h = toDashHex(u, false);
+    if (_failHard[h]) return Promise.resolve('');
+    if (_memUrl[h]) return Promise.resolve('mem');
+    if (_ensuring[h]) return _ensuring[h];
+    _ensuring[h] = idbGet(svgKey(u)).then(function (cached) {
+      if (typeof cached === 'string' && cached.indexOf('<svg') >= 0) {
+        rememberSvg(u, cached);
+        delete _failSoft[h];
+        // Quicker：网页库命中时顺带落盘，防重启清库后再全量下
+        diskWriteSvg(h, cached);
+        return 'idb';
+      }
+      return diskReadSvg(h).then(function (diskText) {
+        if (diskText) {
+          rememberSvg(u, diskText);
+          idbPut(svgKey(u), diskText);
+          delete _failSoft[h];
+          return 'disk';
+        }
+        if (!isOnline()) return '';
+        var urls = twemojiCandidates(u);
+        var i = 0;
+        function next() {
+          if (i >= urls.length) return '';
+          var url = urls[i++];
+          return fetch(url).then(function (r) {
+            if (!r.ok) return next();
+            return r.text().then(function (text) {
+              if (!text || text.indexOf('<svg') < 0) return next();
+              _cdnHit[h] = url;
+              rememberSvg(u, text);
+              diskWriteSvg(h, text);
+              return idbPut(svgKey(u), text).then(function () {
+                delete _failSoft[h];
+                return 'net';
+              });
+            });
+          }).catch(function () { return next(); });
+        }
+        return next();
+      });
+    }).then(function (src) {
+      delete _ensuring[h];
+      if (!src) {
+        _failSoft[h] = (_failSoft[h] || 0) + 1;
+        if (_failSoft[h] >= 3) _failHard[h] = true;
+      }
+      return src || '';
+    }, function () {
+      delete _ensuring[h];
+      return '';
+    });
+    return _ensuring[h];
+  }
+
+  function clearSoftFails() {
+    _failSoft = Object.create(null);
+    _cdnHit = Object.create(null);
+  }
+  function retryHardAgain() {
+    _failHard = Object.create(null);
+    _failSoft = Object.create(null);
+  }
+
+  function packHintText() {
+    if (_pack.done || (_pack.total > 0 && _pack.have >= _pack.total)) {
+      return ATTR;
+    }
+    // 仅真正从网上拉新图时才提示百分比（本机已有时静默扫过，避免「又备份一遍」）
+    if (_pack.running && _pack.downloading && _pack.total > 0) {
+      var pct = Math.min(99, Math.floor((_pack.have / _pack.total) * 100));
+      var verb = isQuickerHost() ? '下载到本机 ' : '本机缓存 ';
+      return verb + pct + '% · 现在可照常选用 · ' + ATTR;
+    }
+    if (!isOnline() && !_pack.done) {
+      return '离线模式 · 未下载的格需联网补全 · ' + ATTR;
+    }
+    return ATTR;
+  }
+
+  function refreshPackHint() {
+    if (!_pop) return;
+    var foot = _pop.querySelector('.eui-foot');
+    if (foot) foot.textContent = packHintText();
+  }
+
+  function applyPackMeta(m) {
+    if (!m || typeof m !== 'object') return;
+    // 旧版 Twemoji 的「已下完」不能沿用——缺新表情图
+    if (m.ver && m.ver !== TWEMOJI_VER) {
+      _pack.done = false;
+      _pack.have = 0;
+      _pack.total = m.total | 0;
+      return;
+    }
+    if (!m.ver) {
+      _pack.done = false;
+      _pack.have = 0;
+      _pack.total = m.total | 0;
+      return;
+    }
+    _pack.done = !!m.done;
+    _pack.have = m.have | 0;
+    _pack.total = m.total | 0;
+  }
+
+  // ===== Quicker 磁盘表情包（重启清网页库也不丢）=====
+  var _packDir = '';
+  var _pendingPackMeta = null;
+  var _diskOk = Object.create(null); // 本会话已确认落盘的 hex，避免重复写
+  function isQuickerHost() {
+    return typeof window.$quickerSp === 'function';
+  }
+  function fileOp(mode, extra) {
+    if (!isQuickerHost()) return Promise.resolve(null);
+    return window.$quickerSp('FileOp', Object.assign({ mode: mode }, extra || {})).then(function (r) {
+      return r && r.result !== undefined ? r.result : r;
+    }).catch(function () { return null; });
+  }
+  function resolvePackDir() {
+    if (_packDir) return Promise.resolve(_packDir);
+    if (!isQuickerHost()) return Promise.resolve('');
+    return fileOp('readFile', { path: '::documents::', isBinary: 'false' }).then(function (docs) {
+      if (typeof docs !== 'string' || !docs) return '';
+      _packDir = docs.replace(/[\\/]+$/, '') + '\\ZhiNote\\twemoji';
+      return _packDir;
+    });
+  }
+  function diskWriteSvg(hex, text) {
+    if (!hex || !text || _diskOk[hex]) return Promise.resolve();
+    return resolvePackDir().then(function (dir) {
+      if (!dir) return;
+      return fileOp('ensureDir', { path: dir }).then(function () {
+        return fileOp('writeFile', { path: dir + '\\' + hex + '.svg', content: text, isBinary: 'false' });
+      }).then(function () { _diskOk[hex] = 1; });
+    }).catch(function () {});
+  }
+  function diskReadSvg(hex) {
+    if (!hex) return Promise.resolve(null);
+    if (_diskOk[hex] === 0) return Promise.resolve(null);
+    return resolvePackDir().then(function (dir) {
+      if (!dir) return null;
+      return fileOp('readFile', { path: dir + '\\' + hex + '.svg', isBinary: 'false' }).then(function (t) {
+        if (typeof t === 'string' && t.indexOf('<svg') >= 0) {
+          _diskOk[hex] = 1;
+          return t;
+        }
+        return null;
+      });
+    }).catch(function () { return null; });
+  }
+  function diskWriteMeta(payload) {
+    return resolvePackDir().then(function (dir) {
+      if (!dir) return;
+      return fileOp('ensureDir', { path: dir }).then(function () {
+        return fileOp('writeFile', {
+          path: dir + '\\pack-meta.json',
+          content: JSON.stringify(payload),
+          isBinary: 'false',
+        });
+      });
+    }).catch(function () {});
+  }
+  function diskReadMeta() {
+    return resolvePackDir().then(function (dir) {
+      if (!dir) return null;
+      return fileOp('readFile', { path: dir + '\\pack-meta.json', isBinary: 'false' }).then(function (t) {
+        if (typeof t !== 'string' || !t) return null;
+        try { return JSON.parse(t); } catch (_) { return null; }
+      });
+    }).catch(function () { return null; });
+  }
+  function diskWriteList(jsonText) {
+    if (!jsonText) return Promise.resolve();
+    return resolvePackDir().then(function (dir) {
+      if (!dir) return;
+      return fileOp('ensureDir', { path: dir }).then(function () {
+        return fileOp('writeFile', {
+          path: dir + '\\pack-list.json',
+          content: jsonText,
+          isBinary: 'false',
+        });
+      });
+    }).catch(function () {});
+  }
+  function diskReadList() {
+    return resolvePackDir().then(function (dir) {
+      if (!dir) return null;
+      return fileOp('readFile', { path: dir + '\\pack-list.json', isBinary: 'false' }).then(function (t) {
+        return (typeof t === 'string' && t.length > 20) ? t : null;
+      });
+    }).catch(function () { return null; });
+  }
+  function parseListText(text) {
+    if (typeof text !== 'string' || !text) return null;
+    try {
+      var parsed = JSON.parse(text);
+      return (Array.isArray(parsed) && parsed.length) ? parsed : null;
+    } catch (_) { return null; }
+  }
+  function persistList(list) {
+    if (!list || !list.length) return;
+    var text = JSON.stringify(list);
+    try { idbPut(LIST_KEY, text); } catch (_) {}
+    diskWriteList(text);
+  }
+
+  function svgExistsAnywhere(u) {
+    var h = toDashHex(u, false);
+    if (_memUrl[h]) return Promise.resolve(true);
+    return idbGet(svgKey(u)).then(function (v) {
+      if (typeof v === 'string' && v.indexOf('<svg') >= 0) return true;
+      return diskReadSvg(h).then(function (t) { return !!t; });
+    });
+  }
+
+  /** 多点抽查：至少命中 1 个才算包还在（避免首条失败就误判重下） */
+  function verifyPackPresent(list) {
+    if (!list || !list.length) return Promise.resolve(false);
+    var idxs = [0, Math.floor(list.length * 0.1), Math.floor(list.length * 0.5), Math.floor(list.length * 0.9), list.length - 1];
+    var samples = [];
+    var seen = Object.create(null);
+    idxs.forEach(function (i) {
+      var u = list[i] && list[i].unicode;
+      if (!u || seen[u]) return;
+      seen[u] = 1;
+      samples.push(u);
+    });
+    var i = 0;
+    function next() {
+      if (i >= samples.length) return Promise.resolve(false);
+      var u = samples[i++];
+      return svgExistsAnywhere(u).then(function (ok) { return ok ? true : next(); });
+    }
+    return next();
+  }
+
+  function pickBestMeta(candidates) {
+    var best = null;
+    (candidates || []).forEach(function (m) {
+      if (!m || typeof m !== 'object') return;
+      if (!best) { best = m; return; }
+      if (!!m.done && !best.done) { best = m; return; }
+      if (!!m.done === !!best.done && (m.t | 0) > (best.t | 0)) best = m;
+    });
+    return best;
+  }
+
+  function loadPackMeta() {
+    if (_packMetaReady) return Promise.resolve();
+    if (_packMetaP) return _packMetaP;
+    _packMetaP = Promise.all([
+      idbGet(PACK_META_KEY).catch(function () { return null; }),
+      Promise.resolve().then(function () {
+        try {
+          return window.storage && window.storage.getSetting
+            ? window.storage.getSetting('_emojiPackMeta')
+            : null;
+        } catch (_) { return null; }
+      }),
+      diskReadMeta(),
+    ]).then(function (arr) {
+      applyPackMeta(pickBestMeta(arr));
+    }).then(function () {
+      if (!_pack.done) return;
+      return loadData().then(function (list) {
+        return verifyPackPresent(list).then(function (ok) {
+          if (ok) return;
+          _pack.done = false;
+          _pack.have = 0;
+        });
+      });
+    }).catch(function () {}).then(function () {
+      _packMetaReady = true;
+      flushPendingPackMeta();
+    });
+    return _packMetaP;
+  }
+
+  function flushPendingPackMeta() {
+    if (!_pendingPackMeta) return;
+    try {
+      if (!window.storage || !window.storage.setSetting) return;
+      // storage 未 init 时 setSetting 会静默丢掉；用 getSetting 探一下
+      if (window.storage.getSetting('theme') === undefined &&
+          window.storage.getSetting('lastOpenedId') === undefined) {
+        return;
+      }
+      window.storage.setSetting('_emojiPackMeta', _pendingPackMeta);
+      _pendingPackMeta = null;
+    } catch (_) {}
+  }
+
+  function savePackMeta() {
+    var payload = {
+      ver: TWEMOJI_VER,
+      done: !!_pack.done,
+      have: _pack.have | 0,
+      total: _pack.total | 0,
+      t: Date.now(),
+    };
+    idbPut(PACK_META_KEY, payload);
+    diskWriteMeta(payload);
+    _pendingPackMeta = payload;
+    flushPendingPackMeta();
+  }
+
+  function syncBusy() {
+    try {
+      return !!(window.webdavSync && typeof window.webdavSync.isSyncing === 'function' && window.webdavSync.isSyncing());
+    } catch (_) { return false; }
+  }
+
+  /** 后台限流下载全包到本机；须等元数据就绪，已完成则静默跳过 */
+  function startPackDownload() {
+    if (_pack.running) return;
+    if (!_packMetaReady) {
+      loadPackMeta().then(function () { startPackDownload(); });
+      return;
+    }
+    if (_pack.done) return;
+    if (!isOnline()) return;
+    _pack.running = true;
+    loadData().then(function (list) {
+      var seen = Object.create(null);
+      var queue = [];
+      (list || []).forEach(function (em) {
+        var u = em.unicode;
+        if (!u || seen[u]) return;
+        seen[u] = 1;
+        queue.push(u);
+      });
+      recentList().forEach(function (u) {
+        if (!u || seen[u]) return;
+        seen[u] = 1;
+        queue.push(u);
+      });
+      _pack.total = queue.length;
+      if (_pack.total > 0 && _pack.have >= _pack.total) {
+        _pack.done = true;
+        _pack.running = false;
+        savePackMeta();
+        refreshPackHint();
+        return;
+      }
+      var idx = 0;
+      var conc = 2; // 降低并发，少抢同步网络
+      var active = 0;
+      var finished = 0;
+      _pack.downloading = false;
+
+      function tick() {
+        if (!isOnline()) {
+          _pack.running = false;
+          _pack.have = Math.max(_pack.have, finished);
+          savePackMeta();
+          refreshPackHint();
+          return;
+        }
+        // 同步进行中则让路，稍后再继续（减轻 Failed to fetch）
+        if (syncBusy()) {
+          setTimeout(function () { if (_pack.running) tick(); }, 1200);
+          return;
+        }
+        while (active < conc && idx < queue.length) {
+          (function (u) {
+            active++;
+            ensureCached(u).then(function (src) {
+              active--;
+              finished++;
+              if (src === 'net') _pack.downloading = true;
+              _pack.have = finished;
+              if (_pack.downloading && finished % 16 === 0) {
+                savePackMeta();
+                refreshPackHint();
+              }
+              if (idx >= queue.length && active === 0) {
+                _pack.running = false;
+                _pack.downloading = false;
+                _pack.done = true;
+                _pack.have = _pack.total;
+                savePackMeta();
+                refreshPackHint();
+                return;
+              }
+              tick();
+            });
+          })(queue[idx++]);
+        }
+      }
+      refreshPackHint();
+      tick();
+    }).catch(function () {
+      _pack.running = false;
+      _pack.downloading = false;
+    });
+  }
+
+  function rebuildGroups() {
+    _byGroup = Object.create(null);
+    _groupOrder = [];
+    if (!_data || !_data.length) return;
+    var seen = Object.create(null);
+    for (var i = 0; i < _data.length; i++) {
+      var em = _data[i];
+      var g = em.group || '其它';
+      if (!_byGroup[g]) {
+        _byGroup[g] = [];
+        if (!seen[g]) { seen[g] = 1; _groupOrder.push(g); }
+      }
+      _byGroup[g].push(em);
+    }
+    var order = Object.keys(GROUP_LABELS).map(function (k) { return GROUP_LABELS[k]; }).concat(['其它']);
+    _groupOrder.sort(function (a, b) {
+      var ia = order.indexOf(a), ib = order.indexOf(b);
+      if (ia < 0) ia = 999;
+      if (ib < 0) ib = 999;
+      return ia - ib || (a < b ? -1 : a > b ? 1 : 0);
+    });
+  }
+
+  function setData(list) {
+    _data = list;
+    rebuildGroups();
+    return _data;
+  }
+
+  function loadData() {
+    if (_data) {
+      if (!_byGroup) rebuildGroups();
+      return Promise.resolve(_data);
+    }
+    if (_dataP) return _dataP;
+    // Quicker：本机文件夹优先 → 网页库 → 联网下载并落盘；网页版：网页库 → 联网
+    _dataP = Promise.resolve().then(function () {
+      return isQuickerHost() ? diskReadList() : null;
+    }).then(function (diskText) {
+      var list = parseListText(diskText);
+      if (list) return setData(list);
+      return idbGet(LIST_KEY).then(function (cached) {
+        list = parseListText(cached);
+        if (list) {
+          if (isQuickerHost()) diskWriteList(cached);
+          return setData(list);
+        }
+        return idbGet('list:emojibase-zh@2').then(function (old) {
+          list = parseListText(old);
+          if (list) {
+            persistList(list);
+            return setData(list);
+          }
+          if (!isOnline()) throw new Error('emoji-data-offline');
+          return fetch(DATA_URL)
+            .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+            .then(function (raw) {
+              list = normalizeRaw(raw);
+              persistList(list);
+              return setData(list);
+            });
+        });
+      });
+    }).catch(function () {
+      _dataP = null;
+      throw new Error('emoji-data');
+    });
+    return _dataP;
+  }
+
+  function prefetch() {
+    loadPackMeta().then(function () {
+      return loadData();
+    }).then(function () {
+      startPackDownload();
+    }).catch(function () {});
+  }
+
+  function recentList() {
+    try {
+      var list = window.storage && window.storage.getSetting ? window.storage.getSetting('recentEmojis') : null;
+      return Array.isArray(list) ? list.filter(Boolean) : [];
+    } catch (_) { return []; }
+  }
+  function recordRecent(u) {
+    try {
+      var list = recentList().filter(function (x) { return x !== u; });
+      list.unshift(u);
+      if (list.length > 64) list = list.slice(0, 64);
+      if (window.storage && window.storage.setSetting) window.storage.setSetting('recentEmojis', list);
+      ensureCached(u);
+    } catch (_) {}
+  }
+
+  function vh() {
+    return (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+  }
+
+  function saveScroll() {
+    if (!_pop) return;
+    var g = _pop.querySelector('.eui-grid');
+    var c = _pop.querySelector('.eui-cats');
+    var r = _pop.querySelector('.eui-recent-grid');
+    if (g) _scroll.grid = g.scrollTop;
+    if (c) _scroll.cats = c.scrollLeft;
+    if (r) _scroll.recent = r.scrollLeft;
+  }
+  function restoreScroll() {
+    if (!_pop) return;
+    var g = _pop.querySelector('.eui-grid');
+    var c = _pop.querySelector('.eui-cats');
+    var r = _pop.querySelector('.eui-recent-grid');
+    if (g) g.scrollTop = _scroll.grid;
+    if (c) c.scrollLeft = _scroll.cats;
+    if (r) r.scrollLeft = _scroll.recent;
+  }
+
+  function close() {
+    if (!_pop) return;
+    saveScroll();
+    _pop.classList.add('hidden');
+    _pop.innerHTML = '';
+    _pop.style.maxHeight = '';
+    if (_onDoc) document.removeEventListener('mousedown', _onDoc, true);
+    if (_onKey) document.removeEventListener('keydown', _onKey, true);
+    _onDoc = _onKey = null;
+    var o = _opts;
+    _opts = null;
+    _anchorEl = null;
+    if (o && o.onClose) try { o.onClose(); } catch (_) {}
+  }
+
+  function groupsOf() {
+    if (_groupOrder && _groupOrder.length) return _groupOrder.slice();
+    return [];
+  }
+
+  function filtered() {
+    var qq = (_q || '').trim().toLowerCase();
+    // 无搜索：按当前分类翻（切标签 O(1)）
+    if (!qq) {
+      if (_cat && _byGroup && _byGroup[_cat]) return _byGroup[_cat];
+      return _data || [];
+    }
+    // 有搜索：搜全部（emoji-mart / emoji-picker-element 同款），不限当前标签
+    var base = _data || [];
+    return base.filter(function (em) {
+      var hay = ((em.annotation || '') + ' ' + (em.tags || []).join(' ') + ' ' + (em.shortcodes || []).join(' ')).toLowerCase();
+      return hay.indexOf(qq) >= 0 || (em.unicode || '').indexOf(qq) >= 0;
+    });
+  }
+
+  /** 格子：Twemoji 图；失败则格子里显示系统脸（.eui-ph 放字符）。可视区 eager */
+  function cellHtml(u, title) {
+    var src = displayUrl(u);
+    var img = src
+      ? ('<img width="22" height="22" loading="eager" decoding="async" alt="" data-u="' + esc(u) + '"'
+        + ' src="' + esc(src) + '" data-fb="' + esc(twemojiUrlFe0f(u)) + '">')
+      : '';
+    return '<button type="button" class="eui-cell' + (src ? '' : ' eui-miss') + '" data-e="' + esc(u) + '" title="' + esc(title || u) + '">'
+      + img
+      + '<span class="eui-ph" aria-hidden="true">' + esc(u) + '</span>'
+      + '</button>';
+  }
+
+  function onImgError(img) {
+    if (!img || !img.getAttribute) return;
+    var u = img.getAttribute('data-u') || '';
+    var step = img.getAttribute('data-err') || '0';
+    var cell = img.parentElement;
+
+    if (step === '0') {
+      // 先试带/不带 fe0f 的另一候选（candidates 顺序可能已试过第一个）
+      var alts = twemojiCandidates(u);
+      var cur = img.getAttribute('src') || '';
+      var next = '';
+      for (var i = 0; i < alts.length; i++) {
+        if (alts[i] && alts[i] !== cur) { next = alts[i]; break; }
+      }
+      if (next) {
+        img.setAttribute('data-err', '1');
+        img.src = next;
+        return;
+      }
+      img.setAttribute('data-err', '1');
+    }
+
+    if (step === '1' || img.getAttribute('data-err') === '1') {
+      img.setAttribute('data-err', '2');
+      ensureCached(u).then(function (ok) {
+        var loc = localUrlSync(u);
+        if (ok && loc && img.isConnected) {
+          img.classList.remove('eui-gone');
+          if (cell) cell.classList.remove('eui-miss');
+          img.src = loc;
+          return;
+        }
+        if (cell) cell.classList.add('eui-miss');
+        try { img.classList.add('eui-gone'); } catch (_) {}
+      });
+      return;
+    }
+
+    if (cell) cell.classList.add('eui-miss');
+    try { img.classList.add('eui-gone'); } catch (_) {}
+  }
+
+  function bindHScroll(el) {
+    if (!el) return;
+    el.addEventListener('wheel', function (e) {
+      if (el.scrollWidth <= el.clientWidth + 1) return;
+      e.preventDefault();
+      el.scrollLeft += (e.deltaY || e.deltaX);
+    }, { passive: false });
+  }
+
+  function syncHFade(wrap, scroller) {
+    if (!wrap || !scroller) return;
+    var max = scroller.scrollWidth - scroller.clientWidth;
+    var can = max > 4;
+    wrap.classList.toggle('fade-l', can && scroller.scrollLeft > 2);
+    wrap.classList.toggle('fade-r', can && scroller.scrollLeft < max - 2);
+    wrap.classList.toggle('can-scroll', can);
+  }
+  function bindHFade(wrap, scroller) {
+    if (!wrap || !scroller) return;
+    bindHScroll(scroller);
+    var tick = function () { syncHFade(wrap, scroller); };
+    scroller.addEventListener('scroll', tick, { passive: true });
+    requestAnimationFrame(tick);
+  }
+
+  function caretRect() {
+    try {
+      var sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        var range = sel.getRangeAt(0).cloneRange();
+        if (!range.collapsed) range.collapse(false);
+        var rects = range.getClientRects();
+        if (rects && rects.length) return rects[rects.length - 1];
+        var br = range.getBoundingClientRect();
+        if (br && (br.top || br.left || br.width || br.height)) return br;
+      }
+    } catch (_) {}
+    try {
+      var ed = window.editor;
+      if (ed && ed.view) {
+        var c = ed.view.coordsAtPos(ed.state.selection.from);
+        if (c) {
+          return {
+            left: c.left, right: c.right, top: c.top, bottom: c.bottom,
+            width: Math.max(0, c.right - c.left), height: Math.max(1, c.bottom - c.top),
+          };
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function position(anchorEl) {
+    if (anchorEl) _anchorEl = anchorEl;
+    var pop = _pop;
+    if (!pop) return;
+    var pad = 8;
+    var gap = 6;
+    var r = null;
+    // 插入模式优先跟光标，避免挡住刚输入的表情
+    if (_opts && _opts.mode === 'insert') r = caretRect();
+    if (!r && _anchorEl && _anchorEl.getBoundingClientRect) r = _anchorEl.getBoundingClientRect();
+    if (!r || (!r.left && !r.top && !r.width && !r.height && !r.bottom)) {
+      var edEl = document.querySelector('#editor .ProseMirror') || document.querySelector('#editor') || document.body;
+      var er = edEl.getBoundingClientRect();
+      r = { left: er.left + 80, top: er.top + 80, bottom: er.top + 100, right: er.left + 80, width: 0, height: 20 };
+    }
+    var spaceBelow = vh() - r.bottom - pad - gap;
+    var spaceAbove = r.top - pad - gap;
+    var placeAbove = spaceAbove > spaceBelow;
+    var maxH = Math.max(160, Math.min(420, placeAbove ? spaceAbove : spaceBelow));
+    pop.style.maxHeight = Math.round(maxH) + 'px';
+    var pw = pop.offsetWidth || 320;
+    var ph = Math.min(pop.offsetHeight || maxH, maxH);
+    var left = r.left;
+    if (left + pw > window.innerWidth - pad) left = window.innerWidth - pw - pad;
+    if (left < pad) left = pad;
+    var top;
+    if (placeAbove) {
+      top = r.top - gap - ph;
+      if (top < pad) top = pad;
+    } else {
+      top = r.bottom + gap;
+      if (top + ph > vh() - pad) top = Math.max(pad, vh() - ph - pad);
+    }
+    pop.style.left = Math.round(left) + 'px';
+    pop.style.top = Math.round(top) + 'px';
+  }
+
+  var _renderGen = 0;
+
+  function moreHtml() {
+    if (_gridShown >= _gridList.length) return '';
+    return '<div class="eui-more">向下滚动加载更多 · 已显示 ' + _gridShown + ' / ' + _gridList.length + '</div>';
+  }
+
+  function gridHtml(slice) {
+    return slice.map(function (em) {
+      return cellHtml(em.unicode, em.annotation || em.unicode);
+    }).join('') + moreHtml();
+  }
+
+  /** 只暖当前屏 + 最近，避免一次暖几百个拖慢 */
+  function warmVisible(slice, recent) {
+    var list = (slice || []).map(function (em) { return em.unicode; }).concat(recent || []);
+    return warmMany(list).then(function () {
+      list.forEach(function (u) { ensureCached(u); });
+    });
+  }
+
+  function cellsHtml(slice) {
+    return (slice || []).map(function (em) {
+      return cellHtml(em.unicode, em.annotation || em.unicode);
+    }).join('');
+  }
+
+  function bindGridScroll() {
+    var grid = _pop && _pop.querySelector('.eui-grid');
+    if (!grid || grid._euiScrollBound) return;
+    grid._euiScrollBound = 1;
+    grid.addEventListener('scroll', function () {
+      if (!_pop || !_opts) return;
+      if (_gridShown >= _gridList.length) return;
+      if (grid.scrollTop + grid.clientHeight < grid.scrollHeight - 48) return;
+      var prev = _gridShown;
+      _gridShown = Math.min(_gridList.length, _gridShown + PAGE);
+      var add = _gridList.slice(prev, _gridShown);
+      if (!add.length) return;
+      var tip = grid.querySelector('.eui-more');
+      if (tip) tip.remove();
+      var gen = _renderGen;
+      grid.insertAdjacentHTML('beforeend', cellsHtml(add) + moreHtml());
+      warmVisible(add, []).then(function () {
+        if (gen !== _renderGen || !_pop) return;
+        patchImgsToLocal(grid);
+      });
+    }, { passive: true });
+  }
+
+  function syncCatButtons() {
+    if (!_pop) return;
+    _pop.querySelectorAll('.eui-cat').forEach(function (b) {
+      b.classList.toggle('on', (b.getAttribute('data-cat') || '') === _cat);
+    });
+  }
+
+  function fillRecentDom() {
+    var host = _pop && _pop.querySelector('.eui-recent-slot');
+    if (!host) return;
+    var recent = recentList();
+    if (!recent.length) {
+      host.innerHTML = '';
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    host.innerHTML = '<div class="eui-recent"><div class="eui-recent-label">最近</div>'
+      + '<div class="eui-hfade"><div class="eui-recent-grid">'
+      + recent.map(function (u) { return cellHtml(u, u); }).join('')
+      + '</div></div></div>';
+    var recentGrid = host.querySelector('.eui-recent-grid');
+    if (recentGrid) bindHFade(recentGrid.parentElement, recentGrid);
+  }
+
+  function bindShellHandlers() {
+    if (!_pop || _pop._euiShellBound) return;
+    _pop._euiShellBound = 1;
+    _pop.addEventListener('input', function (e) {
+      if (!e.target || !e.target.classList.contains('eui-q')) return;
+      var qEl = e.target;
+      _q = qEl.value;
+      clearTimeout(qEl._t);
+      qEl._t = setTimeout(function () {
+        renderBody({ onlyGrid: true, resetGridScroll: true });
+      }, 100);
+    });
+    _pop.addEventListener('click', function (e) {
+      var cat = e.target.closest('.eui-cat');
+      if (cat && _pop.contains(cat)) {
+        var next = cat.getAttribute('data-cat') || '';
+        if (next === _cat && !_q) return;
+        _cat = next;
+        _q = '';
+        var qEl = _pop.querySelector('.eui-q');
+        if (qEl) qEl.value = '';
+        renderBody({ onlyGrid: true, resetGridScroll: true });
+        return;
+      }
+      var actBtn = e.target.closest('[data-act]');
+      if (actBtn && _pop.contains(actBtn)) {
+        var act = actBtn.getAttribute('data-act');
+        var custom = _pop.querySelector('.eui-custom');
+        if (act === 'custom' && custom) {
+          var v = custom.value.trim();
+          if (v) pick(v);
+        } else if (act === 'reset') {
+          pick(_opts.defaultIcon || '');
+        }
+      }
+    });
+    _pop.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      if (!e.target || !e.target.classList.contains('eui-custom')) return;
+      e.preventDefault();
+      var v = e.target.value.trim();
+      if (v) pick(v);
+    });
+  }
+
+  /**
+   * @param {{ focusSearch?: boolean, resetGridScroll?: boolean, onlyGrid?: boolean, refreshRecent?: boolean }} flags
+   */
+  function renderBody(flags) {
+    if (!_pop || !_data || !_opts) return;
+    flags = flags || {};
+    saveScroll();
+    if (flags.resetGridScroll) _scroll.grid = 0;
+    clearSoftFails();
+
+    var groups = groupsOf();
+    if (!_cat && groups.length) _cat = groups[0];
+    _gridList = filtered();
+    // 切分类/搜索/首开：只画一屏；滚动再补
+    if (!flags.onlyGrid || flags.resetGridScroll || !_gridShown) {
+      _gridShown = Math.min(PAGE, _gridList.length);
+    } else {
+      _gridShown = Math.min(Math.max(_gridShown, PAGE), _gridList.length);
+    }
+    var slice = _gridList.slice(0, _gridShown);
+    var recent = recentList();
+    var gen = ++_renderGen;
+
+    function paint() {
+      if (gen !== _renderGen || !_pop || !_opts) return;
+
+      if (flags.onlyGrid && _pop.querySelector('.eui-grid')) {
+        syncCatButtons();
+        var grid = _pop.querySelector('.eui-grid');
+        grid.innerHTML = gridHtml(slice);
+        if (flags.refreshRecent) fillRecentDom();
+        restoreScroll();
+        refreshPackHint();
+        bindGridScroll();
+        startPackDownload();
+        return;
+      }
+
+      var pickBar = '';
+      if (_opts.mode === 'pick') {
+        pickBar = '<div class="eui-pickbar">'
+          + '<input type="text" class="eui-custom" maxlength="8" value="' + esc(_opts.currentIcon || '') + '" placeholder="自定义字符">'
+          + '<button type="button" class="eui-btn" data-act="custom" title="确认自定义">✓</button>'
+          + '<button type="button" class="eui-btn" data-act="reset" title="恢复默认">↺</button>'
+          + '</div>';
+      }
+      var catsHtml = '<div class="eui-hfade eui-cats-wrap"><div class="eui-cats">' + groups.map(function (g) {
+        return '<button type="button" class="eui-cat' + (g === _cat ? ' on' : '') + '" data-cat="' + esc(g) + '">' + esc(g) + '</button>';
+      }).join('') + '</div></div>';
+
+      _pop.innerHTML =
+        '<div class="eui-head">'
+        + (_opts.title ? '<div class="eui-title">' + esc(_opts.title) + '</div>' : '')
+        + '<input type="search" class="eui-q" placeholder="搜索全部：笑 / 猫 / heart…" value="' + esc(_q) + '" autocomplete="off">'
+        + '</div>'
+        + pickBar
+        + '<div class="eui-recent-slot"></div>'
+        + catsHtml
+        + '<div class="eui-grid">' + gridHtml(slice) + '</div>'
+        + '<div class="eui-foot" title="署名与许可">' + esc(packHintText()) + '</div>';
+
+      _pop._euiShellBound = 0;
+      bindShellHandlers();
+      fillRecentDom();
+      restoreScroll();
+      bindGridScroll();
+      var cats = _pop.querySelector('.eui-cats');
+      if (cats) bindHFade(cats.parentElement, cats);
+
+      if (flags.focusSearch) {
+        var qEl = _pop.querySelector('.eui-q');
+        if (qEl) setTimeout(function () { try { qEl.focus(); } catch (_) {} }, 30);
+      }
+
+      startPackDownload();
+    }
+
+    // 立刻上屏；只暖当前屏+最近
+    paint();
+    warmVisible(slice, flags.onlyGrid ? [] : recent).then(function () {
+      if (gen !== _renderGen || !_pop) return;
+      patchImgsToLocal(_pop.querySelector('.eui-grid'));
+      if (!flags.onlyGrid) patchImgsToLocal(_pop.querySelector('.eui-recent-slot'));
+    });
+  }
+
+  /** 把仍指向 CDN 的 img 换成会话内稳定 blob（不整表重建，避免闪） */
+  function patchImgsToLocal(root) {
+    if (!root) return;
+    root.querySelectorAll('img[data-u]').forEach(function (img) {
+      var u = img.getAttribute('data-u');
+      var loc = localUrlSync(u);
+      if (!loc) return;
+      var cur = img.getAttribute('src') || '';
+      if (cur.indexOf('blob:') === 0) return;
+      img.src = loc;
+    });
+  }
+
+  function pick(u) {
+    if (!_opts) return;
+    var mode = _opts.mode;
+    var onPick = _opts.onPick;
+    ensureCached(u);
+    if (mode === 'insert') {
+      recordRecent(u);
+      if (onPick) onPick(u);
+      // 插入后光标下移，窗口跟随，避免挡住刚插入的内容
+      requestAnimationFrame(function () {
+        if (_pop && _opts && _opts.mode === 'insert') position(_anchorEl);
+      });
+      // 只刷新最近栏，不动网格
+      warmMany([u]).then(function () { fillRecentDom(); });
+    } else {
+      recordRecent(u);
+      close();
+      if (onPick) onPick(u);
+    }
+  }
+
+  function open(anchorEl, opts) {
+    opts = opts || {};
+    close();
+    _opts = opts;
+    _anchorEl = anchorEl || null;
+    _q = '';
+    _cat = '';
+    _scroll = { grid: 0, cats: 0, recent: 0 };
+    // 每次打开：硬失败再给一次机会
+    retryHardAgain();
+    var pop = document.getElementById('emoji-popover');
+    if (!pop) {
+      pop = document.createElement('div');
+      pop.id = 'emoji-popover';
+      document.body.appendChild(pop);
+    }
+    _pop = pop;
+    pop.className = 'eui-pop';
+    pop.classList.remove('hidden');
+    pop.style.visibility = 'hidden';
+
+    if (_data) {
+      renderBody({ focusSearch: true, resetGridScroll: true });
+      requestAnimationFrame(function () {
+        position(anchorEl);
+        pop.style.visibility = 'visible';
+      });
+    } else {
+      pop.innerHTML = '<div class="eui-loading">加载表情清单…</div>';
+      loadData().then(function () {
+        if (_opts !== opts) return;
+        renderBody({ focusSearch: true, resetGridScroll: true });
+        requestAnimationFrame(function () {
+          position(anchorEl);
+          pop.style.visibility = 'visible';
+        });
+      }).catch(function () {
+        pop.innerHTML = '<div class="eui-loading">表情清单未就绪。请先联网一次下载到本机，之后离线也可使用。</div>';
+        pop.style.visibility = 'visible';
+        position(anchorEl);
+      });
+    }
+
+    pop.onclick = function (e) {
+      var cell = e.target.closest('.eui-cell');
+      if (!cell || !_pop.contains(cell)) return;
+      var u = cell.getAttribute('data-e');
+      if (u) pick(u);
+    };
+    if (!pop._euiErrBound) {
+      pop._euiErrBound = 1;
+      pop.addEventListener('error', function (e) {
+        var t = e.target;
+        if (t && t.tagName === 'IMG' && t.getAttribute('data-u') && pop.contains(t)) onImgError(t);
+      }, true);
+    }
+
+    _onDoc = function (e) {
+      if (!_pop) return;
+      if (_pop.contains(e.target)) return;
+      if (anchorEl && (e.target === anchorEl || (anchorEl.contains && anchorEl.contains(e.target)))) return;
+      close();
+    };
+    _onKey = function (e) {
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    };
+    setTimeout(function () {
+      document.addEventListener('mousedown', _onDoc, true);
+      document.addEventListener('keydown', _onKey, true);
+    }, 0);
+  }
+
+  function openInsert(anchorEl, onInsert, onClose) {
+    open(anchorEl, {
+      mode: 'insert',
+      title: '',
+      onPick: onInsert,
+      onClose: onClose,
+    });
+  }
+
+  function openPick(anchorEl, opts) {
+    open(anchorEl, {
+      mode: 'pick',
+      title: (opts && opts.title) || '选择图标',
+      currentIcon: (opts && opts.currentIcon) || '',
+      defaultIcon: (opts && opts.defaultIcon) || '',
+      onPick: opts && opts.onPick,
+      onClose: opts && opts.onClose,
+    });
+  }
+
+  function isOpen() {
+    return !!( _pop && !_pop.classList.contains('hidden') );
+  }
+
+  // ===== 侧栏/图标：Twemoji 底图，文字透明（绝不露系统脸）=====
+  var ICON_SEL = '.tree-note-icon, .ws-icon, .ws-icon-btn, .ws-icon-pick-btn, .titlebar-app-icon, .mascot-picker-ico, .ctx-icon-emoji, .cmd-item-icon, .zn-twemoji-icon';
+
+  function looksLikeEmoji(s) {
+    if (!s || typeof s !== 'string') return false;
+    var t = s.trim();
+    // 组合表情（家庭/职业等）UTF-16 长度可超过 16
+    if (!t || t.length > 48) return false;
+    try {
+      return /[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}\u{20E3}\u{1F000}-\u{1F0FF}]/u.test(t);
+    } catch (_) {
+      return /[^\x00-\x7f]/.test(t);
+    }
+  }
+
+  function paintIcon(el, ch) {
+    if (!el) return;
+    var u = ch == null ? (el.getAttribute('data-emoji') || el.textContent || '') : String(ch);
+    u = u.trim();
+    el.textContent = u;
+    if (!looksLikeEmoji(u)) {
+      el.classList.remove('zn-twemoji-icon', 'is-native');
+      el.removeAttribute('data-emoji');
+      try { el.style.removeProperty('background-image'); } catch (_) {}
+      return;
+    }
+    el.setAttribute('data-emoji', u);
+    function showTwemoji(url) {
+      el.classList.add('zn-twemoji-icon');
+      el.classList.remove('is-native');
+      el.style.setProperty('background-image', 'url("' + url + '")', 'important');
+    }
+    function showNative() {
+      // Twemoji 实在没有：露系统脸，总比永久灰块强
+      el.classList.remove('zn-twemoji-icon');
+      el.classList.add('is-native');
+      try { el.style.removeProperty('background-image'); } catch (_) {}
+    }
+    var url = displayUrl(u);
+    if (url) showTwemoji(url);
+    else showNative();
+    ensureCached(u).then(function (ok) {
+      if (!el.isConnected) return;
+      if (!ok) { showNative(); return; }
+      var loc = localUrlSync(u) || displayUrl(u);
+      if (loc) showTwemoji(loc);
+      else showNative();
+    });
+  }
+
+  function paintAll(root) {
+    try {
+      var scope = root && root.querySelectorAll ? root : document;
+      scope.querySelectorAll(ICON_SEL).forEach(function (el) {
+        paintIcon(el, el.getAttribute('data-emoji') || el.textContent);
+      });
+    } catch (_) {}
+  }
+
+  function iconHtml(ch, className) {
+    var u = ch == null ? '' : String(ch);
+    var cls = (className || '').trim();
+    if (!looksLikeEmoji(u)) {
+      return '<span class="' + esc(cls) + '">' + esc(u) + '</span>';
+    }
+    var url = displayUrl(u) || localUrlSync(u);
+    var style = url
+      ? ' style="background-image:url(\'' + url.replace(/'/g, '%27') + '\')"'
+      : '';
+    ensureCached(u);
+    return '<span class="' + esc(cls + ' zn-twemoji-icon') + '" data-emoji="' + esc(u) + '"' + style + '>' + esc(u) + '</span>';
+  }
+
+  window.emojiUi = {
+    openInsert: openInsert,
+    openPick: openPick,
+    close: close,
+    isOpen: isOpen,
+    prefetch: prefetch,
+    twemojiUrl: twemojiUrl,
+    displayUrl: displayUrl,
+    ensureCached: ensureCached,
+    warmMany: warmMany,
+    paintIcon: paintIcon,
+    paintAll: paintAll,
+    iconHtml: iconHtml,
+    looksLikeEmoji: looksLikeEmoji,
+    ATTR: ATTR,
+  };
+
+  /** 钉版本日常用；远程有更新时只抬版本并补缺图，绝不碰笔记同步 */
+  function _semverParts(v) {
+    return String(v || '').replace(/^v/i, '').split(/[.+-]/).map(function (x) { return parseInt(x, 10) || 0; });
+  }
+  function _semverGt(a, b) {
+    var pa = _semverParts(a), pb = _semverParts(b), i;
+    for (i = 0; i < 3; i++) {
+      if ((pa[i] || 0) > (pb[i] || 0)) return true;
+      if ((pa[i] || 0) < (pb[i] || 0)) return false;
+    }
+    return false;
+  }
+  function applyTwemojiVer(ver) {
+    ver = String(ver || '').replace(/^v/i, '');
+    if (!ver || ver === TWEMOJI_VER || !_semverGt(ver, TWEMOJI_VER)) return false;
+    TWEMOJI_VER = ver;
+    TWEMOJI_BASE = 'https://cdn.jsdelivr.net/gh/jdecked/twemoji@' + TWEMOJI_VER + '/assets/svg/';
+    PACK_META_KEY = 'pack:meta@' + TWEMOJI_VER;
+    _failHard = Object.create(null);
+    _failSoft = Object.create(null);
+    _cdnHit = Object.create(null);
+    _pack.done = false;
+    _pack.running = false;
+    _packMetaReady = false;
+    _packMetaP = null;
+    // 已有本机图继续用；ensureCached 只补新版才有的缺图。元数据本机 _ 前缀，不上云。
+    loadPackMeta().then(function () { startPackDownload(); });
+    return true;
+  }
+  var _twCheckAt = 0;
+  function checkTwemojiRemoteUpdate() {
+    if (!isOnline()) return;
+    if (syncBusy()) {
+      setTimeout(checkTwemojiRemoteUpdate, 10000);
+      return;
+    }
+    var now = Date.now();
+    if (_twCheckAt && now - _twCheckAt < 12 * 3600 * 1000) return;
+    _twCheckAt = now;
+    fetch('https://data.jsdelivr.com/v1/packages/gh/jdecked/twemoji', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        if (!j || !Array.isArray(j.versions)) return;
+        var best = TWEMOJI_VER;
+        j.versions.forEach(function (item) {
+          var v = item && item.version;
+          if (v && _semverGt(v, best)) best = String(v).replace(/^v/i, '');
+        });
+        if (_semverGt(best, TWEMOJI_VER)) applyTwemojiVer(best);
+      })
+      .catch(function () {});
+  }
+
+  function schedulePrefetch() {
+    var run = function () { setTimeout(prefetch, 800); };
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(function () { prefetch(); }, { timeout: 3000 });
+    } else if (document.readyState === 'complete') {
+      run();
+    } else {
+      window.addEventListener('load', run);
+    }
+    window.addEventListener('online', function () {
+      _pack.running = false;
+      startPackDownload();
+      checkTwemojiRemoteUpdate();
+      if (_pop) renderBody({ onlyGrid: true, resetGridScroll: false });
+    });
+    // 闲时查图源更新（让路同步）；只补新图、不上传笔记
+    setTimeout(function () { checkTwemojiRemoteUpdate(); }, 12000);
+    // storage 晚于表情脚本 init 时，补写被暂存的备份元数据
+    var n = 0;
+    var metaTimer = setInterval(function () {
+      flushPendingPackMeta();
+      if (++n >= 30 || !_pendingPackMeta) clearInterval(metaTimer);
+    }, 1000);
+  }
+  schedulePrefetch();
+})();
+
+</script>
+  <script>
+/**
+ * znEmoji 存盘编解码（纯 JSON，无 DOM）
+ * 编辑器内用原子节点；落盘 / 判脏 / 同步前摊成 Unicode 文本，兼容旧笔记与旧客户端。
+ */
+(function (root) {
+  'use strict';
+
+  function marksKey(marks) {
+    if (!marks || !marks.length) return '';
+    try { return JSON.stringify(marks); } catch (_) { return ''; }
+  }
+
+  /** 把 doc(JSON) 里的 znEmoji 节点摊成 text，并合并相邻同 marks 文本 */
+  function flattenZnEmojiDocJSON(doc) {
+    if (!doc || typeof doc !== 'object') return doc;
+
+    function walk(node) {
+      if (!node || typeof node !== 'object') return node;
+      if (node.type === 'znEmoji') {
+        const text = (node.attrs && node.attrs.emoji) || '';
+        if (!text) return null;
+        const out = { type: 'text', text: text };
+        if (node.marks && node.marks.length) out.marks = node.marks;
+        return out;
+      }
+      if (!Array.isArray(node.content)) return node;
+      const next = [];
+      for (let i = 0; i < node.content.length; i++) {
+        const child = walk(node.content[i]);
+        if (child == null) continue;
+        const last = next[next.length - 1];
+        if (
+          child.type === 'text' &&
+          last &&
+          last.type === 'text' &&
+          marksKey(last.marks) === marksKey(child.marks)
+        ) {
+          last.text += child.text;
+        } else {
+          next.push(child);
+        }
+      }
+      const copy = {};
+      for (const k in node) {
+        if (Object.prototype.hasOwnProperty.call(node, k) && k !== 'content') copy[k] = node[k];
+      }
+      copy.content = next;
+      return copy;
+    }
+
+    return walk(doc);
+  }
+
+  /** 递归 JSON 里所有表情字（znEmoji + 文本里的簇），供暖图 */
+  function collectEmojisFromDocJSON(doc, looksEmoji) {
+    const list = [];
+    const seen = Object.create(null);
+    function add(ch) {
+      if (!ch || seen[ch]) return;
+      if (typeof looksEmoji === 'function' && !looksEmoji(ch)) return;
+      seen[ch] = 1;
+      list.push(ch);
+    }
+    function walk(node) {
+      if (!node) return;
+      if (node.type === 'znEmoji') {
+        add((node.attrs && node.attrs.emoji) || '');
+        return;
+      }
+      if (node.type === 'text' && node.text && typeof looksEmoji === 'function') {
+        // 粗扫：按码点交给 looksEmoji 的调用方通常用 segmenter；这里只收集整段若本身是表情
+        if (looksEmoji(node.text)) add(node.text);
+      }
+      if (Array.isArray(node.content)) node.content.forEach(walk);
+    }
+    walk(doc);
+    return list;
+  }
+
+  const api = {
+    flattenZnEmojiDocJSON: flattenZnEmojiDocJSON,
+    collectEmojisFromDocJSON: collectEmojisFromDocJSON,
+  };
+  root.znEmojiUtil = api;
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+})(typeof window !== 'undefined' ? window : globalThis);
 
 </script>
   <script>
@@ -87110,12 +88850,13 @@ window.NOTO_EMOJI = {
 
   var K = {
     enabled: 'zhinote.mascot.enabled',   // '0' 关闭；其它/缺省 = 开
-    resident: 'zhinote.mascot.resident', // '1' 常驻
+    resident: 'zhinote.mascot.resident', // '0' 关闭常驻；其它/缺省 = 开常驻
     avatar: 'zhinote.mascot.avatar',     // 常驻形象（emoji 字符）
     pos: 'zhinote.mascot.pos',           // 常驻位置 {x,y}（视口像素，左上角）；没存 = 默认右下角
   };
-  // 常驻形象：从谷歌动图全集（window.NOTO_EMOJI，mascot-emoji.js）里任选，存 emoji 字符
-  function avatarGlyph() { return lget(K.avatar) || '🌱'; }
+  // 缺省形象：藏云脸（迷茫）；从谷歌动图全集任选后写入本键
+  var DEFAULT_AVATAR = '\uD83D\uDE36\u200D\uD83C\uDF2B\uFE0F'; // 😶‍🌫️
+  function avatarGlyph() { return lget(K.avatar) || DEFAULT_AVATAR; }
   // 持久化：主存走 storage 设置（'_'+键名 → 本机保存、不上云；Quicker 端随动作状态变量落盘，
   // 重启 Quicker 不丢）。localStorage 只作旧值迁移来源 + 兜底双写——单独靠它在 Quicker 端
   // 不可靠（预热建窗/进程被杀时浏览器缓存可能整体丢失，用户实测常驻/位置/形象全部重置）。
@@ -87137,7 +88878,7 @@ window.NOTO_EMOJI = {
   }
 
   function isEnabled() { return lget(K.enabled) !== '0'; }
-  function isResident() { return lget(K.resident) === '1'; }
+  function isResident() { return lget(K.resident) !== '0'; }
 
   // 话题/状态 -> emoji 码点（可持续扩充；用到才下载，不占空间；加载失败自动退回静态字形）
   // idle = 🌱：对话里说话人头像没有特殊表情时回到原始形象（用户指定）
@@ -87198,9 +88939,15 @@ window.NOTO_EMOJI = {
     if (_mem[cp]) return Promise.resolve(_mem[cp]);
     return idbGet(cp).then(function (s) {
       if (s) { try { var o = JSON.parse(s); _mem[cp] = o; return o; } catch (_) {} }
-      return fetch('https://fonts.gstatic.com/s/e/notoemoji/latest/' + cp + '/lottie.json')
-        .then(function (r) { if (!r.ok) throw 0; return r.text(); })
-        .then(function (txt) { idbPut(cp, txt); var o = JSON.parse(txt); _mem[cp] = o; return o; });
+      // 优先咱们域名代取缓存（emoji.zhinote.net），失败再直连谷歌
+      function loadTxt(url) {
+        return fetch(url).then(function (r) { if (!r.ok) throw 0; return r.text(); });
+      }
+      var primary = notoUrl(cp, 'lottie.json');
+      var fallback = EMO_HOST_FALLBACK + cp + '/lottie.json';
+      return loadTxt(primary).catch(function () {
+        return primary === fallback ? Promise.reject(0) : loadTxt(fallback);
+      }).then(function (txt) { idbPut(cp, txt); var o = JSON.parse(txt); _mem[cp] = o; return o; });
     });
   }
 
@@ -87458,7 +89205,19 @@ window.NOTO_EMOJI = {
 
   // ===== 常驻形象：谷歌动图全集选择器 =====
   // 网格用谷歌矢量图渲染（新表情在旧系统字库里是空框，图片在任何系统长一样）；悬停播动画预览
-  var EMO_HOST = 'https://fonts.gstatic.com/s/e/notoemoji/latest/';
+  // 小枝图源：优先 window.__NOTO_EMO_HOST__（咱们 Cloudflare 代取，见 docs/emoji-proxy-worker.js），
+  // 未部署/失败时回退谷歌 gstatic。第二套（Twemoji）不走这里。
+  var EMO_HOST_FALLBACK = 'https://fonts.gstatic.com/s/e/notoemoji/latest/';
+  var EMO_HOST = (typeof window !== 'undefined' && window.__NOTO_EMO_HOST__) || EMO_HOST_FALLBACK;
+  function notoUrl(cp, file) {
+    var primary = EMO_HOST.replace(/\/?$/, '/') + cp + '/' + file;
+    if (EMO_HOST === EMO_HOST_FALLBACK) return primary;
+    // 调用方用 fetch 时自行处理失败；img.src 用 primary，onerror 可再试 fallback
+    return primary;
+  }
+  function notoSvgUrl(cp) {
+    return notoUrl(cp, 'emoji.svg');
+  }
   var _cpByChar = null;
   function notoCp(ch) {
     var NE = window.NOTO_EMOJI;
@@ -87483,7 +89242,7 @@ window.NOTO_EMOJI = {
       el.textContent = ch; // 不在动图集：只能系统字形（多为单段）
       return;
     }
-    var url = EMO_HOST + cp + '/emoji.svg';
+    var url = notoSvgUrl(cp);
     var existing = el.querySelector('img.mascot-avaimg');
     if (existing && existing.getAttribute('data-cp') === cp) return;
     var isZwj = cp.split(/[-_]/).indexOf('200d') >= 0;
@@ -87496,10 +89255,15 @@ window.NOTO_EMOJI = {
       el.textContent = '';
       el.appendChild(img);
     };
+    img.onerror = function () {
+      if (img.dataset.fb === '1') return;
+      img.dataset.fb = '1';
+      img.src = EMO_HOST_FALLBACK + cp + '/emoji.svg';
+    };
     // 复合表情：保留旧图直到新图就绪，绝不写入会被拆开的文字；单段可暂用字形占位
     if (!existing && !isZwj) el.textContent = ch;
     img.src = url;
-    if (img.complete) { try { img.onload(); } catch (_) {} img.onload = null; }
+    if (img.complete && img.naturalWidth) { try { img.onload(); } catch (_) {} img.onload = null; }
   }
   var _avaPop = null, _avaPrev = null, _avaPrevTimer = null, _avaTab = 0;
   function closeAvaPick() {
@@ -87517,7 +89281,8 @@ window.NOTO_EMOJI = {
     pop.innerHTML = '<input type="text" class="mascot-inp mascot-avapick-q" placeholder="搜表情：开心 / 猫 / 爱心…">'
       + '<div class="mascot-avapick-tabs">' + NE.cats.map(function (c, i) { return '<button type="button" class="mascot-avapick-tab' + (i === _avaTab ? ' on' : '') + '" data-i="' + i + '">' + esc(c) + '</button>'; }).join('') + '</div>'
       + '<div class="mascot-avapick-grid"></div>'
-      + '<div class="mascot-avapick-foot"><span class="mascot-avapick-pv"></span><span class="mascot-avapick-pn">共 ' + NE.items.length + ' 个，全都会动；悬停预览，点选定</span></div>';
+      + '<div class="mascot-avapick-foot"><span class="mascot-avapick-pv"></span><span class="mascot-avapick-pn">共 ' + NE.items.length + ' 个 · 悬停预览</span></div>'
+      + '<div class="mascot-avapick-attr" title="署名与许可">动图 Noto Animated Emoji © Google · CC-BY 4.0</div>';
     document.body.appendChild(pop);
     _avaPop = pop;
     var grid = pop.querySelector('.mascot-avapick-grid');
@@ -87529,7 +89294,9 @@ window.NOTO_EMOJI = {
       grid.innerHTML = list.map(function (it) {
         var g = cpToGlyph(it[0]);
         return '<button type="button" class="mascot-avapick-cell' + (g === curCh ? ' on' : '') + '" data-cp="' + it[0] + '" title="' + esc((it[2] || '').split(' ')[0]) + '">'
-          + '<img loading="lazy" src="' + EMO_HOST + it[0] + '/emoji.svg" alt="' + esc(g) + '" onerror="this.replaceWith(this.alt)">'
+          + '<img loading="lazy" src="' + notoSvgUrl(it[0]) + '" alt="' + esc(g) + '"'
+          + ' data-fb="' + EMO_HOST_FALLBACK + it[0] + '/emoji.svg"'
+          + ' onerror="if(this.dataset.tried!==\'1\'&&this.dataset.fb){this.dataset.tried=\'1\';this.src=this.dataset.fb;}else{this.replaceWith(document.createTextNode(this.alt));}">'
           + '</button>';
       }).join('') || '<div class="mascot-picker-none">没有找到相关表情</div>';
       grid.scrollTop = 0;
@@ -87844,7 +89611,10 @@ window.NOTO_EMOJI = {
     }
     function pick(p) { _pickerPicked = true; closePicker(); onPick(p); }
     function itemHtml(icon, title, sub, extra) {
-      return '<span class="mascot-picker-ico">' + icon + '</span><span class="mascot-picker-m"><span class="mascot-picker-t">'
+      var ico = (window.emojiUi && window.emojiUi.iconHtml)
+        ? window.emojiUi.iconHtml(icon, 'mascot-picker-ico')
+        : ('<span class="mascot-picker-ico">' + esc(icon) + '</span>');
+      return ico + '<span class="mascot-picker-m"><span class="mascot-picker-t">'
         + esc(title) + '</span>' + (sub ? '<span class="mascot-picker-s">' + esc(sub) + '</span>' : '') + '</span>' + (extra || '');
     }
     // 全部笔记（不删的），最近改过的排前面；跨笔记本也列出（副标题标明在哪个本子）
@@ -87897,8 +89667,11 @@ window.NOTO_EMOJI = {
         for (var wid in groups) if (!known[wid]) strays = strays.concat(groups[wid]);
         listWs.forEach(function (w) {
           var open = !!exp[w.id];
+          var wsIco = (window.emojiUi && window.emojiUi.iconHtml)
+            ? window.emojiUi.iconHtml(w.icon || '📔', 'mascot-picker-ico')
+            : ('<span class="mascot-picker-ico">' + esc(w.icon || '📔') + '</span>');
           var head = mkRow('<span class="mascot-mm-caret">' + (open ? '▾' : '▸') + '</span>'
-            + '<span class="mascot-picker-ico">' + esc(w.icon || '📔') + '</span>'
+            + wsIco
             + '<span class="mascot-picker-m"><span class="mascot-picker-t mascot-picker-wst">' + esc(w.name || '未命名') + '</span></span>'
             + '<span class="mascot-picker-n">' + groups[w.id].length + '</span>', false);
           head.classList.add('mascot-picker-ws');
@@ -87928,6 +89701,7 @@ window.NOTO_EMOJI = {
         r.el.addEventListener('mousedown', function (e) { e.preventDefault(); if (r.t) r.t(); else pick(r.p); });
         list.appendChild(r.el);
       });
+      try { if (window.emojiUi && window.emojiUi.paintAll) window.emojiUi.paintAll(list); } catch (_) {}
       position();
     }
     function mkRow(html, on) {
@@ -88092,6 +89866,7 @@ window.NOTO_EMOJI = {
       mg.innerHTML = '<span class="mascot-picker-ico">⚙️</span><span class="mascot-picker-m"><span class="mascot-picker-s">管理常用语（增删改）…</span></span>';
       mg.addEventListener('mousedown', function (e) { e.preventDefault(); closePicker(); openMascotSettings(); });
       list.appendChild(mg);
+      try { if (window.emojiUi && window.emojiUi.paintAll) window.emojiUi.paintAll(list); } catch (_) {}
       position();
     }
     setTimeout(function () {
@@ -88391,6 +90166,7 @@ window.NOTO_EMOJI = {
       clr.addEventListener('mousedown', function (e) { e.preventDefault(); lset(HIST_KEY, '[]'); closePicker(); });
       list.appendChild(clr);
     }
+    try { if (window.emojiUi && window.emojiUi.paintAll) window.emojiUi.paintAll(list); } catch (_) {}
     document.body.appendChild(pop); _picker = pop;
     var r = anchor.getBoundingClientRect();
     pop.style.left = Math.round(Math.min(Math.max(8, r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8)) + 'px';
@@ -89265,8 +91041,13 @@ window.NOTO_EMOJI = {
     scheduleIdlePlay();
     // 云端带下来的加密 key：本机没 key 时尝试用网盘密码解出（换设备免重填）
     try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
+    // 本机已有 key、网盘已配好：补上行密文（先填 key 后开同步时原先不会传）
+    try { ai() && ai().syncKeyUp && ai().syncKeyUp(); } catch (_) {}
     // 设置同步可能晚于启动到达，稍后再试一次
-    setTimeout(function () { try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {} }, 15000);
+    setTimeout(function () {
+      try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
+      try { ai() && ai().syncKeyUp && ai().syncKeyUp(); } catch (_) {}
+    }, 15000);
   }
 
   window.mascot = {
@@ -89307,6 +91088,8 @@ const {
   CodeBlock,
   Plugin, PluginKey, Decoration, DecorationSet,
 } = window.__tiptapBundle;
+const _pmState = window.__tiptapBundle.pmState || {};
+const TextSelection = _pmState.TextSelection;
 
 /**
  * TextAlign — 段落/标题对齐（左/居中/右/两端）。内核 bundle 未打包官方扩展，这里按官方实现自写：
@@ -89654,6 +91437,8 @@ function _inlineNodesToHtml(nodes) {
     } else if (child.type === 'mathInline') {
       const lx = (child.attrs && child.attrs.latex) || '';
       out += `<span data-math-inline data-latex="${_escHtml(lx)}">$${_escHtml(lx)}$</span>`;
+    } else if (child.type === 'znEmoji') {
+      out += _escHtml((child.attrs && child.attrs.emoji) || '');
     } else if (child.content) {
       out += _inlineNodesToHtml(child.content);
     }
@@ -89966,6 +91751,326 @@ function _buildCodeDecorations(doc) {
   });
   return DecorationSet.create(doc, decos);
 }
+
+/* ===== 正文表情：编辑器用行内原子节点（成熟方案）；落盘摊成 Unicode（zn-emoji-util）===== */
+const _TWEMOJI_RE = /(?:\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?)*|[0-9#*]\uFE0F?\u20E3)/gu;
+let _emojiSegmenter = null;
+try {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    _emojiSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  }
+} catch (_) { _emojiSegmenter = null; }
+function _looksEmojiGrapheme(ch) {
+  if (!ch) return false;
+  try {
+    if (window.emojiUi?.looksLikeEmoji) return window.emojiUi.looksLikeEmoji(ch);
+  } catch (_) {}
+  try {
+    _TWEMOJI_RE.lastIndex = 0;
+    const m = _TWEMOJI_RE.exec(ch);
+    return !!(m && m[0] === ch);
+  } catch (_) { return false; }
+}
+function _forEachEmojiInText(text, fn) {
+  if (!text) return;
+  if (_emojiSegmenter) {
+    let offset = 0;
+    for (const { segment } of _emojiSegmenter.segment(text)) {
+      if (_looksEmojiGrapheme(segment)) fn(segment, offset, offset + segment.length);
+      offset += segment.length;
+    }
+    return;
+  }
+  _TWEMOJI_RE.lastIndex = 0;
+  let m;
+  while ((m = _TWEMOJI_RE.exec(text))) {
+    fn(m[0], m.index, m.index + m[0].length);
+  }
+}
+function _flattenZnEmojiDoc(doc) {
+  try {
+    if (window.znEmojiUtil?.flattenZnEmojiDocJSON) return window.znEmojiUtil.flattenZnEmojiDocJSON(doc);
+  } catch (_) {}
+  return doc;
+}
+function _paintZnEmojiDom(dom, emoji) {
+  if (!dom) return;
+  const urlOf = () => {
+    try {
+      if (typeof window.emojiUi?.displayUrl === 'function') {
+        return window.emojiUi.displayUrl(emoji, { body: true }) || '';
+      }
+    } catch (_) {}
+    return '';
+  };
+  const showTwemoji = (url) => {
+    dom.textContent = '';
+    dom.style.backgroundImage = 'url("' + url + '")';
+    dom.classList.remove('is-empty', 'is-native');
+  };
+  const showNative = () => {
+    // 图库没有时显示系统表情，避免永久灰块
+    dom.style.backgroundImage = 'none';
+    dom.textContent = emoji || '';
+    dom.classList.remove('is-empty');
+    dom.classList.add('is-native');
+  };
+  const showPending = () => {
+    dom.textContent = '';
+    dom.style.backgroundImage = 'none';
+    dom.classList.add('is-empty');
+    dom.classList.remove('is-native');
+  };
+  dom.setAttribute('data-zn-emoji', emoji || '');
+  const url = urlOf();
+  if (url) {
+    showTwemoji(url);
+    return;
+  }
+  showPending();
+  try {
+    const p = window.emojiUi?.ensureCached?.(emoji);
+    if (p && typeof p.then === 'function') {
+      p.then(function (ok) {
+        if (!dom.isConnected) return;
+        const u2 = urlOf();
+        if (u2) showTwemoji(u2);
+        else if (!ok) showNative();
+        else showNative();
+      });
+    } else {
+      showNative();
+    }
+  } catch (_) {
+    showNative();
+  }
+}
+function _repaintAllZnEmojiDom() {
+  try {
+    document.querySelectorAll('#editor .zn-emoji').forEach(function (el) {
+      _paintZnEmojiDom(el, el.getAttribute('data-zn-emoji') || '');
+    });
+  } catch (_) {}
+}
+try { window.__znTwemojiOnCached = _repaintAllZnEmojiDom; } catch (_) {}
+function _collectPmEmojis(pmDoc) {
+  const list = [];
+  const seen = Object.create(null);
+  pmDoc.descendants((node, _pos, parent) => {
+    if (node.type && node.type.name === 'znEmoji') {
+      const ch = node.attrs && node.attrs.emoji;
+      if (ch && !seen[ch]) { seen[ch] = 1; list.push(ch); }
+      return;
+    }
+    if (!node.isText || !node.text) return;
+    if (parent && (parent.type.name === 'codeBlock' || parent.type.name === 'code')) return;
+    if (node.marks && node.marks.some((m) => m.type && m.type.name === 'code')) return;
+    _forEachEmojiInText(node.text, (ch) => {
+      if (seen[ch]) return;
+      seen[ch] = 1;
+      list.push(ch);
+    });
+  });
+  return list;
+}
+function _warmDocTwemoji(pmDoc) {
+  const list = _collectPmEmojis(pmDoc);
+  if (!list.length) return;
+  const done = () => _repaintAllZnEmojiDom();
+  try {
+    if (window.emojiUi?.warmMany) {
+      window.emojiUi.warmMany(list).then(function () {
+        return Promise.all(list.map(function (u) {
+          try { return window.emojiUi.ensureCached(u); } catch (_) { return ''; }
+        }));
+      }).then(done, done);
+      return;
+    }
+  } catch (_) {}
+  list.forEach(function (u) {
+    try {
+      const p = window.emojiUi?.ensureCached?.(u);
+      if (p && typeof p.then === 'function') p.then(done, done);
+    } catch (_) {}
+  });
+}
+function _znEmojiIsComposing(view) {
+  try {
+    if (view && view.composing) return true;
+    if (view && view.dom && view.dom.classList.contains('zn-ime-composing')) return true;
+  } catch (_) {}
+  return false;
+}
+/** 把文本里的表情字收成 znEmoji 原子节点（打开/粘贴/输入后） */
+function _znEmojiExpandTr(state, emojiType) {
+  if (!emojiType) return null;
+  const replacements = [];
+  state.doc.descendants((node, pos, parent) => {
+    if (!node.isText || !node.text) return;
+    if (parent && (parent.type.name === 'codeBlock' || parent.type.name === 'code')) return;
+    if (node.marks && node.marks.some((m) => m.type && m.type.name === 'code')) return;
+    _forEachEmojiInText(node.text, (ch, fromRel, toRel) => {
+      replacements.push({
+        from: pos + fromRel,
+        to: pos + toRel,
+        ch,
+        marks: node.marks,
+      });
+    });
+  });
+  if (!replacements.length) return null;
+  let tr = state.tr;
+  for (let i = replacements.length - 1; i >= 0; i--) {
+    const r = replacements[i];
+    const n = emojiType.create({ emoji: r.ch }, null, r.marks);
+    tr = tr.replaceWith(r.from, r.to, n);
+  }
+  return tr.setMeta('znEmojiExpand', true).setMeta('addToHistory', false);
+}
+const ZnEmoji = Node.create({
+  name: 'znEmoji',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: false,
+  draggable: false,
+  addAttributes() {
+    return {
+      emoji: { default: '' },
+    };
+  },
+  parseHTML() {
+    return [{
+      tag: 'span[data-zn-emoji]',
+      getAttrs: (el) => ({ emoji: el.getAttribute('data-zn-emoji') || el.textContent || '' }),
+    }];
+  },
+  renderHTML({ node }) {
+    return ['span', {
+      'data-zn-emoji': node.attrs.emoji || '',
+      class: 'zn-emoji',
+    }, node.attrs.emoji || ''];
+  },
+  renderText({ node }) {
+    return node.attrs.emoji || '';
+  },
+  renderMarkdown(node) {
+    return (node && node.attrs && node.attrs.emoji) || '';
+  },
+  addStorage() {
+    return {
+      clipboardTextSerializer: (node) => (node.attrs && node.attrs.emoji) || '',
+    };
+  },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('span');
+      dom.className = 'zn-emoji';
+      dom.contentEditable = 'false';
+      let cur = node.attrs.emoji || '';
+      _paintZnEmojiDom(dom, cur);
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'znEmoji') return false;
+          cur = updated.attrs.emoji || '';
+          _paintZnEmojiDom(dom, cur);
+          return true;
+        },
+      };
+    };
+  },
+  addProseMirrorPlugins() {
+    const emojiType = this.type;
+    return [new Plugin({
+      key: new PluginKey('znEmojiExpand'),
+      appendTransaction(trs, _old, state) {
+        if (!trs.some((tr) => tr.docChanged)) return null;
+        if (trs.some((tr) => tr.getMeta('znEmojiExpand'))) return null;
+        try {
+          if (document.querySelector('#editor .ProseMirror.zn-ime-composing')) return null;
+        } catch (_) {}
+        return _znEmojiExpandTr(state, emojiType);
+      },
+      view(editorView) {
+        setTimeout(function () {
+          try { _warmDocTwemoji(editorView.state.doc); } catch (_) {}
+        }, 0);
+        return {
+          update(view, prev) {
+            if (view.state.doc !== prev.doc) {
+              try { _warmDocTwemoji(view.state.doc); } catch (_) {}
+            }
+          },
+        };
+      },
+      props: {
+        handleKeyDown(view, event) {
+          // 相邻原子节点间方向键：参考 TipTap Emoji / prosemirror#1220
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return false;
+          if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
+          if (!TextSelection || !view.state.selection.empty) return false;
+          if (!(view.state.selection instanceof TextSelection)) return false;
+          const $pos = view.state.selection.$from;
+          if (event.key === 'ArrowLeft') {
+            const before = $pos.nodeBefore;
+            if (!before || before.type !== emojiType) return false;
+            const newPos = $pos.pos - before.nodeSize;
+            if (newPos < $pos.start()) return false;
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, newPos)));
+            return true;
+          }
+          const after = $pos.nodeAfter;
+          if (!after || after.type !== emojiType) return false;
+          const newPos = $pos.pos + after.nodeSize;
+          if (newPos > $pos.end()) return false;
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, newPos)));
+          return true;
+        },
+        handleDOMEvents: {
+          compositionstart(view) {
+            try { view.dom.classList.add('zn-ime-composing'); } catch (_) {}
+            return false;
+          },
+          compositionend(view) {
+            try { view.dom.classList.remove('zn-ime-composing'); } catch (_) {}
+            try {
+              const tr = _znEmojiExpandTr(view.state, emojiType);
+              if (tr) view.dispatch(tr);
+            } catch (_) {}
+            return false;
+          },
+          mousedown(view, event) {
+            // 点在表情上：按左右落到前/后（原子块本身不可进字内）
+            if (event.button !== 0 || _znEmojiIsComposing(view)) return false;
+            const el = event.target && event.target.closest
+              ? event.target.closest('.zn-emoji')
+              : null;
+            if (!el || !TextSelection) return false;
+            let pos = null;
+            try {
+              pos = typeof view.posAtDOM === 'function' ? view.posAtDOM(el, 0) : null;
+            } catch (_) { pos = null; }
+            if (typeof pos !== 'number') return false;
+            const node = view.state.doc.nodeAt(pos);
+            if (!node || node.type !== emojiType) return false;
+            const r = el.getBoundingClientRect();
+            const after = typeof event.clientX === 'number' && event.clientX >= (r.left + r.right) / 2;
+            const target = after ? pos + node.nodeSize : pos;
+            try {
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.create(view.state.doc, target))
+              );
+              try { view.focus(); } catch (_) {}
+              event.preventDefault();
+              return true;
+            } catch (_) { return false; }
+          },
+        },
+      },
+    })];
+  },
+});
 
 const CustomCodeBlock = CodeBlock.extend({
   // 新增 title 属性：代码块顶栏可编辑标题。不渲染到 HTML（rendered:false），
@@ -90578,7 +92683,33 @@ const editor = (() => {
   // 返回是否成功落地（供 realtime 决定走快车道还是退回旧路径）。
   function applyRemoteUpdate(id, b64) {
     if (!_bound || !_yDoc || id !== _currentId || !b64) return false;
-    try { _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(b64), 'remote'); return true; } catch (_) { return false; }
+    try {
+      _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(b64), 'remote');
+      // 对端/云端账本只含 Unicode 表情字 → 收成编辑器用的 znEmoji 节点
+      _ensureEmojisExpanded();
+      return true;
+    } catch (_) { return false; }
+  }
+
+  /** 绑定模式下写出 note.ydoc：必须与摊平后的 note.doc 同形（只含 Unicode 表情），
+   *  绝不把编辑器专用 znEmoji 节点打进账本——旧版客户端不认该节点，同步时会丢掉表情再回传污染。 */
+  function _persistFlatYdoc(flatDoc) {
+    if (!_currentId || !flatDoc) return;
+    try {
+      const Yutil = window.__ydoc;
+      if (!Yutil || !Yutil.ready || !Yutil.ready()) {
+        // 引擎未就绪：退回活账本（仍可能含 znEmoji；下次保存再洗）
+        if (_yDoc) window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
+        return;
+      }
+      const prev = window.storage.get(_currentId);
+      const b64 = (prev && prev.ydoc) ? Yutil.update(prev.ydoc, flatDoc) : Yutil.build(flatDoc);
+      window.storage._setNoteYdoc(_currentId, b64);
+    } catch (_) {
+      try {
+        if (_yDoc) window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
+      } catch (__) {}
+    }
   }
   // 双击空格跳出续写：记录上一次空格的时间与「插入后光标位置」，
   // 只有「窗口内、原地连按第二下空格、且当前光标处有激活的行内格式」才触发。
@@ -90792,6 +92923,7 @@ const editor = (() => {
         MathBlock,
         CalendarBlock,
         ZhichatBlock,
+        ZnEmoji,
         // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
         // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
         // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
@@ -91282,6 +93414,7 @@ const editor = (() => {
       _editor.state.doc.nodesBetween(from, to, (node, pos) => {
         if (node.type.name === 'mathInline') { text += `$${node.attrs.latex}$`; return false; }
         if (node.type.name === 'mathBlock') { text += `$$${node.attrs.latex}$$\n`; return false; }
+        if (node.type.name === 'znEmoji') { text += (node.attrs && node.attrs.emoji) || ''; return false; }
         if (node.isText) {
           const s = Math.max(from, pos) - pos;
           const en = Math.min(to, pos + node.nodeSize) - pos;
@@ -92407,7 +94540,7 @@ const editor = (() => {
       doc.descendants((node) => {
         if (hasAtom) return false;
         const n = node.type.name;
-        if (n === 'image' || n === 'table' || n === 'mathInline' || n === 'mathBlock' || n === 'horizontalRule') {
+        if (n === 'image' || n === 'table' || n === 'mathInline' || n === 'mathBlock' || n === 'horizontalRule' || n === 'znEmoji') {
           hasAtom = true; return false;
         }
         return true;
@@ -92460,11 +94593,21 @@ const editor = (() => {
 
   // 把笔记灌进编辑器：有 doc(JSON) 走零往返 JSON 路径（全保真、无抖动）；
   // 旧笔记（仅 content/md，尚未迁移）退回 markdown 解析路径，保证存量笔记照常打开。
+  function _ensureEmojisExpanded() {
+    if (!_editor) return;
+    try {
+      const type = _editor.schema.nodes.znEmoji;
+      const tr = _znEmojiExpandTr(_editor.state, type);
+      if (tr) _editor.view.dispatch(tr);
+    } catch (_) {}
+  }
+
   function _loadNoteIntoEditor(note) {
     if (!_editor || !note) return;
     if (note.doc) {
       try {
         _editor.commands.setContent(note.doc, { emitUpdate: false });
+        _ensureEmojisExpanded();
         return;
       } catch (e) {
         console.warn('[editor] setContent(doc) 失败，退回 markdown 路径', e);
@@ -92477,6 +94620,7 @@ const editor = (() => {
       _editor.commands.clearContent();
       _editor.commands.setContent(md, { emitUpdate: false, contentType: 'markdown' });
     }
+    _ensureEmojisExpanded();
   }
 
   function flushSave() {
@@ -92484,11 +94628,12 @@ const editor = (() => {
     _dirtyUnsaved = false;
     if (!_currentId || !_editor) return;
     try {
-      const doc = _editor.getJSON();
+      // 落盘前把 znEmoji 摊成 Unicode——与旧笔记/旧客户端同形，避免同步结构突变
+      const doc = _flattenZnEmojiDoc(_editor.getJSON());
       const docStr = JSON.stringify(doc);
       const note = window.storage?.get(_currentId);
       if (!note) return;
-      // 判脏：与「打开时的 doc 基线」比较。doc(JSON) 往返稳定、无序列化抖动 →
+      // 判脏：与「打开时的 doc 基线」比较。基线也是摊平后的 JSON。
       // 没编辑过的笔记 docStr 必然等于基线 → 不会打开即标脏 → 不会跨设备误覆盖。
       if (_openedDoc != null && docStr === _openedDoc) {
         return;
@@ -92499,14 +94644,10 @@ const editor = (() => {
         console.warn('[editor.flushSave] 拒绝保存：doc 判空但编辑器仍有内容（疑似异常态）');
         return;
       }
-      // 绑定模式：账本权威 = 活的 _yDoc，跳过「从 doc 重建账本」(那会毁掉 CRDT 历史)，
-      //   保存后直接把活账本状态写回 note.ydoc，供网盘留底/对端领用。
-      // ⚠️ 顺序很关键：必须先把最新活账本写回 note.ydoc，再 updateDoc。因为 updateDoc 会
-      //   emit('change',{type:'content'})，realtime 监听到即读 note.ydoc 直推对端——若先 updateDoc
-      //   再写 ydoc，推出去的永远是上一拍的旧账本（用户报的「打123只同步到12，下一步才出现3」）。
-      if (_bound && _yDoc) {
-        try { window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc))); } catch (_) {}
-      }
+      // 绑定模式：跳过 storage._maintainLedger；账本按「摊平 doc」演进写出（与 note.doc 同形），
+      //   编辑器里仍可继续用 znEmoji 节点，但上云/即时同步的 ydoc 不含该节点，旧版不会剥表情。
+      // ⚠️ 顺序：先写 note.ydoc 再 updateDoc——realtime 监听 content 时读的是 note.ydoc。
+      if (_bound && _yDoc) _persistFlatYdoc(doc);
       window.storage.updateDoc(_currentId, doc, _bound ? { skipLedger: true } : undefined);
       window.storage.save({ immediate: true });
       // 保存成功后把基线推进到当前 doc，后续无新编辑则不再重复标脏。
@@ -92616,15 +94757,20 @@ const editor = (() => {
     if (_bound) {
       // 绑定模式：内容来自活账本(ySync)，不走 setContent；绑定失败则退回普通载入。
       if (!_bindNoteCrdt(note)) { _loadNoteIntoEditor(note); _resetHistory(); }
-      else _normalizeEmptyListItems();
+      else {
+        _normalizeEmptyListItems();
+        // 账本里是 Unicode 表情字 → 收成 znEmoji，供光标/显示；落盘仍摊平
+        _ensureEmojisExpanded();
+      }
     } else {
       _loadNoteIntoEditor(note);
       _normalizeEmptyListItems();
       _resetHistory();
     }
-    // 记录「打开时的 doc 基线」：之后 flushSave 据此判断是否有真实编辑。
-    try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    // 基线用「摊平后的 JSON」：编辑器内是原子节点，与磁盘 Unicode 对齐后才不会打开即标脏
+    try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
     _refreshMdSourceIfOpen();
+    try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
     requestAnimationFrame(() => { _suppressInput = false; });
 
     // 定位：默认不把光标放进正文（避免一打开就进入编辑态），只恢复上次的滚动位置。
@@ -92909,6 +95055,11 @@ const editor = (() => {
       try {
         if (note.ydoc) _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(note.ydoc), 'remote');
       } catch (_) { try { _bindNoteCrdt(note); } catch (__) {} }
+      try { _ensureEmojisExpanded(); } catch (_) {}
+      try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
+      try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
+      refreshOutline();
+      refreshTitle();
       return;
     }
     // 下行同步触发的重载：不阻塞渲染（保持同步时序），后台批量预热完成后再刷新占位图。
@@ -92928,8 +95079,9 @@ const editor = (() => {
     _loadNoteIntoEditor(note);
     _normalizeEmptyListItems();
     _resetHistory();
-    // 同 open()：重载后刷新 doc 基线，避免下行同步刚覆盖内容又被 flushSave 误判为本地编辑。
-    try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    // 同 open()：基线用摊平 JSON，避免下行同步后误判本地编辑。
+    try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
+    try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
     if (_sel) {
       try {
         const max = Math.max(1, _editor.state.doc.content.size - 1);
@@ -93034,6 +95186,7 @@ const editor = (() => {
       // 也能搜源码形态（$$key=$$）。旧的无 doc 笔记走 content(markdown) 本就含 $$，此举与之对齐。
       if (t === 'mathInline') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$' + lx + '$'); return; }
       if (t === 'mathBlock') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$$' + lx + '$$'); parts.push('\n'); return; }
+      if (t === 'znEmoji') { parts.push((node.attrs && node.attrs.emoji) || ''); return; }
       if (t === 'image') return; // 跳过图片
       if (Array.isArray(node.content)) node.content.forEach(visit);
       if (_BLOCK_TYPES.has(t)) parts.push('\n');
@@ -93058,10 +95211,11 @@ const editor = (() => {
   function docIsEmpty(doc) {
     if (!doc || !Array.isArray(doc.content) || doc.content.length === 0) return true;
     let hasContent = false;
-    const MEDIA = new Set(['image', 'mathInline', 'mathBlock', 'horizontalRule', 'codeBlock', 'table']);
+    const MEDIA = new Set(['image', 'mathInline', 'mathBlock', 'horizontalRule', 'codeBlock', 'table', 'znEmoji']);
     const visit = (node) => {
       if (hasContent || !node) return;
       if (node.type === 'text' && (node.text || '').trim()) { hasContent = true; return; }
+      if (node.type === 'znEmoji' && node.attrs && node.attrs.emoji) { hasContent = true; return; }
       if (MEDIA.has(node.type)) { hasContent = true; return; }
       if (Array.isArray(node.content)) node.content.forEach(visit);
     };
@@ -93157,7 +95311,7 @@ async function bootstrap() {
   // 显眼的版本水印——在控制台第一行就能看到，确认 cache 是否刷新
   // 这行是「当前跑的是哪一次构建」的唯一可靠标记（__MD_VER__ 打包后恒为 vX.Y.Z-dev 分不出轮次）。
   // 每轮改动随 index.html 的 ?v= 一起更新，否则没法判断 Quicker 常驻窗口里跑的是不是新包。
-  console.log('%c[ZhiNote] build 20260730t10 ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
+  console.log('%c[ZhiNote] build 20260730t42 ✓ (emoji 账本只存 Unicode，防旧版同步剥表情)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
   console.log('[ZhiNote] 调试开关：在控制台运行 window.__MD_DEBUG__=true 后再输入 / 或 ;; 可看判定过程');
 
   // 宿主标记：非 Quicker 宿主（浏览器/PWA）→ body.host-web，CSS 据此隐藏窗口控制等桌面专属 UI。
@@ -93444,6 +95598,11 @@ async function bootstrap() {
       if (_syncProtectionActive) _endSyncProtection();
       // 同步成功（非重试占位）→ 清掉失败去重记录，下次再失败仍会正常提示
       if (payload.detail !== 'retry-transient') { _lastSyncFailMsg = ''; _lastSyncFailAt = 0; }
+      // 网盘可用后：补传本机密钥密文；同时尝试解出云端密文补本机缺的（绝不覆盖本机已有）
+      if (payload.detail !== 'retry-transient' && window.aiChat) {
+        try { window.aiChat.syncKeyUp && window.aiChat.syncKeyUp(); } catch (_) {}
+        try { window.aiChat.trySyncKeyDown && window.aiChat.trySyncKeyDown(); } catch (_) {}
+      }
       // 上传/下载成功 → 平静地标记"已同步"（steady 绿，不闪不转）。静默轮询且无变更（unchanged/empty）时不动徽标。
       if (!(payload.silent && (payload.detail === 'get-unchanged' || payload.detail === 'get-empty'))) {
         _setCloudSyncDot('synced');
@@ -94153,14 +96312,16 @@ function wireEvents() {
         onPick: (icon) => {
           const v = icon || '📖';
           storage.setSetting('appIcon', v);
-          appIconEl.textContent = v;
+          try { window.emojiUi?.paintIcon?.(appIconEl, v); } catch (_) { appIconEl.textContent = v; }
         },
       });
     };
     appIconEl.addEventListener('click', _openAppIconPicker);
     appIconEl.addEventListener('contextmenu', _openAppIconPicker);
     const saved = storage.getSetting('appIcon');
-    if (saved) appIconEl.textContent = saved;
+    try { window.emojiUi?.paintIcon?.(appIconEl, saved || appIconEl.textContent || '📖'); } catch (_) {
+      if (saved) appIconEl.textContent = saved;
+    }
   }
 
   // 标题栏文字 — 点击修改自定义名称
@@ -95972,7 +98133,8 @@ function refreshWorkspaceSwitcher() {
   if (!sw) return;
   const ws = storage.getActiveWorkspace();
   if (!ws) return;
-  sw.querySelector('.ws-icon').textContent = ws.icon || '📒';
+  try { window.emojiUi?.paintIcon?.(sw.querySelector('.ws-icon'), ws.icon || '📒'); }
+  catch (_) { sw.querySelector('.ws-icon').textContent = ws.icon || '📒'; }
   sw.querySelector('.ws-name').textContent = ws.name || '未命名';
 }
 
@@ -96009,7 +98171,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
         onPick: (icon) => {
           storage.setWorkspaceIcon?.(ws.id, icon || '📒');
           refreshWorkspaceSwitcher();
-          btn.textContent = icon || '📒';
+          try { window.emojiUi?.paintIcon?.(btn, icon || '📒'); } catch (_) { btn.textContent = icon || '📒'; }
         },
       });
     });
@@ -96025,7 +98187,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
           onPick: (icon) => {
             storage.setWorkspaceIcon?.(ws.id, icon || '📒');
             refreshWorkspaceSwitcher();
-            btn.textContent = icon || '📒';
+            try { window.emojiUi?.paintIcon?.(btn, icon || '📒'); } catch (_) { btn.textContent = icon || '📒'; }
           },
         });
         return;
@@ -96079,6 +98241,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
   pop.appendChild(newBtn);
 
   document.body.appendChild(pop);
+  try { window.emojiUi?.paintAll?.(pop); } catch (_) {}
   let r;
   if (atCursor) {
     // 光标定位：弹窗左上角贴着鼠标右下方一点，像表情窗一样跟着光标
@@ -96140,124 +98303,11 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-/** 笔记本 + 笔记图标预设（共用） */
-const WS_EMOJI_PRESETS = [
-  // 笔记本/文件
-  '📒','📓','📔','📕','📗','📘','📙','📚','📖','📝','✏️','📋','🗂️','📁','📂','💼',
-  '📄','📃','📑','🗒️','🗓️','📇','📰','🏷️','✉️','📩','📨','📧','💌','📮','📬','📪',
-  // 工作/学习/工具
-  '💻','🖥️','⌨️','🖱️','📱','💡','🔬','🧪','🧠','🎓','🏫','🏠','🏢','🛒','💰','💳',
-  '⚙️','🔧','🔨','🛠️','⛏️','🪛','🪚','📐','📏','🧮','🔩','⚖️','🧲','🔭','🔎','🔍',
-  // 兴趣/娱乐
-  '🎨','🎵','🎬','🎮','📷','🎤','🎸','🏃','⚽','🏀','🍎','🍳','☕','🍺','🌱','🌳',
-  '🎹','🎺','🥁','🎭','🎪','🎲','🃏','🧩','🎿','🏄','🚴','🧘','🎧','📻','📺','🖼️',
-  // 食物/饮品
-  '🍕','🍔','🍟','🌮','🍣','🍰','🧁','🍩','🍫','🍿','🥤','🧃','🍷','🍶','🫖','🧊',
-  // 自然/天气
-  '☀️','🌙','⭐','🌟','🔥','⚡','❄️','🌈','🌊','🌸','🌹','🍀','🍂','🌍','🌌','✨',
-  '🌺','🌻','🌷','💐','🌿','🪴','🌵','🍄','🐚','🪨','💧','🫧','☁️','🌤️','🌧️','🌪️',
-  // 表情/心情
-  '😀','😄','😁','😊','🙂','😉','😌','😎','🤔','🤗','🥰','😍','🤩','🥳','😇','😋',
-  '😜','🤪','🫠','😴','🥱','😮','🥹','🥺','😢','😅','😬','🤓','🥸','🤖','👻','😺',
-  // 动物
-  '🐱','🐶','🐰','🦊','🐻','🐼','🐨','🦁','🐯','🦄','🐝','🦋','🐠','🐳','🦅','🦉',
-  // 标记/状态
-  '🎯','🚀','💎','🏆','⚓','📌','🔖','🔑','🔒','📊','📈','📉','✅','❤️','💯','🎉',
-  '⭕','❌','⚠️','🔴','🟠','🟡','🟢','🔵','🟣','⚪','🟤','💜','💙','💚','💛','🧡',
-  // 交通/旅行
-  '✈️','🚗','🚂','🚢','🏖️','🗻','🗼','🏰','🎡','🎢','🧳','🗺️','🧭','⛺','🏕️','🌋',
-  // 符号
-  '♻️','☮️','☯️','🕉️','✡️','🔯','♾️','💠','🔶','🔷','🔸','🔹','▶️','⏸️','⏹️','🔘',
-];
-
-/** 通用图标选择 popover（笔记 / 笔记本共用，浮在锚点旁边，选完即写入）
- *  @param {HTMLElement} anchorEl - 锚点元素（图标按钮本身）
- *  @param {object} opts
- *    - currentIcon: string 当前已选 emoji
- *    - defaultIcon: string 恢复默认按钮要恢复成的 icon
- *    - onPick: (icon: string) => void  选完回调
- *    - title?: string 标题文字
- */
+/** 通用图标选择（第二套：与正文插表情同一选择器，系统字形） */
 function openIconPicker(anchorEl, { currentIcon, defaultIcon, onPick, title } = {}) {
   document.querySelectorAll('.icon-picker-popover').forEach(el => el.remove());
-
-  const pop = document.createElement('div');
-  pop.className = 'icon-picker-popover';
-  pop.innerHTML = `
-    ${title ? `<div class="icon-picker-title">${escapeHtml(title)}</div>` : ''}
-    <div class="icon-picker-input-row">
-      <input type="text" class="icon-picker-input" maxlength="4" value="${escapeHtml(currentIcon || '')}" placeholder="自定义">
-      <button type="button" class="icon-picker-confirm" title="确认自定义">✓</button>
-      <button type="button" class="icon-picker-reset" title="恢复默认">↺</button>
-    </div>
-    <div class="icon-picker-grid">
-      ${WS_EMOJI_PRESETS.map(e =>
-        `<button type="button" class="icon-picker-cell${e === currentIcon ? ' active' : ''}" data-e="${e}" title="${e}">${e}</button>`
-      ).join('')}
-    </div>
-  `;
-  document.body.appendChild(pop);
-
-  // 定位：在锚点正下方居中；超出边界则调整
-  const r = anchorEl.getBoundingClientRect();
-  const pw = pop.offsetWidth;
-  const ph = pop.offsetHeight;
-  const vw = window.innerWidth;
-  const vh = visibleViewportH();
-  let left = r.left + r.width / 2 - pw / 2;
-  let top = r.bottom + 6;
-  if (left + pw > vw - 8) left = vw - pw - 8;
-  if (left < 8) left = 8;
-  if (top + ph > vh - 8) top = r.top - ph - 6;
-  if (top < 8) top = 8;
-  if (pw > vw - 16) { pop.style.maxWidth = (vw - 16) + 'px'; left = 8; }
-  // 弹层比视口还高 → 限高 + 滚动，避免底部被裁
-  if (ph > vh - 16) { pop.style.maxHeight = (vh - 16) + 'px'; pop.style.overflowY = 'auto'; top = 8; }
-  pop.style.left = `${Math.round(left)}px`;
-  pop.style.top = `${Math.round(top)}px`;
-
-  function close() {
-    pop.remove();
-    document.removeEventListener('mousedown', onDoc, true);
-    document.removeEventListener('keydown', onKey, true);
-  }
-  function pickAndClose(icon) {
-    onPick?.(icon);
-    close();
-  }
-  const onDoc = (e) => {
-    if (e.target.closest('#emoji-popover')) return;
-    if (!pop.contains(e.target) && e.target !== anchorEl) close();
-  };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.stopPropagation(); close(); }
-  };
-  setTimeout(() => {
-    document.addEventListener('mousedown', onDoc, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
-
-  // 网格点击：直接确认
-  pop.querySelector('.icon-picker-grid').addEventListener('click', (e) => {
-    const b = e.target.closest('.icon-picker-cell');
-    if (!b) return;
-    pickAndClose(b.dataset.e);
-  });
-  // 输入框 Enter / "✓" 确认按钮：用自定义值
-  const input = pop.querySelector('.icon-picker-input');
-  pop.querySelector('.icon-picker-confirm').addEventListener('click', () => {
-    const v = input.value.trim();
-    if (v) pickAndClose(v);
-  });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) pickAndClose(v); }
-  });
-  // 恢复默认按钮
-  pop.querySelector('.icon-picker-reset').addEventListener('click', () => {
-    pickAndClose(defaultIcon || '');
-  });
-
-  setTimeout(() => input.focus(), 30);
+  if (!window.emojiUi) { toast?.('表情组件未加载', 'error'); return; }
+  window.emojiUi.openPick(anchorEl, { currentIcon, defaultIcon, onPick, title });
 }
 window.openIconPicker = openIconPicker;
 function promptWorkspaceEdit({ mode, ws } = {}) {
@@ -96267,25 +98317,28 @@ function promptWorkspaceEdit({ mode, ws } = {}) {
   const body = document.createElement('div');
   body.innerHTML = `
     <label style="margin-top:0;">图标</label>
-    <div style="display:flex;align-items:center;gap:10px;margin:6px 0 10px;">
-      <input type="text" id="ws-icon-input" maxlength="4" value="${initIcon}" style="width:56px;text-align:center;font-size:22px;font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;line-height:1;padding:6px;">
-      <span style="color:var(--text-tertiary);font-size:12px;">可输入任意 emoji 或单个文字，或从下方挑选</span>
-    </div>
-    <div id="ws-emoji-grid" style="display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin-bottom:14px;max-height:220px;overflow-y:auto;padding:4px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
-      ${WS_EMOJI_PRESETS.map(e => `<button type="button" class="ws-emoji-pick" data-e="${e}" title="${e}" style="height:30px;width:30px;border:none;border-radius:6px;background:transparent;font-size:18px;cursor:pointer;font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;line-height:1;">${e}</button>`).join('')}
+    <div style="display:flex;align-items:center;gap:10px;margin:6px 0 14px;flex-wrap:wrap;">
+      <button type="button" id="ws-icon-btn" class="ws-icon-pick-btn" title="选择图标">${escapeHtml(initIcon)}</button>
+      <input type="hidden" id="ws-icon-input" value="${escapeHtml(initIcon)}">
+      <span style="color:var(--text-tertiary);font-size:12px;">点击图标打开统一表情库</span>
     </div>
     <label>名称</label>
     <input type="text" id="ws-name-input" value="${escapeHtml(initName)}" placeholder="例如：工作 / 学习 / 生活" maxlength="40">
   `;
-  // 点击 emoji 网格 → 填入 input
-  body.querySelector('#ws-emoji-grid').addEventListener('click', (e) => {
-    const b = e.target.closest('button.ws-emoji-pick');
-    if (!b) return;
-    body.querySelector('#ws-icon-input').value = b.dataset.e;
-    // 视觉高亮
-    body.querySelectorAll('.ws-emoji-pick').forEach(x => x.style.background = 'transparent');
-    b.style.background = 'var(--accent-bg)';
+  const iconBtn = body.querySelector('#ws-icon-btn');
+  const iconInp = body.querySelector('#ws-icon-input');
+  iconBtn.addEventListener('click', () => {
+    openIconPicker(iconBtn, {
+      title: '选择笔记本图标',
+      currentIcon: iconInp.value || '📒',
+      defaultIcon: '📒',
+      onPick: (icon) => {
+        iconInp.value = icon || '📒';
+        try { window.emojiUi?.paintIcon?.(iconBtn, icon || '📒'); } catch (_) { iconBtn.textContent = icon || '📒'; }
+      },
+    });
   });
+  try { window.emojiUi?.paintIcon?.(iconBtn, iconInp.value || '📒'); } catch (_) {}
   openModal({
     title: isCreate ? '新建笔记本' : '重命名笔记本',
     body,
@@ -96361,8 +98414,7 @@ function promptDeleteWorkspace(ws, noteCount) {
   });
 }
 
-/* ===== Emoji 选择器 ===== */
-let _emojiPicker = null;
+/* ===== Emoji 选择器（第二套：统一 emoji-ui，见 emoji-ui.js）===== */
 let _emojiTargetInput = null;  // 表情触发时记住的输入框
 let _emojiTargetRange = null;  // 如果是 contenteditable，记住选区
 // 分号连击计时：只有「两次分号物理按键在窗口内连按」才唤出表情，
@@ -96371,12 +98423,8 @@ const EMOJI_DOUBLE_WINDOW = 450;  // ms
 let _semiKeyTimes = [];
 window.toggleEmojiPicker = toggleEmojiPicker;
 
-/** 在编辑区输入 ;; 后弹出表情选择器在光标处。
- *  选择 `;;` 而不是 `:` 是因为冒号在中文写作中（"如下："）会高频出现，容易误触。
- *  ;; 几乎不会出现在自然文字里，且双键连击容易记忆。
- *  双重监听 input + keyup，确保各模式下都能触发。 */
+/** 在编辑区输入 ;; 后弹出表情选择器在光标处。 */
 function installEmojiTrigger() {
-  // 物理分号键计时（中英文 IME 下 e.code 都是 'Semicolon'；shift+; 是冒号，排除）
   document.addEventListener('keydown', (e) => {
     const isSemi = (e.code === 'Semicolon' && !e.shiftKey) || e.key === ';' || e.key === '；';
     if (!isSemi || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -96387,14 +98435,10 @@ function installEmojiTrigger() {
   document.addEventListener('keyup', (e) => {
     if (e.key === ';' || e.key === '；') tryEmojiTrigger();
   }, true);
-  // 中文 IME 合成结束时也兜底（keyup 在 IME composing 时拿到的是 'Process'）
   document.addEventListener('compositionend', tryEmojiTrigger, true);
 }
 
-/* ===== 双击反引号唤起命令面板 =====
- * 窗口内任意位置快速连按两下 ` 键（英文输出 `、中文输入法输出 ·）唤起命令面板；
- * 在编辑区/输入框里会先删掉刚输入的两个字符。时间窗 200ms（与双击空格跳出格式同逻辑），
- * 慢速逐个输入 `` / ·· 不会触发，不影响正常输入代码围栏 ``` 等场景。 */
+/* ===== 双击反引号唤起命令面板 ===== */
 let _btKeyTimes = [];
 const PALETTE_DOUBLE_WINDOW = 200; // ms
 
@@ -96408,7 +98452,6 @@ function installPaletteTrigger() {
     if (e.code !== 'Backquote' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     _btKeyTimes.push(performance.now());
     if (_btKeyTimes.length > 2) _btKeyTimes.shift();
-    // 焦点不在任何文本输入处（树/空白区等）：按键不会产生字符，直接在第二击唤起
     const ae = document.activeElement;
     const editable = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
     if (!editable && _btDoubleInWindow()) {
@@ -96424,9 +98467,8 @@ function installPaletteTrigger() {
 function tryPaletteTrigger() {
   if (!_btDoubleInWindow()) return;
   const ae = document.activeElement;
-  if (ae && ae.closest && ae.closest('#palette-overlay')) return; // 面板已打开：别套娃
+  if (ae && ae.closest && ae.closest('#palette-overlay')) return;
 
-  // —— 焦点在普通 input / textarea（标题栏、搜索框等）：删掉刚输入的两个字符再唤起
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && typeof ae.selectionStart === 'number') {
     const pos = ae.selectionStart;
     const before = (ae.value || '').slice(0, pos);
@@ -96439,14 +98481,12 @@ function tryPaletteTrigger() {
     return;
   }
 
-  // —— 焦点在 Tiptap 编辑区
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const node = sel.getRangeAt(0).startContainer;
   const target = node.nodeType === 3 ? node.parentElement : node;
   if (!target?.closest('.ProseMirror')) return;
-  if (target.closest('pre, code')) return; // 代码块/行内代码里照常输入反引号
-  // 推迟到下一轮事件循环：等 ProseMirror 把刚输入的字符收进 state 再检查与删除
+  if (target.closest('pre, code')) return;
   setTimeout(() => {
     const inst = window.editor?.instance?.();
     if (!inst) return;
@@ -96460,7 +98500,6 @@ function tryPaletteTrigger() {
   }, 0);
 }
 
-/** 最近两次分号物理按键是否在连击窗口内（用于时间门：拒绝「旧分号 + 很久后再敲一个」的误触发）。 */
 function _semiDoubleInWindow() {
   return _semiKeyTimes.length >= 2
     && (_semiKeyTimes[_semiKeyTimes.length - 1] - _semiKeyTimes[_semiKeyTimes.length - 2]) <= EMOJI_DOUBLE_WINDOW;
@@ -96470,7 +98509,6 @@ window.tryEmojiTrigger = tryEmojiTrigger;
 function tryEmojiTrigger() {
   const ae = document.activeElement;
 
-  // —— 分支 A：焦点在普通 input / textarea
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && typeof ae.selectionStart === 'number') {
     const pos = ae.selectionStart;
     const before = (ae.value || '').slice(0, pos);
@@ -96483,31 +98521,12 @@ function tryEmojiTrigger() {
     _emojiTargetInput = ae;
     _emojiTargetRange = null;
     const ir = ae.getBoundingClientRect();
-    const parentPop = ae.closest('.icon-picker-popover');
-    let fakeAnchor;
-    if (parentPop) {
-      const pr = parentPop.getBoundingClientRect();
-      const emojiW = 300;
-      const spaceRight = window.innerWidth - pr.right;
-      const spaceLeft = pr.left;
-      if (spaceRight >= emojiW + 8) {
-        fakeAnchor = { getBoundingClientRect: () => ({ left: pr.right + 4, right: pr.right + 4, top: pr.top, bottom: pr.top, width: 0, height: 0, x: pr.right + 4, y: pr.top }) };
-      } else if (spaceLeft >= emojiW + 8) {
-        fakeAnchor = { getBoundingClientRect: () => ({ left: pr.left - emojiW - 4, right: pr.left - 4, top: pr.top, bottom: pr.top, width: 0, height: 0, x: pr.left - emojiW - 4, y: pr.top }) };
-      } else {
-        fakeAnchor = { getBoundingClientRect: () => ({ left: ir.left, right: ir.right, top: pr.bottom + 4, bottom: pr.bottom + 4, width: 0, height: 0, x: ir.left, y: pr.bottom + 4 }) };
-      }
-    } else {
-      fakeAnchor = { getBoundingClientRect: () => ({ left: ir.left + 8, right: ir.left + 8, top: ir.top, bottom: ir.bottom, width: 0, height: ir.height, x: ir.left + 8, y: ir.top }) };
-    }
-    const pop = document.getElementById('emoji-popover');
-    if (pop && !pop.classList.contains('hidden')) pop.classList.add('hidden');
+    const fakeAnchor = { getBoundingClientRect: () => ({ left: ir.left + 8, right: ir.left + 8, top: ir.top, bottom: ir.bottom, width: 0, height: ir.height, x: ir.left + 8, y: ir.top }) };
+    if (window.emojiUi?.isOpen()) window.emojiUi.close();
     setTimeout(() => toggleEmojiPicker(fakeAnchor), 0);
     return;
   }
 
-  // —— 分支 A2：焦点在 contenteditable（笔记本/笔记重命名时是 div contenteditable）
-  // This contenteditable is not inside the editor (e.g., rename fields)
   if (ae && ae.isContentEditable && !ae.closest?.('#editor')) {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
@@ -96520,17 +98539,14 @@ function tryEmojiTrigger() {
     if (before !== ';;' && before !== '；；') return;
     if (!_semiDoubleInWindow()) return;
     _semiKeyTimes = [];
-    // 删掉刚输入的 ;;
     const newRange = document.createRange();
     newRange.setStart(node, offset - 2);
     newRange.setEnd(node, offset);
     sel.removeAllRanges();
     sel.addRange(newRange);
     document.execCommand('insertText', false, '');
-    // 记住选区供表情插入恢复
     _emojiTargetInput = ae;
     _emojiTargetRange = sel.getRangeAt(0).cloneRange();
-    // 触发位置：当前光标 rect
     let rect;
     try {
       const probe = document.createElement('span');
@@ -96545,13 +98561,11 @@ function tryEmojiTrigger() {
         width: 0, height: rect.height || 18, x: rect.left, y: rect.top,
       })
     };
-    const pop = document.getElementById('emoji-popover');
-    if (pop && !pop.classList.contains('hidden')) pop.classList.add('hidden');
+    if (window.emojiUi?.isOpen()) window.emojiUi.close();
     setTimeout(() => toggleEmojiPicker(fakeAnchor), 0);
     return;
   }
 
-  // —— Branch B: focus in the Tiptap editor
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
@@ -96561,8 +98575,6 @@ function tryEmojiTrigger() {
   if (!target?.closest('.ProseMirror')) return;
   if (target.closest('pre, code')) return;
 
-  // 中文 IME 在 IR 模式下会把 `；` 包成 marker span，第一个 ; 和第二个 ; 不一定在同一个 textNode；
-  // 因此扫"段落级容器"的全文末尾，而不是只看当前 textNode
   const wrap = target.closest(
     '.ProseMirror p, .ProseMirror li, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6, .ProseMirror blockquote'
   ) || target.closest('.ProseMirror');
@@ -96575,13 +98587,8 @@ function tryEmojiTrigger() {
 
   _emojiTargetInput = null;
   _emojiTargetRange = null;
+  if (window.emojiUi?.isOpen()) window.emojiUi.close();
 
-  const pop = document.getElementById('emoji-popover');
-  if (pop && !pop.classList.contains('hidden')) pop.classList.add('hidden');
-
-  // 关键：本函数在 document 捕获阶段触发，ProseMirror 此刻常常还没把刚输入的 ; 同步进 state
-  // （英文→光标停在 ;; 之前导致删错位置删到引号；中文→只收进一个 ; 导致残留）。
-  // 推迟到下一轮事件循环（PM 已处理完输入），再用新鲜 state 删光标两侧相邻分号、且最多删 2 个。
   setTimeout(() => {
     const inst = window.editor?.instance?.();
     if (inst) {
@@ -96591,7 +98598,6 @@ function tryEmojiTrigger() {
       const rightText = state.doc.textBetween($f.pos, $f.end(), '\ufffc', '\ufffc');
       const leftN = (leftText.match(/[;；]+$/) || [''])[0].length;
       const rightN = (rightText.match(/^[;；]+/) || [''])[0].length;
-      // 只删触发用的 2 个：优先光标右侧（中文光标常落在两个 ；之间），不足再从左侧补
       const needRight = Math.min(rightN, 2);
       const needLeft = Math.min(leftN, 2 - needRight);
       const from = $f.pos - needLeft;
@@ -96611,8 +98617,6 @@ function tryEmojiTrigger() {
   }, 0);
 }
 
-/** 取光标位置矩形；range.getBoundingClientRect() 在新建块/空块开头会返回 (0,0,0,0)，
- *  这时弹窗会飞到窗口左上角。这里逐级 fallback。 */
 function getCursorRectSafe(range) {
   let rect = range.getBoundingClientRect();
   if (!rect.left && !rect.top && !rect.width && !rect.height) {
@@ -96644,7 +98648,7 @@ function getCursorRectSafe(range) {
   }
   return rect;
 }
-/** 把一个 emoji 插入到当前记住的目标（input / contenteditable / 编辑器），并记入「最近」 */
+
 function insertEmojiUnicode(u) {
   if (!u) return;
   const t = _emojiTargetInput;
@@ -96671,234 +98675,42 @@ function insertEmojiUnicode(u) {
   }
   if (!inserted) {
     const v = window.editor?.instance?.();
-    if (v) { v.chain().focus().insertContent(u).run(); inserted = true; }
+    if (v) {
+      // 正文插入原子表情节点（落盘仍摊成 Unicode）；其它输入框仍走上方 insertText
+      try {
+        v.chain().focus().insertContent({ type: 'znEmoji', attrs: { emoji: u } }).run();
+      } catch (_) {
+        v.chain().focus().insertContent(u).run();
+      }
+      inserted = true;
+    }
   }
-  if (inserted) recordRecentEmoji(u);
-}
-
-/** 记录最近使用的 emoji（去重、最新在前、最多 18 个） */
-function recordRecentEmoji(u) {
-  try {
-    let list = window.storage?.getSetting('recentEmojis') || [];
-    if (!Array.isArray(list)) list = [];
-    list = list.filter(x => x !== u);
-    list.unshift(u);
-    if (list.length > 40) list = list.slice(0, 40); // 单行+横向滚动后可多存一些
-    window.storage?.setSetting('recentEmojis', list);
-  } catch (_) {}
-  const pop = document.getElementById('emoji-popover');
-  if (pop && !pop.classList.contains('hidden')) renderEmojiRecentRow(pop);
-}
-
-/** 在表情弹窗顶部渲染「最近」快捷栏；无记录时隐藏 */
-function renderEmojiRecentRow(pop) {
-  let row = pop.querySelector('#emoji-recent-row');
-  const list = (window.storage?.getSetting('recentEmojis') || []).filter(Boolean);
-  if (!row) {
-    row = document.createElement('div');
-    row.id = 'emoji-recent-row';
-    pop.insertBefore(row, pop.firstChild);
-    row.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-e]');
-      if (!b) return;
-      insertEmojiUnicode(b.dataset.e);
-    });
-    // 滚轮（纵向）→ 横向滚动，前后翻看更多最近常用
-    row.addEventListener('wheel', (e) => {
-      const grid = row.querySelector('.emoji-recent-grid');
-      if (!grid || grid.scrollWidth <= grid.clientWidth) return;
-      e.preventDefault();
-      grid.scrollLeft += (e.deltaY || e.deltaX);
-    }, { passive: false });
+  if (inserted) {
+    try {
+      let list = window.storage?.getSetting('recentEmojis') || [];
+      if (!Array.isArray(list)) list = [];
+      list = list.filter(x => x !== u);
+      list.unshift(u);
+      if (list.length > 40) list = list.slice(0, 40);
+      window.storage?.setSetting('recentEmojis', list);
+    } catch (_) {}
   }
-  if (!list.length) { row.classList.add('hidden'); row.innerHTML = ''; return; }
-  row.classList.remove('hidden');
-  row.innerHTML = '<div class="emoji-recent-label">最近</div><div class="emoji-recent-grid">'
-    + list.map(e => `<button type="button" data-e="${e}" title="${e}">${e}</button>`).join('')
-    + '</div>';
-}
-
-// emoji-picker-element 通过 Shadow DOM 渲染，外层 CSS 变量在某些版本不生效，
-// 直接读取当前主题的计算色注入 shadowRoot，保证所有主题（含 nord/dracula/gruvbox 等暗色）都一致。
-function _applyEmojiPickerTheme(picker) {
-  if (!picker) return;
-  const isDark = document.body.classList.contains('theme-is-dark');
-  picker.classList.toggle('dark', isDark);
-  picker.classList.toggle('light', !isDark);
-  const root = picker.shadowRoot;
-  if (!root) return;
-  const cs = getComputedStyle(document.body);
-  const v = (name, fb) => { const x = cs.getPropertyValue(name).trim(); return x || fb; };
-  const bg = v('--bg-elevated', v('--bg', isDark ? '#262934' : '#ffffff'));
-  const text = v('--text', isDark ? '#e6e8eb' : '#1d1f23');
-  const textSec = v('--text-secondary', text);
-  const border = v('--border', isDark ? '#3a3f4d' : '#e6e8eb');
-  const inputBg = v('--bg-secondary', v('--bg-tertiary', isDark ? '#1d1f23' : '#f5f6f7'));
-  const hoverBg = v('--bg-tertiary', isDark ? '#3a3f4d' : '#eef0f3');
-  const activeBg = v('--accent-bg', isDark ? '#3a3f4d' : '#dbe8ff');
-  let style = root.querySelector('style[data-md-injected]');
-  if (!style) {
-    style = document.createElement('style');
-    style.setAttribute('data-md-injected', '1');
-    root.appendChild(style);
-  }
-  style.textContent = `
-    :host, .picker { background: ${bg} !important; color: ${text} !important; }
-    .nav, .tabpanel, .search-row, .skintone-button, .indicator-wrapper, .message { background: ${bg} !important; color: ${text} !important; }
-    .category { color: ${textSec} !important; background: ${bg} !important; }
-    input.search { background: ${inputBg} !important; color: ${text} !important; border-color: ${border} !important; }
-    .favorites, .pad-top { display: none !important; }
-    button.emoji:hover, button.emoji:focus { background: ${hoverBg} !important; }
-    button.emoji.active { background: ${activeBg} !important; }
-  `;
 }
 
 function toggleEmojiPicker(anchorEl) {
-  const pop = document.getElementById('emoji-popover');
-  if (!pop.classList.contains('hidden')) {
-    pop.classList.add('hidden');
+  if (!window.emojiUi) { toast?.('表情组件未加载', 'error'); return; }
+  if (window.emojiUi.isOpen()) {
+    window.emojiUi.close();
     return;
   }
-  if (!_emojiPicker) {
-    _emojiPicker = document.createElement('emoji-picker');
-    // 中文表情数据（含中文 keywords，可中文搜索如 "笑" "哭"）
-    _emojiPicker.dataSource = 'https://cdn.jsdelivr.net/npm/emoji-picker-element-data@1/zh/emojibase/data.json';
-    _emojiPicker.locale = 'zh';
-    // emoji-picker-element 默认搜索是前缀匹配，对中文不友好；
-    // 改成"包含匹配"：拦截搜索框 input，把搜索词拆字符做模糊 OR
-    setTimeout(() => {
-      const root = _emojiPicker.shadowRoot;
-      const search = root?.querySelector('input.search');
-      if (!search) return;
-      // 给原 input 监听加一道二级过滤（库里搜不到时，我们再扫整个表情列表）
-      const customFilter = () => {
-        const q = (search.value || '').trim();
-        if (!q) return; // 空查询不干预
-        // 让库做完它的搜索后，如果结果为空，我们手动补一遍模糊匹配
-        setTimeout(() => {
-          const tabPanel = root.querySelector('.tabpanel');
-          const noResults = root.querySelector('[part="search-empty"]') || tabPanel?.querySelector('.no-results');
-          if (!noResults || noResults.style?.display === 'none') return;
-          // 库已经找不到结果——我们自己用 database 模糊匹配
-          if (!_emojiPicker.database) return;
-          _emojiPicker.database.getAllEmoji?.().then(all => {
-            const matched = all.filter(em => {
-              const ka = (em.shortcodes || []).join(' ').toLowerCase();
-              const kb = (em.tags || []).join(' ').toLowerCase();
-              const kc = (em.annotation || '').toLowerCase();
-              const kw = (em.emoticon || '') + ' ' + (em.unicode || '');
-              const text = ka + ' ' + kb + ' ' + kc + ' ' + kw;
-              return text.includes(q.toLowerCase());
-            }).slice(0, 64);
-            if (matched.length === 0) return;
-            // 用一个浮层覆盖在 picker 内显示模糊匹配结果
-            let custom = root.getElementById('md-fuzzy-list');
-            if (!custom) {
-              custom = document.createElement('div');
-              custom.id = 'md-fuzzy-list';
-              custom.style.cssText = 'position:absolute;left:0;right:0;top:84px;bottom:0;overflow-y:auto;background:var(--background,#fff);padding:8px;display:flex;flex-wrap:wrap;gap:4px;z-index:5;';
-              root.querySelector('.picker').appendChild(custom);
-            }
-            custom.innerHTML = matched.map(em =>
-              `<button data-u="${em.unicode}" title="${em.annotation||''}" style="font-size:22px;width:36px;height:36px;border:none;background:transparent;cursor:pointer;border-radius:6px;">${em.unicode}</button>`
-            ).join('');
-            custom.onclick = (e) => {
-              const u = e.target?.dataset?.u;
-              if (!u) return;
-              _emojiPicker.dispatchEvent(new CustomEvent('emoji-click', { detail: { unicode: u } }));
-              custom.remove();
-            };
-          }).catch(() => {});
-        }, 50);
-      };
-      const cleanCustom = () => { root.getElementById('md-fuzzy-list')?.remove(); };
-      search.addEventListener('input', () => { cleanCustom(); customFilter(); });
-    }, 200);
-    pop.appendChild(_emojiPicker);
-    _emojiPicker.addEventListener('emoji-click', (e) => {
-      const u = e.detail?.unicode;
-      if (!u) return;
-      insertEmojiUnicode(u);
-    });
-    // 等 shadowRoot 准备好（通常下一帧就有），按当前主题注入样式
-    requestAnimationFrame(() => {
-      _applyEmojiPickerTheme(_emojiPicker);
-      setTimeout(() => _applyEmojiPickerTheme(_emojiPicker), 50);
-      setTimeout(() => _applyEmojiPickerTheme(_emojiPicker), 200);
-    });
-  }
-  // 每次打开都按当前主题刷新（覆盖所有暗色主题，并支持中途换主题）
-  _applyEmojiPickerTheme(_emojiPicker);
-  // 顶部「最近」快捷栏（每次打开刷新）
-  renderEmojiRecentRow(pop);
-  // 先显示再测量尺寸，便于精确避免出屏
-  pop.style.visibility = 'hidden';
-  pop.classList.remove('hidden');
-  pop.style.left = '0px';
-  pop.style.top = '0px';
-  pop.style.right = 'auto';
-  requestAnimationFrame(() => {
-    let r = anchorEl.getBoundingClientRect();
-    // 最终保险：anchor rect 为 0 时回退到编辑器中心，避免飞到窗口左上角
-    if (!r.left && !r.top && !r.width && !r.height) {
-      const v = document.querySelector('#editor') || document.body;
-      const er = v.getBoundingClientRect();
-      r = { left: er.left + 80, top: er.top + 80, bottom: er.top + 100, right: er.left + 80, width: 0, height: 20 };
-    }
-    const pw = pop.offsetWidth || 300;
-    const ph = pop.offsetHeight || 320;
-    let left = r.left;
-    let top = r.bottom + 6;
-    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-    if (left < 8) left = 8;
-    if (top + ph > visibleViewportH() - 8) {
-      const aboveTop = r.top - ph - 6;
-      if (aboveTop >= 8) {
-        top = aboveTop; // 下方放不下 → 翻到光标上方
-      } else {
-        // 上下都放不下：贴边放置，并横向挪开，避免盖住光标所在行、看不见输入了什么
-        top = Math.max(8, Math.min(top, visibleViewportH() - ph - 8));
-        left = (r.left + 24 + pw <= window.innerWidth - 8) ? r.left + 24 : Math.max(8, r.left - pw - 24);
-      }
-    }
-        pop.style.left = `${Math.round(left)}px`;
-        pop.style.top  = `${Math.round(top)}px`;
-        pop.style.visibility = 'visible';
-        // 焦点转给 picker 的搜索框（仅为支持中文搜索；不再依赖额外的方向键拦截）
-        setTimeout(() => {
-          const search = _emojiPicker.shadowRoot?.querySelector('input.search');
-          if (search) search.focus();
-        }, 50);
-      });
-  // 关闭逻辑：点空白 / Esc 都关，关掉时把焦点恢复给原编辑器或 input
-  const closePicker = () => {
-    if (pop.classList.contains('hidden')) return;
-    pop.classList.add('hidden');
-    document.removeEventListener('mousedown', onDoc, true);
-    document.removeEventListener('keydown', onKey, true);
+  window.emojiUi.openInsert(anchorEl, (u) => insertEmojiUnicode(u), () => {
     if (_emojiTargetInput && document.body.contains(_emojiTargetInput)) {
-      _emojiTargetInput.focus({ preventScroll: true });
+      try { _emojiTargetInput.focus({ preventScroll: true }); } catch (_) {}
     } else {
-      // Avoid calling focus() here which may reset scroll position
-      // ✓ 直接 focus contenteditable 元素，加 preventScroll 保证视图位置不变
-      const ed = document.querySelector(
-        '#editor .ProseMirror'
-      );
-      if (ed) {
-        try { ed.focus({ preventScroll: true }); } catch (_) { ed.focus(); }
-      }
+      const ed = document.querySelector('#editor .ProseMirror');
+      if (ed) { try { ed.focus({ preventScroll: true }); } catch (_) { try { ed.focus(); } catch (_) {} } }
     }
-  };
-  const onDoc = (e) => {
-    if (!pop.contains(e.target) && e.target !== anchorEl) closePicker();
-  };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
-  };
-  setTimeout(() => {
-    document.addEventListener('mousedown', onDoc, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
+  });
 }
 
 let _modeBarHideTimer = null;
@@ -99336,7 +101148,7 @@ function openSettingsModal(initialTab) {
         <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">笔记图片以独立文件存放于此（默认 文档\ZhiNote\images）；更改时自动迁移现有图片</div>
       </div>
       <div id="qc-block" style="display:none;margin-bottom:18px;">
-        <label class="settings-section">速记</label>
+        <label class="settings-section">速记 <span style="font-weight:400;color:var(--text-tertiary);font-size:11.5px;">· 需在 Quicker 动作参数填「速记」触发</span></label>
         <select id="set-qc-mode" style="width:100%;">
           <option value="current">存到当前打开的笔记</option>
           <option value="fixed">固定存到一篇笔记（收集箱）</option>
@@ -99344,7 +101156,7 @@ function openSettingsModal(initialTab) {
         <div id="qc-fixed-row" style="display:none;font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
           收集箱：<span id="qc-fixed-title"></span>　<button id="qc-fixed-repick" class="link-btn" style="font-size:12px;">更换…</button>
         </div>
-        <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">Quicker 端按速记热键，把选中文字或剪贴板图片存进笔记（枝记开着才生效）</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">枝记开着时生效：把选中文字或剪贴板图片存进笔记</div>
       </div>
       <label class="settings-section">定时备份</label>
       <select id="set-backup-enabled" style="width:100%;">
@@ -99743,6 +101555,8 @@ function openSettingsModal(initialTab) {
             _draftCache.clear();
             await window.webdavSync.loadConfig();
             _setCloudSyncDot('syncing');
+            // 配好网盘密码后补上行小枝密钥密文（先填 key 后开同步时原先不会自动传）
+            try { window.aiChat && window.aiChat.syncKeyUp && window.aiChat.syncKeyUp(); } catch (_) {}
 
             if (choice === 'upload') {
               // 真正的「覆盖云端」：删云端本地已没有的多余笔记 + epoch+1（其它设备对齐），再传本地全部。

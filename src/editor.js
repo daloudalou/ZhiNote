@@ -11,6 +11,8 @@ const {
   CodeBlock,
   Plugin, PluginKey, Decoration, DecorationSet,
 } = window.__tiptapBundle;
+const _pmState = window.__tiptapBundle.pmState || {};
+const TextSelection = _pmState.TextSelection;
 
 /**
  * TextAlign — 段落/标题对齐（左/居中/右/两端）。内核 bundle 未打包官方扩展，这里按官方实现自写：
@@ -358,6 +360,8 @@ function _inlineNodesToHtml(nodes) {
     } else if (child.type === 'mathInline') {
       const lx = (child.attrs && child.attrs.latex) || '';
       out += `<span data-math-inline data-latex="${_escHtml(lx)}">$${_escHtml(lx)}$</span>`;
+    } else if (child.type === 'znEmoji') {
+      out += _escHtml((child.attrs && child.attrs.emoji) || '');
     } else if (child.content) {
       out += _inlineNodesToHtml(child.content);
     }
@@ -670,6 +674,326 @@ function _buildCodeDecorations(doc) {
   });
   return DecorationSet.create(doc, decos);
 }
+
+/* ===== 正文表情：编辑器用行内原子节点（成熟方案）；落盘摊成 Unicode（zn-emoji-util）===== */
+const _TWEMOJI_RE = /(?:\p{Regional_Indicator}{2}|\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?(?:\u200D\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|\uFE0F|\uFE0E)?)*|[0-9#*]\uFE0F?\u20E3)/gu;
+let _emojiSegmenter = null;
+try {
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    _emojiSegmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  }
+} catch (_) { _emojiSegmenter = null; }
+function _looksEmojiGrapheme(ch) {
+  if (!ch) return false;
+  try {
+    if (window.emojiUi?.looksLikeEmoji) return window.emojiUi.looksLikeEmoji(ch);
+  } catch (_) {}
+  try {
+    _TWEMOJI_RE.lastIndex = 0;
+    const m = _TWEMOJI_RE.exec(ch);
+    return !!(m && m[0] === ch);
+  } catch (_) { return false; }
+}
+function _forEachEmojiInText(text, fn) {
+  if (!text) return;
+  if (_emojiSegmenter) {
+    let offset = 0;
+    for (const { segment } of _emojiSegmenter.segment(text)) {
+      if (_looksEmojiGrapheme(segment)) fn(segment, offset, offset + segment.length);
+      offset += segment.length;
+    }
+    return;
+  }
+  _TWEMOJI_RE.lastIndex = 0;
+  let m;
+  while ((m = _TWEMOJI_RE.exec(text))) {
+    fn(m[0], m.index, m.index + m[0].length);
+  }
+}
+function _flattenZnEmojiDoc(doc) {
+  try {
+    if (window.znEmojiUtil?.flattenZnEmojiDocJSON) return window.znEmojiUtil.flattenZnEmojiDocJSON(doc);
+  } catch (_) {}
+  return doc;
+}
+function _paintZnEmojiDom(dom, emoji) {
+  if (!dom) return;
+  const urlOf = () => {
+    try {
+      if (typeof window.emojiUi?.displayUrl === 'function') {
+        return window.emojiUi.displayUrl(emoji, { body: true }) || '';
+      }
+    } catch (_) {}
+    return '';
+  };
+  const showTwemoji = (url) => {
+    dom.textContent = '';
+    dom.style.backgroundImage = 'url("' + url + '")';
+    dom.classList.remove('is-empty', 'is-native');
+  };
+  const showNative = () => {
+    // 图库没有时显示系统表情，避免永久灰块
+    dom.style.backgroundImage = 'none';
+    dom.textContent = emoji || '';
+    dom.classList.remove('is-empty');
+    dom.classList.add('is-native');
+  };
+  const showPending = () => {
+    dom.textContent = '';
+    dom.style.backgroundImage = 'none';
+    dom.classList.add('is-empty');
+    dom.classList.remove('is-native');
+  };
+  dom.setAttribute('data-zn-emoji', emoji || '');
+  const url = urlOf();
+  if (url) {
+    showTwemoji(url);
+    return;
+  }
+  showPending();
+  try {
+    const p = window.emojiUi?.ensureCached?.(emoji);
+    if (p && typeof p.then === 'function') {
+      p.then(function (ok) {
+        if (!dom.isConnected) return;
+        const u2 = urlOf();
+        if (u2) showTwemoji(u2);
+        else if (!ok) showNative();
+        else showNative();
+      });
+    } else {
+      showNative();
+    }
+  } catch (_) {
+    showNative();
+  }
+}
+function _repaintAllZnEmojiDom() {
+  try {
+    document.querySelectorAll('#editor .zn-emoji').forEach(function (el) {
+      _paintZnEmojiDom(el, el.getAttribute('data-zn-emoji') || '');
+    });
+  } catch (_) {}
+}
+try { window.__znTwemojiOnCached = _repaintAllZnEmojiDom; } catch (_) {}
+function _collectPmEmojis(pmDoc) {
+  const list = [];
+  const seen = Object.create(null);
+  pmDoc.descendants((node, _pos, parent) => {
+    if (node.type && node.type.name === 'znEmoji') {
+      const ch = node.attrs && node.attrs.emoji;
+      if (ch && !seen[ch]) { seen[ch] = 1; list.push(ch); }
+      return;
+    }
+    if (!node.isText || !node.text) return;
+    if (parent && (parent.type.name === 'codeBlock' || parent.type.name === 'code')) return;
+    if (node.marks && node.marks.some((m) => m.type && m.type.name === 'code')) return;
+    _forEachEmojiInText(node.text, (ch) => {
+      if (seen[ch]) return;
+      seen[ch] = 1;
+      list.push(ch);
+    });
+  });
+  return list;
+}
+function _warmDocTwemoji(pmDoc) {
+  const list = _collectPmEmojis(pmDoc);
+  if (!list.length) return;
+  const done = () => _repaintAllZnEmojiDom();
+  try {
+    if (window.emojiUi?.warmMany) {
+      window.emojiUi.warmMany(list).then(function () {
+        return Promise.all(list.map(function (u) {
+          try { return window.emojiUi.ensureCached(u); } catch (_) { return ''; }
+        }));
+      }).then(done, done);
+      return;
+    }
+  } catch (_) {}
+  list.forEach(function (u) {
+    try {
+      const p = window.emojiUi?.ensureCached?.(u);
+      if (p && typeof p.then === 'function') p.then(done, done);
+    } catch (_) {}
+  });
+}
+function _znEmojiIsComposing(view) {
+  try {
+    if (view && view.composing) return true;
+    if (view && view.dom && view.dom.classList.contains('zn-ime-composing')) return true;
+  } catch (_) {}
+  return false;
+}
+/** 把文本里的表情字收成 znEmoji 原子节点（打开/粘贴/输入后） */
+function _znEmojiExpandTr(state, emojiType) {
+  if (!emojiType) return null;
+  const replacements = [];
+  state.doc.descendants((node, pos, parent) => {
+    if (!node.isText || !node.text) return;
+    if (parent && (parent.type.name === 'codeBlock' || parent.type.name === 'code')) return;
+    if (node.marks && node.marks.some((m) => m.type && m.type.name === 'code')) return;
+    _forEachEmojiInText(node.text, (ch, fromRel, toRel) => {
+      replacements.push({
+        from: pos + fromRel,
+        to: pos + toRel,
+        ch,
+        marks: node.marks,
+      });
+    });
+  });
+  if (!replacements.length) return null;
+  let tr = state.tr;
+  for (let i = replacements.length - 1; i >= 0; i--) {
+    const r = replacements[i];
+    const n = emojiType.create({ emoji: r.ch }, null, r.marks);
+    tr = tr.replaceWith(r.from, r.to, n);
+  }
+  return tr.setMeta('znEmojiExpand', true).setMeta('addToHistory', false);
+}
+const ZnEmoji = Node.create({
+  name: 'znEmoji',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: false,
+  draggable: false,
+  addAttributes() {
+    return {
+      emoji: { default: '' },
+    };
+  },
+  parseHTML() {
+    return [{
+      tag: 'span[data-zn-emoji]',
+      getAttrs: (el) => ({ emoji: el.getAttribute('data-zn-emoji') || el.textContent || '' }),
+    }];
+  },
+  renderHTML({ node }) {
+    return ['span', {
+      'data-zn-emoji': node.attrs.emoji || '',
+      class: 'zn-emoji',
+    }, node.attrs.emoji || ''];
+  },
+  renderText({ node }) {
+    return node.attrs.emoji || '';
+  },
+  renderMarkdown(node) {
+    return (node && node.attrs && node.attrs.emoji) || '';
+  },
+  addStorage() {
+    return {
+      clipboardTextSerializer: (node) => (node.attrs && node.attrs.emoji) || '',
+    };
+  },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement('span');
+      dom.className = 'zn-emoji';
+      dom.contentEditable = 'false';
+      let cur = node.attrs.emoji || '';
+      _paintZnEmojiDom(dom, cur);
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'znEmoji') return false;
+          cur = updated.attrs.emoji || '';
+          _paintZnEmojiDom(dom, cur);
+          return true;
+        },
+      };
+    };
+  },
+  addProseMirrorPlugins() {
+    const emojiType = this.type;
+    return [new Plugin({
+      key: new PluginKey('znEmojiExpand'),
+      appendTransaction(trs, _old, state) {
+        if (!trs.some((tr) => tr.docChanged)) return null;
+        if (trs.some((tr) => tr.getMeta('znEmojiExpand'))) return null;
+        try {
+          if (document.querySelector('#editor .ProseMirror.zn-ime-composing')) return null;
+        } catch (_) {}
+        return _znEmojiExpandTr(state, emojiType);
+      },
+      view(editorView) {
+        setTimeout(function () {
+          try { _warmDocTwemoji(editorView.state.doc); } catch (_) {}
+        }, 0);
+        return {
+          update(view, prev) {
+            if (view.state.doc !== prev.doc) {
+              try { _warmDocTwemoji(view.state.doc); } catch (_) {}
+            }
+          },
+        };
+      },
+      props: {
+        handleKeyDown(view, event) {
+          // 相邻原子节点间方向键：参考 TipTap Emoji / prosemirror#1220
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return false;
+          if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return false;
+          if (!TextSelection || !view.state.selection.empty) return false;
+          if (!(view.state.selection instanceof TextSelection)) return false;
+          const $pos = view.state.selection.$from;
+          if (event.key === 'ArrowLeft') {
+            const before = $pos.nodeBefore;
+            if (!before || before.type !== emojiType) return false;
+            const newPos = $pos.pos - before.nodeSize;
+            if (newPos < $pos.start()) return false;
+            view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, newPos)));
+            return true;
+          }
+          const after = $pos.nodeAfter;
+          if (!after || after.type !== emojiType) return false;
+          const newPos = $pos.pos + after.nodeSize;
+          if (newPos > $pos.end()) return false;
+          view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, newPos)));
+          return true;
+        },
+        handleDOMEvents: {
+          compositionstart(view) {
+            try { view.dom.classList.add('zn-ime-composing'); } catch (_) {}
+            return false;
+          },
+          compositionend(view) {
+            try { view.dom.classList.remove('zn-ime-composing'); } catch (_) {}
+            try {
+              const tr = _znEmojiExpandTr(view.state, emojiType);
+              if (tr) view.dispatch(tr);
+            } catch (_) {}
+            return false;
+          },
+          mousedown(view, event) {
+            // 点在表情上：按左右落到前/后（原子块本身不可进字内）
+            if (event.button !== 0 || _znEmojiIsComposing(view)) return false;
+            const el = event.target && event.target.closest
+              ? event.target.closest('.zn-emoji')
+              : null;
+            if (!el || !TextSelection) return false;
+            let pos = null;
+            try {
+              pos = typeof view.posAtDOM === 'function' ? view.posAtDOM(el, 0) : null;
+            } catch (_) { pos = null; }
+            if (typeof pos !== 'number') return false;
+            const node = view.state.doc.nodeAt(pos);
+            if (!node || node.type !== emojiType) return false;
+            const r = el.getBoundingClientRect();
+            const after = typeof event.clientX === 'number' && event.clientX >= (r.left + r.right) / 2;
+            const target = after ? pos + node.nodeSize : pos;
+            try {
+              view.dispatch(
+                view.state.tr.setSelection(TextSelection.create(view.state.doc, target))
+              );
+              try { view.focus(); } catch (_) {}
+              event.preventDefault();
+              return true;
+            } catch (_) { return false; }
+          },
+        },
+      },
+    })];
+  },
+});
 
 const CustomCodeBlock = CodeBlock.extend({
   // 新增 title 属性：代码块顶栏可编辑标题。不渲染到 HTML（rendered:false），
@@ -1282,7 +1606,33 @@ const editor = (() => {
   // 返回是否成功落地（供 realtime 决定走快车道还是退回旧路径）。
   function applyRemoteUpdate(id, b64) {
     if (!_bound || !_yDoc || id !== _currentId || !b64) return false;
-    try { _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(b64), 'remote'); return true; } catch (_) { return false; }
+    try {
+      _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(b64), 'remote');
+      // 对端/云端账本只含 Unicode 表情字 → 收成编辑器用的 znEmoji 节点
+      _ensureEmojisExpanded();
+      return true;
+    } catch (_) { return false; }
+  }
+
+  /** 绑定模式下写出 note.ydoc：必须与摊平后的 note.doc 同形（只含 Unicode 表情），
+   *  绝不把编辑器专用 znEmoji 节点打进账本——旧版客户端不认该节点，同步时会丢掉表情再回传污染。 */
+  function _persistFlatYdoc(flatDoc) {
+    if (!_currentId || !flatDoc) return;
+    try {
+      const Yutil = window.__ydoc;
+      if (!Yutil || !Yutil.ready || !Yutil.ready()) {
+        // 引擎未就绪：退回活账本（仍可能含 znEmoji；下次保存再洗）
+        if (_yDoc) window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
+        return;
+      }
+      const prev = window.storage.get(_currentId);
+      const b64 = (prev && prev.ydoc) ? Yutil.update(prev.ydoc, flatDoc) : Yutil.build(flatDoc);
+      window.storage._setNoteYdoc(_currentId, b64);
+    } catch (_) {
+      try {
+        if (_yDoc) window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
+      } catch (__) {}
+    }
   }
   // 双击空格跳出续写：记录上一次空格的时间与「插入后光标位置」，
   // 只有「窗口内、原地连按第二下空格、且当前光标处有激活的行内格式」才触发。
@@ -1496,6 +1846,7 @@ const editor = (() => {
         MathBlock,
         CalendarBlock,
         ZhichatBlock,
+        ZnEmoji,
         // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
         // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
         // · 触屏 = 不注册插件，#bubble-menu 常驻 DOM 由下方 dock 控制器自管理显隐，
@@ -1986,6 +2337,7 @@ const editor = (() => {
       _editor.state.doc.nodesBetween(from, to, (node, pos) => {
         if (node.type.name === 'mathInline') { text += `$${node.attrs.latex}$`; return false; }
         if (node.type.name === 'mathBlock') { text += `$$${node.attrs.latex}$$\n`; return false; }
+        if (node.type.name === 'znEmoji') { text += (node.attrs && node.attrs.emoji) || ''; return false; }
         if (node.isText) {
           const s = Math.max(from, pos) - pos;
           const en = Math.min(to, pos + node.nodeSize) - pos;
@@ -3111,7 +3463,7 @@ const editor = (() => {
       doc.descendants((node) => {
         if (hasAtom) return false;
         const n = node.type.name;
-        if (n === 'image' || n === 'table' || n === 'mathInline' || n === 'mathBlock' || n === 'horizontalRule') {
+        if (n === 'image' || n === 'table' || n === 'mathInline' || n === 'mathBlock' || n === 'horizontalRule' || n === 'znEmoji') {
           hasAtom = true; return false;
         }
         return true;
@@ -3164,11 +3516,21 @@ const editor = (() => {
 
   // 把笔记灌进编辑器：有 doc(JSON) 走零往返 JSON 路径（全保真、无抖动）；
   // 旧笔记（仅 content/md，尚未迁移）退回 markdown 解析路径，保证存量笔记照常打开。
+  function _ensureEmojisExpanded() {
+    if (!_editor) return;
+    try {
+      const type = _editor.schema.nodes.znEmoji;
+      const tr = _znEmojiExpandTr(_editor.state, type);
+      if (tr) _editor.view.dispatch(tr);
+    } catch (_) {}
+  }
+
   function _loadNoteIntoEditor(note) {
     if (!_editor || !note) return;
     if (note.doc) {
       try {
         _editor.commands.setContent(note.doc, { emitUpdate: false });
+        _ensureEmojisExpanded();
         return;
       } catch (e) {
         console.warn('[editor] setContent(doc) 失败，退回 markdown 路径', e);
@@ -3181,6 +3543,7 @@ const editor = (() => {
       _editor.commands.clearContent();
       _editor.commands.setContent(md, { emitUpdate: false, contentType: 'markdown' });
     }
+    _ensureEmojisExpanded();
   }
 
   function flushSave() {
@@ -3188,11 +3551,12 @@ const editor = (() => {
     _dirtyUnsaved = false;
     if (!_currentId || !_editor) return;
     try {
-      const doc = _editor.getJSON();
+      // 落盘前把 znEmoji 摊成 Unicode——与旧笔记/旧客户端同形，避免同步结构突变
+      const doc = _flattenZnEmojiDoc(_editor.getJSON());
       const docStr = JSON.stringify(doc);
       const note = window.storage?.get(_currentId);
       if (!note) return;
-      // 判脏：与「打开时的 doc 基线」比较。doc(JSON) 往返稳定、无序列化抖动 →
+      // 判脏：与「打开时的 doc 基线」比较。基线也是摊平后的 JSON。
       // 没编辑过的笔记 docStr 必然等于基线 → 不会打开即标脏 → 不会跨设备误覆盖。
       if (_openedDoc != null && docStr === _openedDoc) {
         return;
@@ -3203,14 +3567,10 @@ const editor = (() => {
         console.warn('[editor.flushSave] 拒绝保存：doc 判空但编辑器仍有内容（疑似异常态）');
         return;
       }
-      // 绑定模式：账本权威 = 活的 _yDoc，跳过「从 doc 重建账本」(那会毁掉 CRDT 历史)，
-      //   保存后直接把活账本状态写回 note.ydoc，供网盘留底/对端领用。
-      // ⚠️ 顺序很关键：必须先把最新活账本写回 note.ydoc，再 updateDoc。因为 updateDoc 会
-      //   emit('change',{type:'content'})，realtime 监听到即读 note.ydoc 直推对端——若先 updateDoc
-      //   再写 ydoc，推出去的永远是上一拍的旧账本（用户报的「打123只同步到12，下一步才出现3」）。
-      if (_bound && _yDoc) {
-        try { window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc))); } catch (_) {}
-      }
+      // 绑定模式：跳过 storage._maintainLedger；账本按「摊平 doc」演进写出（与 note.doc 同形），
+      //   编辑器里仍可继续用 znEmoji 节点，但上云/即时同步的 ydoc 不含该节点，旧版不会剥表情。
+      // ⚠️ 顺序：先写 note.ydoc 再 updateDoc——realtime 监听 content 时读的是 note.ydoc。
+      if (_bound && _yDoc) _persistFlatYdoc(doc);
       window.storage.updateDoc(_currentId, doc, _bound ? { skipLedger: true } : undefined);
       window.storage.save({ immediate: true });
       // 保存成功后把基线推进到当前 doc，后续无新编辑则不再重复标脏。
@@ -3320,15 +3680,20 @@ const editor = (() => {
     if (_bound) {
       // 绑定模式：内容来自活账本(ySync)，不走 setContent；绑定失败则退回普通载入。
       if (!_bindNoteCrdt(note)) { _loadNoteIntoEditor(note); _resetHistory(); }
-      else _normalizeEmptyListItems();
+      else {
+        _normalizeEmptyListItems();
+        // 账本里是 Unicode 表情字 → 收成 znEmoji，供光标/显示；落盘仍摊平
+        _ensureEmojisExpanded();
+      }
     } else {
       _loadNoteIntoEditor(note);
       _normalizeEmptyListItems();
       _resetHistory();
     }
-    // 记录「打开时的 doc 基线」：之后 flushSave 据此判断是否有真实编辑。
-    try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    // 基线用「摊平后的 JSON」：编辑器内是原子节点，与磁盘 Unicode 对齐后才不会打开即标脏
+    try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
     _refreshMdSourceIfOpen();
+    try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
     requestAnimationFrame(() => { _suppressInput = false; });
 
     // 定位：默认不把光标放进正文（避免一打开就进入编辑态），只恢复上次的滚动位置。
@@ -3613,6 +3978,11 @@ const editor = (() => {
       try {
         if (note.ydoc) _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(note.ydoc), 'remote');
       } catch (_) { try { _bindNoteCrdt(note); } catch (__) {} }
+      try { _ensureEmojisExpanded(); } catch (_) {}
+      try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
+      try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
+      refreshOutline();
+      refreshTitle();
       return;
     }
     // 下行同步触发的重载：不阻塞渲染（保持同步时序），后台批量预热完成后再刷新占位图。
@@ -3632,8 +4002,9 @@ const editor = (() => {
     _loadNoteIntoEditor(note);
     _normalizeEmptyListItems();
     _resetHistory();
-    // 同 open()：重载后刷新 doc 基线，避免下行同步刚覆盖内容又被 flushSave 误判为本地编辑。
-    try { _openedDoc = JSON.stringify(_editor.getJSON()); } catch (_) { _openedDoc = null; }
+    // 同 open()：基线用摊平 JSON，避免下行同步后误判本地编辑。
+    try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
+    try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
     if (_sel) {
       try {
         const max = Math.max(1, _editor.state.doc.content.size - 1);
@@ -3738,6 +4109,7 @@ const editor = (() => {
       // 也能搜源码形态（$$key=$$）。旧的无 doc 笔记走 content(markdown) 本就含 $$，此举与之对齐。
       if (t === 'mathInline') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$' + lx + '$'); return; }
       if (t === 'mathBlock') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$$' + lx + '$$'); parts.push('\n'); return; }
+      if (t === 'znEmoji') { parts.push((node.attrs && node.attrs.emoji) || ''); return; }
       if (t === 'image') return; // 跳过图片
       if (Array.isArray(node.content)) node.content.forEach(visit);
       if (_BLOCK_TYPES.has(t)) parts.push('\n');
@@ -3762,10 +4134,11 @@ const editor = (() => {
   function docIsEmpty(doc) {
     if (!doc || !Array.isArray(doc.content) || doc.content.length === 0) return true;
     let hasContent = false;
-    const MEDIA = new Set(['image', 'mathInline', 'mathBlock', 'horizontalRule', 'codeBlock', 'table']);
+    const MEDIA = new Set(['image', 'mathInline', 'mathBlock', 'horizontalRule', 'codeBlock', 'table', 'znEmoji']);
     const visit = (node) => {
       if (hasContent || !node) return;
       if (node.type === 'text' && (node.text || '').trim()) { hasContent = true; return; }
+      if (node.type === 'znEmoji' && node.attrs && node.attrs.emoji) { hasContent = true; return; }
       if (MEDIA.has(node.type)) { hasContent = true; return; }
       if (Array.isArray(node.content)) node.content.forEach(visit);
     };

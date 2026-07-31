@@ -2344,8 +2344,48 @@ const storage = (() => {
   // 结构/属性的唯一权威 = 结构总账(CRDT)。按篇网盘文件**只管正文**，不再仲裁这些字段（Stage B 收口）。
   //   归属(parentId/workspaceId)、排序(frac/order)、置顶/颜色/图标/展开，一律以总账为准。
   const _LEDGER_OWNED = ['title', 'parentId', 'workspaceId', 'pinnedAt', 'color', 'icon', 'expanded', 'frac', 'order'];
+  /** 下行笔记正文：若仍带编辑器专用 znEmoji 节点，摊成 Unicode 并洗一遍 ydoc。
+   *  旧版不认 znEmoji，留在云端会被剥掉再回传；新版落盘本应已摊平，这里作防污染兜底。 */
+  function _sanitizeIncomingNoteBody(noteData) {
+    if (!noteData || typeof noteData !== 'object') return noteData;
+    let doc = noteData.doc;
+    let ydoc = noteData.ydoc;
+    let changed = false;
+    try {
+      if (doc && window.znEmojiUtil && window.znEmojiUtil.flattenZnEmojiDocJSON) {
+        const before = JSON.stringify(doc);
+        if (before.indexOf('"znEmoji"') >= 0) {
+          const flat = window.znEmojiUtil.flattenZnEmojiDocJSON(doc);
+          if (flat) { doc = flat; changed = true; }
+        }
+      }
+    } catch (_) {}
+    try {
+      const Y = window.__ydoc;
+      if (ydoc && doc && Y && Y.ready && Y.ready()) {
+        let needWash = changed;
+        if (!needWash) {
+          try {
+            const asDoc = Y.toDoc(ydoc);
+            needWash = !!(asDoc && JSON.stringify(asDoc).indexOf('"znEmoji"') >= 0);
+          } catch (_) { needWash = false; }
+        }
+        if (needWash) {
+          ydoc = Y.update(ydoc, doc);
+          changed = true;
+        }
+      }
+    } catch (_) {}
+    if (!changed) return noteData;
+    const out = Object.assign({}, noteData);
+    if (doc) out.doc = doc;
+    if (ydoc) out.ydoc = ydoc;
+    return out;
+  }
+
   function _webdavApplyNote(id, noteData) {
     if (!_data.notes) _data.notes = {};
+    noteData = _sanitizeIncomingNoteBody(noteData);
     const prev = _data.notes[id];
     // 本地已存在的笔记：应用远端时**保留本地的结构/属性字段**，绝不被文件里(可能陈旧、且走另一套时间-LWW
     //   仲裁)的值覆盖 → 杜绝「按篇通道 vs 总账」两条路互踩（反复重排/绿点狂转/两端不一致的总病根）。

@@ -234,6 +234,7 @@ const tree = (() => {
     }
     _applySelClasses();
     _updateSelBar();
+    try { window.emojiUi?.paintAll?.(container); } catch (_) {}
   }
 
   function renderPinnedRow(note) {
@@ -1057,6 +1058,7 @@ const tree = (() => {
       }
       menu.appendChild(el);
     }
+    try { window.emojiUi?.paintAll?.(menu); } catch (_) {}
   }
 
   // 「其他」子菜单：把不常用项收纳进来，主菜单更清爽
@@ -1078,6 +1080,7 @@ const tree = (() => {
           item.addEventListener('click', () => { hideContextMenu(); it.onClick(); });
           el.appendChild(item);
         }
+        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
         return el;
       }
     };
@@ -1203,6 +1206,7 @@ const tree = (() => {
           });
           el.appendChild(item);
         }
+        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
         return el;
       }
     };
@@ -1287,6 +1291,7 @@ const tree = (() => {
           }
           el.appendChild(item);
         }
+        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
         return el;
       }
     };
@@ -1302,6 +1307,7 @@ const tree = (() => {
     sub.style.position = 'fixed';
     sub.style.visibility = 'hidden';
     document.body.appendChild(sub);
+    try { window.emojiUi?.paintAll?.(sub); } catch (_) {}
 
     const margin = 8;
     const vw = window.innerWidth, vh = window.innerHeight;
@@ -1837,6 +1843,7 @@ const tree = (() => {
       });
       menu.appendChild(item);
     }
+    try { window.emojiUi?.paintAll?.(menu); } catch (_) {}
     menu.classList.remove('hidden');
     const r = anchorEl.getBoundingClientRect();
     positionMenu(menu, r.left, r.top);

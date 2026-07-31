@@ -502,7 +502,8 @@
   window.aiChat = {
     PROVIDERS: PROVIDERS, provOf: provOf,
     getConfig: getConfig, isConfigured: isConfigured, hasKey: hasKey,
-    getKey: getKey, getKeyFor: getKeyFor, setKey: setKey, trySyncKeyDown: trySyncKeyDown,
+    getKey: getKey, getKeyFor: getKeyFor, setKey: setKey,
+    syncKeyUp: syncKeyUp, trySyncKeyDown: trySyncKeyDown,
     setProvider: setProvider, setModel: setModel, setBase: setBase,
     setTemp: function (t) { ss(SK.temp, String(t)); },
     setSysPrompt: function (s) { ss(SK.sysPrompt, (s || '').trim()); },

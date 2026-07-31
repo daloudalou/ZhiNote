@@ -452,6 +452,7 @@ const search = (() => {
         iconEl.classList.add('has-color');
         iconEl.style.setProperty('--note-color-dot', note.color);
       }
+      try { window.emojiUi?.paintIcon?.(iconEl, iconEl.textContent); } catch (_) {}
       const titleText = document.createElement('span');
       titleText.className = 'search-result-title-text';
       titleText.innerHTML = highlightHtml(h.title || '无标题', q);

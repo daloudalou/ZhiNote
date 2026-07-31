@@ -9,12 +9,13 @@
 
   var K = {
     enabled: 'zhinote.mascot.enabled',   // '0' 关闭；其它/缺省 = 开
-    resident: 'zhinote.mascot.resident', // '1' 常驻
+    resident: 'zhinote.mascot.resident', // '0' 关闭常驻；其它/缺省 = 开常驻
     avatar: 'zhinote.mascot.avatar',     // 常驻形象（emoji 字符）
     pos: 'zhinote.mascot.pos',           // 常驻位置 {x,y}（视口像素，左上角）；没存 = 默认右下角
   };
-  // 常驻形象：从谷歌动图全集（window.NOTO_EMOJI，mascot-emoji.js）里任选，存 emoji 字符
-  function avatarGlyph() { return lget(K.avatar) || '🌱'; }
+  // 缺省形象：藏云脸（迷茫）；从谷歌动图全集任选后写入本键
+  var DEFAULT_AVATAR = '\uD83D\uDE36\u200D\uD83C\uDF2B\uFE0F'; // 😶‍🌫️
+  function avatarGlyph() { return lget(K.avatar) || DEFAULT_AVATAR; }
   // 持久化：主存走 storage 设置（'_'+键名 → 本机保存、不上云；Quicker 端随动作状态变量落盘，
   // 重启 Quicker 不丢）。localStorage 只作旧值迁移来源 + 兜底双写——单独靠它在 Quicker 端
   // 不可靠（预热建窗/进程被杀时浏览器缓存可能整体丢失，用户实测常驻/位置/形象全部重置）。
@@ -36,7 +37,7 @@
   }
 
   function isEnabled() { return lget(K.enabled) !== '0'; }
-  function isResident() { return lget(K.resident) === '1'; }
+  function isResident() { return lget(K.resident) !== '0'; }
 
   // 话题/状态 -> emoji 码点（可持续扩充；用到才下载，不占空间；加载失败自动退回静态字形）
   // idle = 🌱：对话里说话人头像没有特殊表情时回到原始形象（用户指定）
@@ -97,9 +98,15 @@
     if (_mem[cp]) return Promise.resolve(_mem[cp]);
     return idbGet(cp).then(function (s) {
       if (s) { try { var o = JSON.parse(s); _mem[cp] = o; return o; } catch (_) {} }
-      return fetch('https://fonts.gstatic.com/s/e/notoemoji/latest/' + cp + '/lottie.json')
-        .then(function (r) { if (!r.ok) throw 0; return r.text(); })
-        .then(function (txt) { idbPut(cp, txt); var o = JSON.parse(txt); _mem[cp] = o; return o; });
+      // 优先咱们域名代取缓存（emoji.zhinote.net），失败再直连谷歌
+      function loadTxt(url) {
+        return fetch(url).then(function (r) { if (!r.ok) throw 0; return r.text(); });
+      }
+      var primary = notoUrl(cp, 'lottie.json');
+      var fallback = EMO_HOST_FALLBACK + cp + '/lottie.json';
+      return loadTxt(primary).catch(function () {
+        return primary === fallback ? Promise.reject(0) : loadTxt(fallback);
+      }).then(function (txt) { idbPut(cp, txt); var o = JSON.parse(txt); _mem[cp] = o; return o; });
     });
   }
 
@@ -357,7 +364,19 @@
 
   // ===== 常驻形象：谷歌动图全集选择器 =====
   // 网格用谷歌矢量图渲染（新表情在旧系统字库里是空框，图片在任何系统长一样）；悬停播动画预览
-  var EMO_HOST = 'https://fonts.gstatic.com/s/e/notoemoji/latest/';
+  // 小枝图源：优先 window.__NOTO_EMO_HOST__（咱们 Cloudflare 代取，见 docs/emoji-proxy-worker.js），
+  // 未部署/失败时回退谷歌 gstatic。第二套（Twemoji）不走这里。
+  var EMO_HOST_FALLBACK = 'https://fonts.gstatic.com/s/e/notoemoji/latest/';
+  var EMO_HOST = (typeof window !== 'undefined' && window.__NOTO_EMO_HOST__) || EMO_HOST_FALLBACK;
+  function notoUrl(cp, file) {
+    var primary = EMO_HOST.replace(/\/?$/, '/') + cp + '/' + file;
+    if (EMO_HOST === EMO_HOST_FALLBACK) return primary;
+    // 调用方用 fetch 时自行处理失败；img.src 用 primary，onerror 可再试 fallback
+    return primary;
+  }
+  function notoSvgUrl(cp) {
+    return notoUrl(cp, 'emoji.svg');
+  }
   var _cpByChar = null;
   function notoCp(ch) {
     var NE = window.NOTO_EMOJI;
@@ -382,7 +401,7 @@
       el.textContent = ch; // 不在动图集：只能系统字形（多为单段）
       return;
     }
-    var url = EMO_HOST + cp + '/emoji.svg';
+    var url = notoSvgUrl(cp);
     var existing = el.querySelector('img.mascot-avaimg');
     if (existing && existing.getAttribute('data-cp') === cp) return;
     var isZwj = cp.split(/[-_]/).indexOf('200d') >= 0;
@@ -395,10 +414,15 @@
       el.textContent = '';
       el.appendChild(img);
     };
+    img.onerror = function () {
+      if (img.dataset.fb === '1') return;
+      img.dataset.fb = '1';
+      img.src = EMO_HOST_FALLBACK + cp + '/emoji.svg';
+    };
     // 复合表情：保留旧图直到新图就绪，绝不写入会被拆开的文字；单段可暂用字形占位
     if (!existing && !isZwj) el.textContent = ch;
     img.src = url;
-    if (img.complete) { try { img.onload(); } catch (_) {} img.onload = null; }
+    if (img.complete && img.naturalWidth) { try { img.onload(); } catch (_) {} img.onload = null; }
   }
   var _avaPop = null, _avaPrev = null, _avaPrevTimer = null, _avaTab = 0;
   function closeAvaPick() {
@@ -416,7 +440,8 @@
     pop.innerHTML = '<input type="text" class="mascot-inp mascot-avapick-q" placeholder="搜表情：开心 / 猫 / 爱心…">'
       + '<div class="mascot-avapick-tabs">' + NE.cats.map(function (c, i) { return '<button type="button" class="mascot-avapick-tab' + (i === _avaTab ? ' on' : '') + '" data-i="' + i + '">' + esc(c) + '</button>'; }).join('') + '</div>'
       + '<div class="mascot-avapick-grid"></div>'
-      + '<div class="mascot-avapick-foot"><span class="mascot-avapick-pv"></span><span class="mascot-avapick-pn">共 ' + NE.items.length + ' 个，全都会动；悬停预览，点选定</span></div>';
+      + '<div class="mascot-avapick-foot"><span class="mascot-avapick-pv"></span><span class="mascot-avapick-pn">共 ' + NE.items.length + ' 个 · 悬停预览</span></div>'
+      + '<div class="mascot-avapick-attr" title="署名与许可">动图 Noto Animated Emoji © Google · CC-BY 4.0</div>';
     document.body.appendChild(pop);
     _avaPop = pop;
     var grid = pop.querySelector('.mascot-avapick-grid');
@@ -428,7 +453,9 @@
       grid.innerHTML = list.map(function (it) {
         var g = cpToGlyph(it[0]);
         return '<button type="button" class="mascot-avapick-cell' + (g === curCh ? ' on' : '') + '" data-cp="' + it[0] + '" title="' + esc((it[2] || '').split(' ')[0]) + '">'
-          + '<img loading="lazy" src="' + EMO_HOST + it[0] + '/emoji.svg" alt="' + esc(g) + '" onerror="this.replaceWith(this.alt)">'
+          + '<img loading="lazy" src="' + notoSvgUrl(it[0]) + '" alt="' + esc(g) + '"'
+          + ' data-fb="' + EMO_HOST_FALLBACK + it[0] + '/emoji.svg"'
+          + ' onerror="if(this.dataset.tried!==\'1\'&&this.dataset.fb){this.dataset.tried=\'1\';this.src=this.dataset.fb;}else{this.replaceWith(document.createTextNode(this.alt));}">'
           + '</button>';
       }).join('') || '<div class="mascot-picker-none">没有找到相关表情</div>';
       grid.scrollTop = 0;
@@ -743,7 +770,10 @@
     }
     function pick(p) { _pickerPicked = true; closePicker(); onPick(p); }
     function itemHtml(icon, title, sub, extra) {
-      return '<span class="mascot-picker-ico">' + icon + '</span><span class="mascot-picker-m"><span class="mascot-picker-t">'
+      var ico = (window.emojiUi && window.emojiUi.iconHtml)
+        ? window.emojiUi.iconHtml(icon, 'mascot-picker-ico')
+        : ('<span class="mascot-picker-ico">' + esc(icon) + '</span>');
+      return ico + '<span class="mascot-picker-m"><span class="mascot-picker-t">'
         + esc(title) + '</span>' + (sub ? '<span class="mascot-picker-s">' + esc(sub) + '</span>' : '') + '</span>' + (extra || '');
     }
     // 全部笔记（不删的），最近改过的排前面；跨笔记本也列出（副标题标明在哪个本子）
@@ -796,8 +826,11 @@
         for (var wid in groups) if (!known[wid]) strays = strays.concat(groups[wid]);
         listWs.forEach(function (w) {
           var open = !!exp[w.id];
+          var wsIco = (window.emojiUi && window.emojiUi.iconHtml)
+            ? window.emojiUi.iconHtml(w.icon || '📔', 'mascot-picker-ico')
+            : ('<span class="mascot-picker-ico">' + esc(w.icon || '📔') + '</span>');
           var head = mkRow('<span class="mascot-mm-caret">' + (open ? '▾' : '▸') + '</span>'
-            + '<span class="mascot-picker-ico">' + esc(w.icon || '📔') + '</span>'
+            + wsIco
             + '<span class="mascot-picker-m"><span class="mascot-picker-t mascot-picker-wst">' + esc(w.name || '未命名') + '</span></span>'
             + '<span class="mascot-picker-n">' + groups[w.id].length + '</span>', false);
           head.classList.add('mascot-picker-ws');
@@ -827,6 +860,7 @@
         r.el.addEventListener('mousedown', function (e) { e.preventDefault(); if (r.t) r.t(); else pick(r.p); });
         list.appendChild(r.el);
       });
+      try { if (window.emojiUi && window.emojiUi.paintAll) window.emojiUi.paintAll(list); } catch (_) {}
       position();
     }
     function mkRow(html, on) {
@@ -991,6 +1025,7 @@
       mg.innerHTML = '<span class="mascot-picker-ico">⚙️</span><span class="mascot-picker-m"><span class="mascot-picker-s">管理常用语（增删改）…</span></span>';
       mg.addEventListener('mousedown', function (e) { e.preventDefault(); closePicker(); openMascotSettings(); });
       list.appendChild(mg);
+      try { if (window.emojiUi && window.emojiUi.paintAll) window.emojiUi.paintAll(list); } catch (_) {}
       position();
     }
     setTimeout(function () {
@@ -1290,6 +1325,7 @@
       clr.addEventListener('mousedown', function (e) { e.preventDefault(); lset(HIST_KEY, '[]'); closePicker(); });
       list.appendChild(clr);
     }
+    try { if (window.emojiUi && window.emojiUi.paintAll) window.emojiUi.paintAll(list); } catch (_) {}
     document.body.appendChild(pop); _picker = pop;
     var r = anchor.getBoundingClientRect();
     pop.style.left = Math.round(Math.min(Math.max(8, r.right - pop.offsetWidth), window.innerWidth - pop.offsetWidth - 8)) + 'px';
@@ -2164,8 +2200,13 @@
     scheduleIdlePlay();
     // 云端带下来的加密 key：本机没 key 时尝试用网盘密码解出（换设备免重填）
     try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
+    // 本机已有 key、网盘已配好：补上行密文（先填 key 后开同步时原先不会传）
+    try { ai() && ai().syncKeyUp && ai().syncKeyUp(); } catch (_) {}
     // 设置同步可能晚于启动到达，稍后再试一次
-    setTimeout(function () { try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {} }, 15000);
+    setTimeout(function () {
+      try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
+      try { ai() && ai().syncKeyUp && ai().syncKeyUp(); } catch (_) {}
+    }, 15000);
   }
 
   window.mascot = {

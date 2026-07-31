@@ -326,6 +326,7 @@ const palette = (() => {
       });
       list.appendChild(el);
     });
+    try { window.emojiUi?.paintAll?.(list); } catch (_) {}
   }
 
   /** 在某条笔记的多个命中之间切换：就地更新该行的摘要与 n/m 计数，不重渲整列、不打开笔记。 */

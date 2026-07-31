@@ -42,7 +42,7 @@ async function bootstrap() {
   // 显眼的版本水印——在控制台第一行就能看到，确认 cache 是否刷新
   // 这行是「当前跑的是哪一次构建」的唯一可靠标记（__MD_VER__ 打包后恒为 vX.Y.Z-dev 分不出轮次）。
   // 每轮改动随 index.html 的 ?v= 一起更新，否则没法判断 Quicker 常驻窗口里跑的是不是新包。
-  console.log('%c[ZhiNote] build 20260730t10 ✓ (Tiptap editor, local bundle, BubbleMenu)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
+  console.log('%c[ZhiNote] build 20260730t42 ✓ (emoji 账本只存 Unicode，防旧版同步剥表情)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
   console.log('[ZhiNote] 调试开关：在控制台运行 window.__MD_DEBUG__=true 后再输入 / 或 ;; 可看判定过程');
 
   // 宿主标记：非 Quicker 宿主（浏览器/PWA）→ body.host-web，CSS 据此隐藏窗口控制等桌面专属 UI。
@@ -329,6 +329,11 @@ async function bootstrap() {
       if (_syncProtectionActive) _endSyncProtection();
       // 同步成功（非重试占位）→ 清掉失败去重记录，下次再失败仍会正常提示
       if (payload.detail !== 'retry-transient') { _lastSyncFailMsg = ''; _lastSyncFailAt = 0; }
+      // 网盘可用后：补传本机密钥密文；同时尝试解出云端密文补本机缺的（绝不覆盖本机已有）
+      if (payload.detail !== 'retry-transient' && window.aiChat) {
+        try { window.aiChat.syncKeyUp && window.aiChat.syncKeyUp(); } catch (_) {}
+        try { window.aiChat.trySyncKeyDown && window.aiChat.trySyncKeyDown(); } catch (_) {}
+      }
       // 上传/下载成功 → 平静地标记"已同步"（steady 绿，不闪不转）。静默轮询且无变更（unchanged/empty）时不动徽标。
       if (!(payload.silent && (payload.detail === 'get-unchanged' || payload.detail === 'get-empty'))) {
         _setCloudSyncDot('synced');
@@ -1038,14 +1043,16 @@ function wireEvents() {
         onPick: (icon) => {
           const v = icon || '📖';
           storage.setSetting('appIcon', v);
-          appIconEl.textContent = v;
+          try { window.emojiUi?.paintIcon?.(appIconEl, v); } catch (_) { appIconEl.textContent = v; }
         },
       });
     };
     appIconEl.addEventListener('click', _openAppIconPicker);
     appIconEl.addEventListener('contextmenu', _openAppIconPicker);
     const saved = storage.getSetting('appIcon');
-    if (saved) appIconEl.textContent = saved;
+    try { window.emojiUi?.paintIcon?.(appIconEl, saved || appIconEl.textContent || '📖'); } catch (_) {
+      if (saved) appIconEl.textContent = saved;
+    }
   }
 
   // 标题栏文字 — 点击修改自定义名称
@@ -2857,7 +2864,8 @@ function refreshWorkspaceSwitcher() {
   if (!sw) return;
   const ws = storage.getActiveWorkspace();
   if (!ws) return;
-  sw.querySelector('.ws-icon').textContent = ws.icon || '📒';
+  try { window.emojiUi?.paintIcon?.(sw.querySelector('.ws-icon'), ws.icon || '📒'); }
+  catch (_) { sw.querySelector('.ws-icon').textContent = ws.icon || '📒'; }
   sw.querySelector('.ws-name').textContent = ws.name || '未命名';
 }
 
@@ -2894,7 +2902,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
         onPick: (icon) => {
           storage.setWorkspaceIcon?.(ws.id, icon || '📒');
           refreshWorkspaceSwitcher();
-          btn.textContent = icon || '📒';
+          try { window.emojiUi?.paintIcon?.(btn, icon || '📒'); } catch (_) { btn.textContent = icon || '📒'; }
         },
       });
     });
@@ -2910,7 +2918,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
           onPick: (icon) => {
             storage.setWorkspaceIcon?.(ws.id, icon || '📒');
             refreshWorkspaceSwitcher();
-            btn.textContent = icon || '📒';
+            try { window.emojiUi?.paintIcon?.(btn, icon || '📒'); } catch (_) { btn.textContent = icon || '📒'; }
           },
         });
         return;
@@ -2964,6 +2972,7 @@ function openWorkspaceSwitcher(anchorEl, opts = {}) {
   pop.appendChild(newBtn);
 
   document.body.appendChild(pop);
+  try { window.emojiUi?.paintAll?.(pop); } catch (_) {}
   let r;
   if (atCursor) {
     // 光标定位：弹窗左上角贴着鼠标右下方一点，像表情窗一样跟着光标
@@ -3025,124 +3034,11 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
-/** 笔记本 + 笔记图标预设（共用） */
-const WS_EMOJI_PRESETS = [
-  // 笔记本/文件
-  '📒','📓','📔','📕','📗','📘','📙','📚','📖','📝','✏️','📋','🗂️','📁','📂','💼',
-  '📄','📃','📑','🗒️','🗓️','📇','📰','🏷️','✉️','📩','📨','📧','💌','📮','📬','📪',
-  // 工作/学习/工具
-  '💻','🖥️','⌨️','🖱️','📱','💡','🔬','🧪','🧠','🎓','🏫','🏠','🏢','🛒','💰','💳',
-  '⚙️','🔧','🔨','🛠️','⛏️','🪛','🪚','📐','📏','🧮','🔩','⚖️','🧲','🔭','🔎','🔍',
-  // 兴趣/娱乐
-  '🎨','🎵','🎬','🎮','📷','🎤','🎸','🏃','⚽','🏀','🍎','🍳','☕','🍺','🌱','🌳',
-  '🎹','🎺','🥁','🎭','🎪','🎲','🃏','🧩','🎿','🏄','🚴','🧘','🎧','📻','📺','🖼️',
-  // 食物/饮品
-  '🍕','🍔','🍟','🌮','🍣','🍰','🧁','🍩','🍫','🍿','🥤','🧃','🍷','🍶','🫖','🧊',
-  // 自然/天气
-  '☀️','🌙','⭐','🌟','🔥','⚡','❄️','🌈','🌊','🌸','🌹','🍀','🍂','🌍','🌌','✨',
-  '🌺','🌻','🌷','💐','🌿','🪴','🌵','🍄','🐚','🪨','💧','🫧','☁️','🌤️','🌧️','🌪️',
-  // 表情/心情
-  '😀','😄','😁','😊','🙂','😉','😌','😎','🤔','🤗','🥰','😍','🤩','🥳','😇','😋',
-  '😜','🤪','🫠','😴','🥱','😮','🥹','🥺','😢','😅','😬','🤓','🥸','🤖','👻','😺',
-  // 动物
-  '🐱','🐶','🐰','🦊','🐻','🐼','🐨','🦁','🐯','🦄','🐝','🦋','🐠','🐳','🦅','🦉',
-  // 标记/状态
-  '🎯','🚀','💎','🏆','⚓','📌','🔖','🔑','🔒','📊','📈','📉','✅','❤️','💯','🎉',
-  '⭕','❌','⚠️','🔴','🟠','🟡','🟢','🔵','🟣','⚪','🟤','💜','💙','💚','💛','🧡',
-  // 交通/旅行
-  '✈️','🚗','🚂','🚢','🏖️','🗻','🗼','🏰','🎡','🎢','🧳','🗺️','🧭','⛺','🏕️','🌋',
-  // 符号
-  '♻️','☮️','☯️','🕉️','✡️','🔯','♾️','💠','🔶','🔷','🔸','🔹','▶️','⏸️','⏹️','🔘',
-];
-
-/** 通用图标选择 popover（笔记 / 笔记本共用，浮在锚点旁边，选完即写入）
- *  @param {HTMLElement} anchorEl - 锚点元素（图标按钮本身）
- *  @param {object} opts
- *    - currentIcon: string 当前已选 emoji
- *    - defaultIcon: string 恢复默认按钮要恢复成的 icon
- *    - onPick: (icon: string) => void  选完回调
- *    - title?: string 标题文字
- */
+/** 通用图标选择（第二套：与正文插表情同一选择器，系统字形） */
 function openIconPicker(anchorEl, { currentIcon, defaultIcon, onPick, title } = {}) {
   document.querySelectorAll('.icon-picker-popover').forEach(el => el.remove());
-
-  const pop = document.createElement('div');
-  pop.className = 'icon-picker-popover';
-  pop.innerHTML = `
-    ${title ? `<div class="icon-picker-title">${escapeHtml(title)}</div>` : ''}
-    <div class="icon-picker-input-row">
-      <input type="text" class="icon-picker-input" maxlength="4" value="${escapeHtml(currentIcon || '')}" placeholder="自定义">
-      <button type="button" class="icon-picker-confirm" title="确认自定义">✓</button>
-      <button type="button" class="icon-picker-reset" title="恢复默认">↺</button>
-    </div>
-    <div class="icon-picker-grid">
-      ${WS_EMOJI_PRESETS.map(e =>
-        `<button type="button" class="icon-picker-cell${e === currentIcon ? ' active' : ''}" data-e="${e}" title="${e}">${e}</button>`
-      ).join('')}
-    </div>
-  `;
-  document.body.appendChild(pop);
-
-  // 定位：在锚点正下方居中；超出边界则调整
-  const r = anchorEl.getBoundingClientRect();
-  const pw = pop.offsetWidth;
-  const ph = pop.offsetHeight;
-  const vw = window.innerWidth;
-  const vh = visibleViewportH();
-  let left = r.left + r.width / 2 - pw / 2;
-  let top = r.bottom + 6;
-  if (left + pw > vw - 8) left = vw - pw - 8;
-  if (left < 8) left = 8;
-  if (top + ph > vh - 8) top = r.top - ph - 6;
-  if (top < 8) top = 8;
-  if (pw > vw - 16) { pop.style.maxWidth = (vw - 16) + 'px'; left = 8; }
-  // 弹层比视口还高 → 限高 + 滚动，避免底部被裁
-  if (ph > vh - 16) { pop.style.maxHeight = (vh - 16) + 'px'; pop.style.overflowY = 'auto'; top = 8; }
-  pop.style.left = `${Math.round(left)}px`;
-  pop.style.top = `${Math.round(top)}px`;
-
-  function close() {
-    pop.remove();
-    document.removeEventListener('mousedown', onDoc, true);
-    document.removeEventListener('keydown', onKey, true);
-  }
-  function pickAndClose(icon) {
-    onPick?.(icon);
-    close();
-  }
-  const onDoc = (e) => {
-    if (e.target.closest('#emoji-popover')) return;
-    if (!pop.contains(e.target) && e.target !== anchorEl) close();
-  };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.stopPropagation(); close(); }
-  };
-  setTimeout(() => {
-    document.addEventListener('mousedown', onDoc, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
-
-  // 网格点击：直接确认
-  pop.querySelector('.icon-picker-grid').addEventListener('click', (e) => {
-    const b = e.target.closest('.icon-picker-cell');
-    if (!b) return;
-    pickAndClose(b.dataset.e);
-  });
-  // 输入框 Enter / "✓" 确认按钮：用自定义值
-  const input = pop.querySelector('.icon-picker-input');
-  pop.querySelector('.icon-picker-confirm').addEventListener('click', () => {
-    const v = input.value.trim();
-    if (v) pickAndClose(v);
-  });
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); const v = input.value.trim(); if (v) pickAndClose(v); }
-  });
-  // 恢复默认按钮
-  pop.querySelector('.icon-picker-reset').addEventListener('click', () => {
-    pickAndClose(defaultIcon || '');
-  });
-
-  setTimeout(() => input.focus(), 30);
+  if (!window.emojiUi) { toast?.('表情组件未加载', 'error'); return; }
+  window.emojiUi.openPick(anchorEl, { currentIcon, defaultIcon, onPick, title });
 }
 window.openIconPicker = openIconPicker;
 function promptWorkspaceEdit({ mode, ws } = {}) {
@@ -3152,25 +3048,28 @@ function promptWorkspaceEdit({ mode, ws } = {}) {
   const body = document.createElement('div');
   body.innerHTML = `
     <label style="margin-top:0;">图标</label>
-    <div style="display:flex;align-items:center;gap:10px;margin:6px 0 10px;">
-      <input type="text" id="ws-icon-input" maxlength="4" value="${initIcon}" style="width:56px;text-align:center;font-size:22px;font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;line-height:1;padding:6px;">
-      <span style="color:var(--text-tertiary);font-size:12px;">可输入任意 emoji 或单个文字，或从下方挑选</span>
-    </div>
-    <div id="ws-emoji-grid" style="display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin-bottom:14px;max-height:220px;overflow-y:auto;padding:4px;border:1px solid var(--border);border-radius:6px;background:var(--bg-secondary);">
-      ${WS_EMOJI_PRESETS.map(e => `<button type="button" class="ws-emoji-pick" data-e="${e}" title="${e}" style="height:30px;width:30px;border:none;border-radius:6px;background:transparent;font-size:18px;cursor:pointer;font-family:'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif;line-height:1;">${e}</button>`).join('')}
+    <div style="display:flex;align-items:center;gap:10px;margin:6px 0 14px;flex-wrap:wrap;">
+      <button type="button" id="ws-icon-btn" class="ws-icon-pick-btn" title="选择图标">${escapeHtml(initIcon)}</button>
+      <input type="hidden" id="ws-icon-input" value="${escapeHtml(initIcon)}">
+      <span style="color:var(--text-tertiary);font-size:12px;">点击图标打开统一表情库</span>
     </div>
     <label>名称</label>
     <input type="text" id="ws-name-input" value="${escapeHtml(initName)}" placeholder="例如：工作 / 学习 / 生活" maxlength="40">
   `;
-  // 点击 emoji 网格 → 填入 input
-  body.querySelector('#ws-emoji-grid').addEventListener('click', (e) => {
-    const b = e.target.closest('button.ws-emoji-pick');
-    if (!b) return;
-    body.querySelector('#ws-icon-input').value = b.dataset.e;
-    // 视觉高亮
-    body.querySelectorAll('.ws-emoji-pick').forEach(x => x.style.background = 'transparent');
-    b.style.background = 'var(--accent-bg)';
+  const iconBtn = body.querySelector('#ws-icon-btn');
+  const iconInp = body.querySelector('#ws-icon-input');
+  iconBtn.addEventListener('click', () => {
+    openIconPicker(iconBtn, {
+      title: '选择笔记本图标',
+      currentIcon: iconInp.value || '📒',
+      defaultIcon: '📒',
+      onPick: (icon) => {
+        iconInp.value = icon || '📒';
+        try { window.emojiUi?.paintIcon?.(iconBtn, icon || '📒'); } catch (_) { iconBtn.textContent = icon || '📒'; }
+      },
+    });
   });
+  try { window.emojiUi?.paintIcon?.(iconBtn, iconInp.value || '📒'); } catch (_) {}
   openModal({
     title: isCreate ? '新建笔记本' : '重命名笔记本',
     body,
@@ -3246,8 +3145,7 @@ function promptDeleteWorkspace(ws, noteCount) {
   });
 }
 
-/* ===== Emoji 选择器 ===== */
-let _emojiPicker = null;
+/* ===== Emoji 选择器（第二套：统一 emoji-ui，见 emoji-ui.js）===== */
 let _emojiTargetInput = null;  // 表情触发时记住的输入框
 let _emojiTargetRange = null;  // 如果是 contenteditable，记住选区
 // 分号连击计时：只有「两次分号物理按键在窗口内连按」才唤出表情，
@@ -3256,12 +3154,8 @@ const EMOJI_DOUBLE_WINDOW = 450;  // ms
 let _semiKeyTimes = [];
 window.toggleEmojiPicker = toggleEmojiPicker;
 
-/** 在编辑区输入 ;; 后弹出表情选择器在光标处。
- *  选择 `;;` 而不是 `:` 是因为冒号在中文写作中（"如下："）会高频出现，容易误触。
- *  ;; 几乎不会出现在自然文字里，且双键连击容易记忆。
- *  双重监听 input + keyup，确保各模式下都能触发。 */
+/** 在编辑区输入 ;; 后弹出表情选择器在光标处。 */
 function installEmojiTrigger() {
-  // 物理分号键计时（中英文 IME 下 e.code 都是 'Semicolon'；shift+; 是冒号，排除）
   document.addEventListener('keydown', (e) => {
     const isSemi = (e.code === 'Semicolon' && !e.shiftKey) || e.key === ';' || e.key === '；';
     if (!isSemi || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -3272,14 +3166,10 @@ function installEmojiTrigger() {
   document.addEventListener('keyup', (e) => {
     if (e.key === ';' || e.key === '；') tryEmojiTrigger();
   }, true);
-  // 中文 IME 合成结束时也兜底（keyup 在 IME composing 时拿到的是 'Process'）
   document.addEventListener('compositionend', tryEmojiTrigger, true);
 }
 
-/* ===== 双击反引号唤起命令面板 =====
- * 窗口内任意位置快速连按两下 ` 键（英文输出 `、中文输入法输出 ·）唤起命令面板；
- * 在编辑区/输入框里会先删掉刚输入的两个字符。时间窗 200ms（与双击空格跳出格式同逻辑），
- * 慢速逐个输入 `` / ·· 不会触发，不影响正常输入代码围栏 ``` 等场景。 */
+/* ===== 双击反引号唤起命令面板 ===== */
 let _btKeyTimes = [];
 const PALETTE_DOUBLE_WINDOW = 200; // ms
 
@@ -3293,7 +3183,6 @@ function installPaletteTrigger() {
     if (e.code !== 'Backquote' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
     _btKeyTimes.push(performance.now());
     if (_btKeyTimes.length > 2) _btKeyTimes.shift();
-    // 焦点不在任何文本输入处（树/空白区等）：按键不会产生字符，直接在第二击唤起
     const ae = document.activeElement;
     const editable = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
     if (!editable && _btDoubleInWindow()) {
@@ -3309,9 +3198,8 @@ function installPaletteTrigger() {
 function tryPaletteTrigger() {
   if (!_btDoubleInWindow()) return;
   const ae = document.activeElement;
-  if (ae && ae.closest && ae.closest('#palette-overlay')) return; // 面板已打开：别套娃
+  if (ae && ae.closest && ae.closest('#palette-overlay')) return;
 
-  // —— 焦点在普通 input / textarea（标题栏、搜索框等）：删掉刚输入的两个字符再唤起
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && typeof ae.selectionStart === 'number') {
     const pos = ae.selectionStart;
     const before = (ae.value || '').slice(0, pos);
@@ -3324,14 +3212,12 @@ function tryPaletteTrigger() {
     return;
   }
 
-  // —— 焦点在 Tiptap 编辑区
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const node = sel.getRangeAt(0).startContainer;
   const target = node.nodeType === 3 ? node.parentElement : node;
   if (!target?.closest('.ProseMirror')) return;
-  if (target.closest('pre, code')) return; // 代码块/行内代码里照常输入反引号
-  // 推迟到下一轮事件循环：等 ProseMirror 把刚输入的字符收进 state 再检查与删除
+  if (target.closest('pre, code')) return;
   setTimeout(() => {
     const inst = window.editor?.instance?.();
     if (!inst) return;
@@ -3345,7 +3231,6 @@ function tryPaletteTrigger() {
   }, 0);
 }
 
-/** 最近两次分号物理按键是否在连击窗口内（用于时间门：拒绝「旧分号 + 很久后再敲一个」的误触发）。 */
 function _semiDoubleInWindow() {
   return _semiKeyTimes.length >= 2
     && (_semiKeyTimes[_semiKeyTimes.length - 1] - _semiKeyTimes[_semiKeyTimes.length - 2]) <= EMOJI_DOUBLE_WINDOW;
@@ -3355,7 +3240,6 @@ window.tryEmojiTrigger = tryEmojiTrigger;
 function tryEmojiTrigger() {
   const ae = document.activeElement;
 
-  // —— 分支 A：焦点在普通 input / textarea
   if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && typeof ae.selectionStart === 'number') {
     const pos = ae.selectionStart;
     const before = (ae.value || '').slice(0, pos);
@@ -3368,31 +3252,12 @@ function tryEmojiTrigger() {
     _emojiTargetInput = ae;
     _emojiTargetRange = null;
     const ir = ae.getBoundingClientRect();
-    const parentPop = ae.closest('.icon-picker-popover');
-    let fakeAnchor;
-    if (parentPop) {
-      const pr = parentPop.getBoundingClientRect();
-      const emojiW = 300;
-      const spaceRight = window.innerWidth - pr.right;
-      const spaceLeft = pr.left;
-      if (spaceRight >= emojiW + 8) {
-        fakeAnchor = { getBoundingClientRect: () => ({ left: pr.right + 4, right: pr.right + 4, top: pr.top, bottom: pr.top, width: 0, height: 0, x: pr.right + 4, y: pr.top }) };
-      } else if (spaceLeft >= emojiW + 8) {
-        fakeAnchor = { getBoundingClientRect: () => ({ left: pr.left - emojiW - 4, right: pr.left - 4, top: pr.top, bottom: pr.top, width: 0, height: 0, x: pr.left - emojiW - 4, y: pr.top }) };
-      } else {
-        fakeAnchor = { getBoundingClientRect: () => ({ left: ir.left, right: ir.right, top: pr.bottom + 4, bottom: pr.bottom + 4, width: 0, height: 0, x: ir.left, y: pr.bottom + 4 }) };
-      }
-    } else {
-      fakeAnchor = { getBoundingClientRect: () => ({ left: ir.left + 8, right: ir.left + 8, top: ir.top, bottom: ir.bottom, width: 0, height: ir.height, x: ir.left + 8, y: ir.top }) };
-    }
-    const pop = document.getElementById('emoji-popover');
-    if (pop && !pop.classList.contains('hidden')) pop.classList.add('hidden');
+    const fakeAnchor = { getBoundingClientRect: () => ({ left: ir.left + 8, right: ir.left + 8, top: ir.top, bottom: ir.bottom, width: 0, height: ir.height, x: ir.left + 8, y: ir.top }) };
+    if (window.emojiUi?.isOpen()) window.emojiUi.close();
     setTimeout(() => toggleEmojiPicker(fakeAnchor), 0);
     return;
   }
 
-  // —— 分支 A2：焦点在 contenteditable（笔记本/笔记重命名时是 div contenteditable）
-  // This contenteditable is not inside the editor (e.g., rename fields)
   if (ae && ae.isContentEditable && !ae.closest?.('#editor')) {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) return;
@@ -3405,17 +3270,14 @@ function tryEmojiTrigger() {
     if (before !== ';;' && before !== '；；') return;
     if (!_semiDoubleInWindow()) return;
     _semiKeyTimes = [];
-    // 删掉刚输入的 ;;
     const newRange = document.createRange();
     newRange.setStart(node, offset - 2);
     newRange.setEnd(node, offset);
     sel.removeAllRanges();
     sel.addRange(newRange);
     document.execCommand('insertText', false, '');
-    // 记住选区供表情插入恢复
     _emojiTargetInput = ae;
     _emojiTargetRange = sel.getRangeAt(0).cloneRange();
-    // 触发位置：当前光标 rect
     let rect;
     try {
       const probe = document.createElement('span');
@@ -3430,13 +3292,11 @@ function tryEmojiTrigger() {
         width: 0, height: rect.height || 18, x: rect.left, y: rect.top,
       })
     };
-    const pop = document.getElementById('emoji-popover');
-    if (pop && !pop.classList.contains('hidden')) pop.classList.add('hidden');
+    if (window.emojiUi?.isOpen()) window.emojiUi.close();
     setTimeout(() => toggleEmojiPicker(fakeAnchor), 0);
     return;
   }
 
-  // —— Branch B: focus in the Tiptap editor
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0) return;
   const range = sel.getRangeAt(0);
@@ -3446,8 +3306,6 @@ function tryEmojiTrigger() {
   if (!target?.closest('.ProseMirror')) return;
   if (target.closest('pre, code')) return;
 
-  // 中文 IME 在 IR 模式下会把 `；` 包成 marker span，第一个 ; 和第二个 ; 不一定在同一个 textNode；
-  // 因此扫"段落级容器"的全文末尾，而不是只看当前 textNode
   const wrap = target.closest(
     '.ProseMirror p, .ProseMirror li, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6, .ProseMirror blockquote'
   ) || target.closest('.ProseMirror');
@@ -3460,13 +3318,8 @@ function tryEmojiTrigger() {
 
   _emojiTargetInput = null;
   _emojiTargetRange = null;
+  if (window.emojiUi?.isOpen()) window.emojiUi.close();
 
-  const pop = document.getElementById('emoji-popover');
-  if (pop && !pop.classList.contains('hidden')) pop.classList.add('hidden');
-
-  // 关键：本函数在 document 捕获阶段触发，ProseMirror 此刻常常还没把刚输入的 ; 同步进 state
-  // （英文→光标停在 ;; 之前导致删错位置删到引号；中文→只收进一个 ; 导致残留）。
-  // 推迟到下一轮事件循环（PM 已处理完输入），再用新鲜 state 删光标两侧相邻分号、且最多删 2 个。
   setTimeout(() => {
     const inst = window.editor?.instance?.();
     if (inst) {
@@ -3476,7 +3329,6 @@ function tryEmojiTrigger() {
       const rightText = state.doc.textBetween($f.pos, $f.end(), '\ufffc', '\ufffc');
       const leftN = (leftText.match(/[;；]+$/) || [''])[0].length;
       const rightN = (rightText.match(/^[;；]+/) || [''])[0].length;
-      // 只删触发用的 2 个：优先光标右侧（中文光标常落在两个 ；之间），不足再从左侧补
       const needRight = Math.min(rightN, 2);
       const needLeft = Math.min(leftN, 2 - needRight);
       const from = $f.pos - needLeft;
@@ -3496,8 +3348,6 @@ function tryEmojiTrigger() {
   }, 0);
 }
 
-/** 取光标位置矩形；range.getBoundingClientRect() 在新建块/空块开头会返回 (0,0,0,0)，
- *  这时弹窗会飞到窗口左上角。这里逐级 fallback。 */
 function getCursorRectSafe(range) {
   let rect = range.getBoundingClientRect();
   if (!rect.left && !rect.top && !rect.width && !rect.height) {
@@ -3529,7 +3379,7 @@ function getCursorRectSafe(range) {
   }
   return rect;
 }
-/** 把一个 emoji 插入到当前记住的目标（input / contenteditable / 编辑器），并记入「最近」 */
+
 function insertEmojiUnicode(u) {
   if (!u) return;
   const t = _emojiTargetInput;
@@ -3556,234 +3406,42 @@ function insertEmojiUnicode(u) {
   }
   if (!inserted) {
     const v = window.editor?.instance?.();
-    if (v) { v.chain().focus().insertContent(u).run(); inserted = true; }
+    if (v) {
+      // 正文插入原子表情节点（落盘仍摊成 Unicode）；其它输入框仍走上方 insertText
+      try {
+        v.chain().focus().insertContent({ type: 'znEmoji', attrs: { emoji: u } }).run();
+      } catch (_) {
+        v.chain().focus().insertContent(u).run();
+      }
+      inserted = true;
+    }
   }
-  if (inserted) recordRecentEmoji(u);
-}
-
-/** 记录最近使用的 emoji（去重、最新在前、最多 18 个） */
-function recordRecentEmoji(u) {
-  try {
-    let list = window.storage?.getSetting('recentEmojis') || [];
-    if (!Array.isArray(list)) list = [];
-    list = list.filter(x => x !== u);
-    list.unshift(u);
-    if (list.length > 40) list = list.slice(0, 40); // 单行+横向滚动后可多存一些
-    window.storage?.setSetting('recentEmojis', list);
-  } catch (_) {}
-  const pop = document.getElementById('emoji-popover');
-  if (pop && !pop.classList.contains('hidden')) renderEmojiRecentRow(pop);
-}
-
-/** 在表情弹窗顶部渲染「最近」快捷栏；无记录时隐藏 */
-function renderEmojiRecentRow(pop) {
-  let row = pop.querySelector('#emoji-recent-row');
-  const list = (window.storage?.getSetting('recentEmojis') || []).filter(Boolean);
-  if (!row) {
-    row = document.createElement('div');
-    row.id = 'emoji-recent-row';
-    pop.insertBefore(row, pop.firstChild);
-    row.addEventListener('click', (e) => {
-      const b = e.target.closest('button[data-e]');
-      if (!b) return;
-      insertEmojiUnicode(b.dataset.e);
-    });
-    // 滚轮（纵向）→ 横向滚动，前后翻看更多最近常用
-    row.addEventListener('wheel', (e) => {
-      const grid = row.querySelector('.emoji-recent-grid');
-      if (!grid || grid.scrollWidth <= grid.clientWidth) return;
-      e.preventDefault();
-      grid.scrollLeft += (e.deltaY || e.deltaX);
-    }, { passive: false });
+  if (inserted) {
+    try {
+      let list = window.storage?.getSetting('recentEmojis') || [];
+      if (!Array.isArray(list)) list = [];
+      list = list.filter(x => x !== u);
+      list.unshift(u);
+      if (list.length > 40) list = list.slice(0, 40);
+      window.storage?.setSetting('recentEmojis', list);
+    } catch (_) {}
   }
-  if (!list.length) { row.classList.add('hidden'); row.innerHTML = ''; return; }
-  row.classList.remove('hidden');
-  row.innerHTML = '<div class="emoji-recent-label">最近</div><div class="emoji-recent-grid">'
-    + list.map(e => `<button type="button" data-e="${e}" title="${e}">${e}</button>`).join('')
-    + '</div>';
-}
-
-// emoji-picker-element 通过 Shadow DOM 渲染，外层 CSS 变量在某些版本不生效，
-// 直接读取当前主题的计算色注入 shadowRoot，保证所有主题（含 nord/dracula/gruvbox 等暗色）都一致。
-function _applyEmojiPickerTheme(picker) {
-  if (!picker) return;
-  const isDark = document.body.classList.contains('theme-is-dark');
-  picker.classList.toggle('dark', isDark);
-  picker.classList.toggle('light', !isDark);
-  const root = picker.shadowRoot;
-  if (!root) return;
-  const cs = getComputedStyle(document.body);
-  const v = (name, fb) => { const x = cs.getPropertyValue(name).trim(); return x || fb; };
-  const bg = v('--bg-elevated', v('--bg', isDark ? '#262934' : '#ffffff'));
-  const text = v('--text', isDark ? '#e6e8eb' : '#1d1f23');
-  const textSec = v('--text-secondary', text);
-  const border = v('--border', isDark ? '#3a3f4d' : '#e6e8eb');
-  const inputBg = v('--bg-secondary', v('--bg-tertiary', isDark ? '#1d1f23' : '#f5f6f7'));
-  const hoverBg = v('--bg-tertiary', isDark ? '#3a3f4d' : '#eef0f3');
-  const activeBg = v('--accent-bg', isDark ? '#3a3f4d' : '#dbe8ff');
-  let style = root.querySelector('style[data-md-injected]');
-  if (!style) {
-    style = document.createElement('style');
-    style.setAttribute('data-md-injected', '1');
-    root.appendChild(style);
-  }
-  style.textContent = `
-    :host, .picker { background: ${bg} !important; color: ${text} !important; }
-    .nav, .tabpanel, .search-row, .skintone-button, .indicator-wrapper, .message { background: ${bg} !important; color: ${text} !important; }
-    .category { color: ${textSec} !important; background: ${bg} !important; }
-    input.search { background: ${inputBg} !important; color: ${text} !important; border-color: ${border} !important; }
-    .favorites, .pad-top { display: none !important; }
-    button.emoji:hover, button.emoji:focus { background: ${hoverBg} !important; }
-    button.emoji.active { background: ${activeBg} !important; }
-  `;
 }
 
 function toggleEmojiPicker(anchorEl) {
-  const pop = document.getElementById('emoji-popover');
-  if (!pop.classList.contains('hidden')) {
-    pop.classList.add('hidden');
+  if (!window.emojiUi) { toast?.('表情组件未加载', 'error'); return; }
+  if (window.emojiUi.isOpen()) {
+    window.emojiUi.close();
     return;
   }
-  if (!_emojiPicker) {
-    _emojiPicker = document.createElement('emoji-picker');
-    // 中文表情数据（含中文 keywords，可中文搜索如 "笑" "哭"）
-    _emojiPicker.dataSource = 'https://cdn.jsdelivr.net/npm/emoji-picker-element-data@1/zh/emojibase/data.json';
-    _emojiPicker.locale = 'zh';
-    // emoji-picker-element 默认搜索是前缀匹配，对中文不友好；
-    // 改成"包含匹配"：拦截搜索框 input，把搜索词拆字符做模糊 OR
-    setTimeout(() => {
-      const root = _emojiPicker.shadowRoot;
-      const search = root?.querySelector('input.search');
-      if (!search) return;
-      // 给原 input 监听加一道二级过滤（库里搜不到时，我们再扫整个表情列表）
-      const customFilter = () => {
-        const q = (search.value || '').trim();
-        if (!q) return; // 空查询不干预
-        // 让库做完它的搜索后，如果结果为空，我们手动补一遍模糊匹配
-        setTimeout(() => {
-          const tabPanel = root.querySelector('.tabpanel');
-          const noResults = root.querySelector('[part="search-empty"]') || tabPanel?.querySelector('.no-results');
-          if (!noResults || noResults.style?.display === 'none') return;
-          // 库已经找不到结果——我们自己用 database 模糊匹配
-          if (!_emojiPicker.database) return;
-          _emojiPicker.database.getAllEmoji?.().then(all => {
-            const matched = all.filter(em => {
-              const ka = (em.shortcodes || []).join(' ').toLowerCase();
-              const kb = (em.tags || []).join(' ').toLowerCase();
-              const kc = (em.annotation || '').toLowerCase();
-              const kw = (em.emoticon || '') + ' ' + (em.unicode || '');
-              const text = ka + ' ' + kb + ' ' + kc + ' ' + kw;
-              return text.includes(q.toLowerCase());
-            }).slice(0, 64);
-            if (matched.length === 0) return;
-            // 用一个浮层覆盖在 picker 内显示模糊匹配结果
-            let custom = root.getElementById('md-fuzzy-list');
-            if (!custom) {
-              custom = document.createElement('div');
-              custom.id = 'md-fuzzy-list';
-              custom.style.cssText = 'position:absolute;left:0;right:0;top:84px;bottom:0;overflow-y:auto;background:var(--background,#fff);padding:8px;display:flex;flex-wrap:wrap;gap:4px;z-index:5;';
-              root.querySelector('.picker').appendChild(custom);
-            }
-            custom.innerHTML = matched.map(em =>
-              `<button data-u="${em.unicode}" title="${em.annotation||''}" style="font-size:22px;width:36px;height:36px;border:none;background:transparent;cursor:pointer;border-radius:6px;">${em.unicode}</button>`
-            ).join('');
-            custom.onclick = (e) => {
-              const u = e.target?.dataset?.u;
-              if (!u) return;
-              _emojiPicker.dispatchEvent(new CustomEvent('emoji-click', { detail: { unicode: u } }));
-              custom.remove();
-            };
-          }).catch(() => {});
-        }, 50);
-      };
-      const cleanCustom = () => { root.getElementById('md-fuzzy-list')?.remove(); };
-      search.addEventListener('input', () => { cleanCustom(); customFilter(); });
-    }, 200);
-    pop.appendChild(_emojiPicker);
-    _emojiPicker.addEventListener('emoji-click', (e) => {
-      const u = e.detail?.unicode;
-      if (!u) return;
-      insertEmojiUnicode(u);
-    });
-    // 等 shadowRoot 准备好（通常下一帧就有），按当前主题注入样式
-    requestAnimationFrame(() => {
-      _applyEmojiPickerTheme(_emojiPicker);
-      setTimeout(() => _applyEmojiPickerTheme(_emojiPicker), 50);
-      setTimeout(() => _applyEmojiPickerTheme(_emojiPicker), 200);
-    });
-  }
-  // 每次打开都按当前主题刷新（覆盖所有暗色主题，并支持中途换主题）
-  _applyEmojiPickerTheme(_emojiPicker);
-  // 顶部「最近」快捷栏（每次打开刷新）
-  renderEmojiRecentRow(pop);
-  // 先显示再测量尺寸，便于精确避免出屏
-  pop.style.visibility = 'hidden';
-  pop.classList.remove('hidden');
-  pop.style.left = '0px';
-  pop.style.top = '0px';
-  pop.style.right = 'auto';
-  requestAnimationFrame(() => {
-    let r = anchorEl.getBoundingClientRect();
-    // 最终保险：anchor rect 为 0 时回退到编辑器中心，避免飞到窗口左上角
-    if (!r.left && !r.top && !r.width && !r.height) {
-      const v = document.querySelector('#editor') || document.body;
-      const er = v.getBoundingClientRect();
-      r = { left: er.left + 80, top: er.top + 80, bottom: er.top + 100, right: er.left + 80, width: 0, height: 20 };
-    }
-    const pw = pop.offsetWidth || 300;
-    const ph = pop.offsetHeight || 320;
-    let left = r.left;
-    let top = r.bottom + 6;
-    if (left + pw > window.innerWidth - 8) left = window.innerWidth - pw - 8;
-    if (left < 8) left = 8;
-    if (top + ph > visibleViewportH() - 8) {
-      const aboveTop = r.top - ph - 6;
-      if (aboveTop >= 8) {
-        top = aboveTop; // 下方放不下 → 翻到光标上方
-      } else {
-        // 上下都放不下：贴边放置，并横向挪开，避免盖住光标所在行、看不见输入了什么
-        top = Math.max(8, Math.min(top, visibleViewportH() - ph - 8));
-        left = (r.left + 24 + pw <= window.innerWidth - 8) ? r.left + 24 : Math.max(8, r.left - pw - 24);
-      }
-    }
-        pop.style.left = `${Math.round(left)}px`;
-        pop.style.top  = `${Math.round(top)}px`;
-        pop.style.visibility = 'visible';
-        // 焦点转给 picker 的搜索框（仅为支持中文搜索；不再依赖额外的方向键拦截）
-        setTimeout(() => {
-          const search = _emojiPicker.shadowRoot?.querySelector('input.search');
-          if (search) search.focus();
-        }, 50);
-      });
-  // 关闭逻辑：点空白 / Esc 都关，关掉时把焦点恢复给原编辑器或 input
-  const closePicker = () => {
-    if (pop.classList.contains('hidden')) return;
-    pop.classList.add('hidden');
-    document.removeEventListener('mousedown', onDoc, true);
-    document.removeEventListener('keydown', onKey, true);
+  window.emojiUi.openInsert(anchorEl, (u) => insertEmojiUnicode(u), () => {
     if (_emojiTargetInput && document.body.contains(_emojiTargetInput)) {
-      _emojiTargetInput.focus({ preventScroll: true });
+      try { _emojiTargetInput.focus({ preventScroll: true }); } catch (_) {}
     } else {
-      // Avoid calling focus() here which may reset scroll position
-      // ✓ 直接 focus contenteditable 元素，加 preventScroll 保证视图位置不变
-      const ed = document.querySelector(
-        '#editor .ProseMirror'
-      );
-      if (ed) {
-        try { ed.focus({ preventScroll: true }); } catch (_) { ed.focus(); }
-      }
+      const ed = document.querySelector('#editor .ProseMirror');
+      if (ed) { try { ed.focus({ preventScroll: true }); } catch (_) { try { ed.focus(); } catch (_) {} } }
     }
-  };
-  const onDoc = (e) => {
-    if (!pop.contains(e.target) && e.target !== anchorEl) closePicker();
-  };
-  const onKey = (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); closePicker(); }
-  };
-  setTimeout(() => {
-    document.addEventListener('mousedown', onDoc, true);
-    document.addEventListener('keydown', onKey, true);
-  }, 0);
+  });
 }
 
 let _modeBarHideTimer = null;
@@ -6221,7 +5879,7 @@ function openSettingsModal(initialTab) {
         <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">笔记图片以独立文件存放于此（默认 文档\ZhiNote\images）；更改时自动迁移现有图片</div>
       </div>
       <div id="qc-block" style="display:none;margin-bottom:18px;">
-        <label class="settings-section">速记</label>
+        <label class="settings-section">速记 <span style="font-weight:400;color:var(--text-tertiary);font-size:11.5px;">· 需在 Quicker 动作参数填「速记」触发</span></label>
         <select id="set-qc-mode" style="width:100%;">
           <option value="current">存到当前打开的笔记</option>
           <option value="fixed">固定存到一篇笔记（收集箱）</option>
@@ -6229,7 +5887,7 @@ function openSettingsModal(initialTab) {
         <div id="qc-fixed-row" style="display:none;font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
           收集箱：<span id="qc-fixed-title"></span>　<button id="qc-fixed-repick" class="link-btn" style="font-size:12px;">更换…</button>
         </div>
-        <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">Quicker 端按速记热键，把选中文字或剪贴板图片存进笔记（枝记开着才生效）</div>
+        <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">枝记开着时生效：把选中文字或剪贴板图片存进笔记</div>
       </div>
       <label class="settings-section">定时备份</label>
       <select id="set-backup-enabled" style="width:100%;">
@@ -6628,6 +6286,8 @@ function openSettingsModal(initialTab) {
             _draftCache.clear();
             await window.webdavSync.loadConfig();
             _setCloudSyncDot('syncing');
+            // 配好网盘密码后补上行小枝密钥密文（先填 key 后开同步时原先不会自动传）
+            try { window.aiChat && window.aiChat.syncKeyUp && window.aiChat.syncKeyUp(); } catch (_) {}
 
             if (choice === 'upload') {
               // 真正的「覆盖云端」：删云端本地已没有的多余笔记 + epoch+1（其它设备对齐），再传本地全部。
