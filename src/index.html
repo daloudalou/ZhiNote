@@ -326,10 +326,9 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script>
-    window.__MD_VER__ = '20260730t42';
-    // 小枝第一套：Cloudflare 代取（见 docs/emoji-proxy-worker.js）；未部署前会自动回退谷歌
-    // 已部署 Worker：https://emoji.daloud.workers.dev （也可再绑 emoji.zhinote.net）
-    window.__NOTO_EMO_HOST__ = 'https://emoji.daloud.workers.dev';
+    window.__MD_VER__ = '20260731t1';
+    // 小枝第一套：Cloudflare 代取（见 docs/emoji-proxy-worker.js）；失败自动回退谷歌
+    window.__NOTO_EMO_HOST__ = 'https://emoji.zhinote.net';
     console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script src="donate-qr.js?v=20260611t70"></script>
