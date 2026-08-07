@@ -1521,7 +1521,7 @@ const storage = (() => {
     if (!(opts && opts.skipLedger)) _maintainLedger(n, doc, oldDoc);  // 合并账本与正文同步演进（v3）
     save();
     emit('change', { type: 'content', id, silent: true });
-    if (typeof markDirty === 'function') markDirty();
+    if (typeof markDirty === 'function') markDirty('updateDoc:' + id);
   }
 
   /** 阶段 C：把编辑器活账本(Y.Doc)的状态(base64)写回 note.ydoc，并标记该篇待同步。
@@ -1889,13 +1889,20 @@ const storage = (() => {
       return;
     }
     if (!_data.settings) _data.settings = DEFAULT_DATA().settings;
+    // 值未变绝不标脏/上传（防「每次重写相同设置」类死循环；对象用 JSON 比）
+    const prev = _data.settings[key];
+    if (prev === value) return;
+    if (prev !== undefined && value !== undefined && prev !== null && value !== null
+        && typeof prev === 'object' && typeof value === 'object') {
+      try { if (JSON.stringify(prev) === JSON.stringify(value)) return; } catch (_) {}
+    }
     _data.settings[key] = value;
     save({ immediate: false });
     // 可同步的设置（如 codeBlockExpanded 等）变更要标记 globalDirty 并调度上传。
     const _localOnly = LOCAL_ONLY_SETTINGS.includes(key) || LOCAL_ONLY_PREFIX.some(p => key.startsWith(p));
     if (!_localOnly) {
       _globalDirty = true;
-      markDirty();
+      markDirty('setSetting:' + key);
     }
   }
 
@@ -2250,7 +2257,7 @@ const storage = (() => {
       // reload / global-sync 是云端下行正在应用，绝不反向回推（避免回声/覆盖）。
       // schedulePut 自身有 _hasDirtyData 早退 + debounce，不会因频繁结构操作猛发请求。
       if (t !== 'reload' && t !== 'global-sync') {
-        try { markDirty(); } catch (_) {}
+        try { markDirty('change:' + (t || '?') + (payload && payload.id ? ':' + payload.id : '')); } catch (_) {}
       }
       // 结构变动（非正文）→ 影子维护结构底稿（方案2 第1步，暂不接线读取/上传）
       if (t !== 'content' && t !== 'global-sync') { try { _scheduleStructLedger(); } catch (_) {} }
@@ -2674,23 +2681,31 @@ const storage = (() => {
   }
 
   // 每台设备各自的偏好 / UI 状态：绝不随云端覆盖（否则会出现"另一台设备改了本机就被拉回"的问题）。
+  // 须与 webdav-sync._extractSharedSettings 的 LOCAL_ONLY 一致（漏一项会误标 globalDirty 白跑上传）
   const LOCAL_ONLY_SETTINGS = [
     'theme', 'fontSize', 'fontFamily', 'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
     'noteTransition', 'editorPadding', 'sidebarWidth', 'outlineOpen',
     'activeWorkspace', 'lastOpenedId', 'recent',
-    'webdavProxy', // 跨域代理前缀：每台设备各自配置（桌面直连不需要），绝不上云
+    'recentEmojis', // 本机表情常用：上云只会徒增清单写入，无跨设备必要
     'imagesDir',   // 图片文件夹：本机路径，跨设备无意义，绝不上云
+    'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes',
+    'webdavProxy', // 跨域代理前缀：每台设备各自配置（桌面直连不需要），绝不上云
+    'webdavRealtime', // 即时同步开关/中转：每台本机偏好；若上云会被另一台默认「开」盖回（20260807）
     'webdavCryptoPass', // 加密口令：manifest 是明文，绝不能经云端 settings 泄漏；只走本机/配置导出
     'pinned', // 置顶已迁到 note.pinnedAt（20260622）；legacy 列表不再同步，防旧端覆盖
   ];
   // 'webdav_' 前缀=同步配置；'_' 前缀=内部迁移标记，都只留本机
   const LOCAL_ONLY_PREFIX = ['webdav_', '_'];
 
-  function markDirty() {
+  function markDirty(reason) {
     const method = getSetting('syncMethod') || 'none';
     if (method === 'none') return;
     if (method === 'webdav' && window.webdavSync) {
-      window.webdavSync.schedulePut();
+      try {
+        console.log('[sync-dirty]', reason || 'markDirty',
+          'global=', _globalDirty, 'notes=', _dirtyNoteIds.size);
+      } catch (_) {}
+      window.webdavSync.schedulePut(reason || 'markDirty');
     }
   }
 

@@ -108,14 +108,37 @@
       return crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, k, buf.slice(12));
     }).then(function (pt) { return new TextDecoder().decode(pt); });
   }
-  /** key 变更后：有网盘密码就把「全部服务商的 key」打包加密写进同步设置（全空时清云端密文） */
+  /** 密钥对象规范化后再比，避免字段顺序导致误判「有变化」。 */
+  function _canonKeyPlain(obj) {
+    var o = obj || {}, keys = Object.keys(o).sort(), out = {};
+    for (var i = 0; i < keys.length; i++) out[keys[i]] = o[keys[i]];
+    return JSON.stringify(out);
+  }
+  /** key 变更后：有网盘密码就把「全部服务商的 key」打包加密写进同步设置（全空时清云端密文）。
+   *  密文用随机 IV：同一明文每次加密字节都不同。若已有密文且解密后与当前明文相同 → 绝不重写，
+   *  否则 setSetting 会狂标脏 → 整份清单死循环上传（见 20260805t3）。 */
   function syncKeyUp() {
     var m = _keyMap(), plain = {}, any = false;
     for (var pid in m) { var k = decKey(m[pid]); if (k) { plain[pid] = k; any = true; } }
+    var canon = _canonKeyPlain(plain);
     _webdavPassPlain().then(function (pass) {
       if (!pass) return;
-      if (!any) { ss('aiKeyEnc', ''); return; }
-      _aesEnc(pass, JSON.stringify(plain)).then(function (b64) { ss('aiKeyEnc', b64); }).catch(function () {});
+      if (!any) {
+        if (gs('aiKeyEnc', '')) ss('aiKeyEnc', '');
+        return;
+      }
+      var prev = gs('aiKeyEnc', '');
+      var write = function () {
+        _aesEnc(pass, canon).then(function (b64) { ss('aiKeyEnc', b64); }).catch(function () {});
+      };
+      if (!prev) { write(); return; }
+      _aesDec(pass, prev).then(function (oldPlain) {
+        try {
+          var oldObj = (oldPlain && oldPlain.charAt(0) === '{') ? JSON.parse(oldPlain) : {};
+          if (_canonKeyPlain(oldObj) === canon) return; // 明文未变，跳过重加密
+        } catch (_) {}
+        write();
+      }).catch(function () { write(); });
     });
   }
   /** 云端有密文：用网盘密码解出，把本机还没有的服务商 key 并进来（绝不覆盖本机已有）。有新增时回调。 */

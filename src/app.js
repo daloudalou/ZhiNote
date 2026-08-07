@@ -184,12 +184,12 @@ async function bootstrap() {
   tree.render();
   updateTrashBadge();
 
-  // 初始化云同步徽标状态
+  // 初始化云同步徽标：开启同步时先「等待」，禁止启动即涂绿假「已同步」
   const _initMethod = storage.getSetting('syncMethod') || 'none';
   if (_initMethod === 'none') {
     _setCloudSyncDot('disabled');
   } else {
-    _setCloudSyncDot('synced');
+    _setCloudSyncDot('pending');
   }
   if (localStorage.getItem('zhinote-cloud-badge-hidden') === '1') {
     const _dot = document.getElementById('cloud-sync-dot');
@@ -327,15 +327,32 @@ async function bootstrap() {
       _startSyncProtection();
     } else if (payload.type === 'webdav-sync-ok') {
       if (_syncProtectionActive) _endSyncProtection();
-      // 同步成功（非重试占位）→ 清掉失败去重记录，下次再失败仍会正常提示
-      if (payload.detail !== 'retry-transient') { _lastSyncFailMsg = ''; _lastSyncFailAt = 0; }
-      // 网盘可用后：补传本机密钥密文；同时尝试解出云端密文补本机缺的（绝不覆盖本机已有）
-      if (payload.detail !== 'retry-transient' && window.aiChat) {
-        try { window.aiChat.syncKeyUp && window.aiChat.syncKeyUp(); } catch (_) {}
+      // 瞬时重试占位：绝不能涂绿（曾把「还在重试/后台失败」扮成已同步）
+      if (payload.detail === 'retry-transient') {
+        const _dotRt = document.getElementById('cloud-sync-dot');
+        if (_dotRt && _dotRt.classList.contains('syncing')) _setCloudSyncDot('pending');
+        return;
+      }
+      // 同步成功 → 清掉失败去重记录，下次再失败仍会正常提示
+      _lastSyncFailMsg = '';
+      _lastSyncFailAt = 0;
+      // 网盘可用后：云端还没有密钥密文时才补传一次；同时尝试解出云端密文补本机缺的（绝不覆盖本机已有）。
+      // 禁止每次 sync-ok 都 syncKeyUp：AES 随机 IV 会让密文每次不同 → setSetting(aiKeyEnc) 狂标脏 → 整份清单死循环（20260805t3）。
+      if (window.aiChat) {
+        try {
+          const _hasEnc = !!(storage.getSetting && storage.getSetting('aiKeyEnc'));
+          if (!_hasEnc && window.aiChat.syncKeyUp) window.aiChat.syncKeyUp();
+        } catch (_) {}
         try { window.aiChat.trySyncKeyDown && window.aiChat.trySyncKeyDown(); } catch (_) {}
       }
-      // 上传/下载成功 → 平静地标记"已同步"（steady 绿，不闪不转）。静默轮询且无变更（unchanged/empty）时不动徽标。
-      if (!(payload.silent && (payload.detail === 'get-unchanged' || payload.detail === 'get-empty'))) {
+      // 上传/下载成功 → 平静地标记"已同步"。静默无变更：仅把「等待/同步中」收成绿，不覆盖「待上云/失败」。
+      const _quietUnchanged = payload.silent && (payload.detail === 'get-unchanged' || payload.detail === 'get-empty');
+      if (_quietUnchanged) {
+        const _dotOk = document.getElementById('cloud-sync-dot');
+        if (_dotOk && (_dotOk.classList.contains('pending') || _dotOk.classList.contains('syncing'))) {
+          _setCloudSyncDot('synced');
+        }
+      } else {
         _setCloudSyncDot('synced');
       }
       if (payload.detail === 'first') {
@@ -388,6 +405,11 @@ async function bootstrap() {
       toast('同步请求频率受限，将自动恢复', 'warning', { id: 'webdav-rate', duration: 5000 });
     } else if (payload.type === 'webdav-merged') {
       // v3 账本自动合并：默认静默（仅徽标转 synced 由 sync-ok 处理）；此处预留，不打扰用户。
+    } else if (payload.type === 'webdav-manifest-healed') {
+      // 清单损坏路径自愈成功（与正常同步提示分开，避免与「已同步」混淆）
+      if (payload.auto) {
+        toast('云端清单已自动修复，正在继续同步…', 'info', { id: 'webdav-manifest-heal', duration: 4000 });
+      }
     }
   });
   // 启动自动同步调度
@@ -4027,6 +4049,14 @@ function handleQuickerMessage(msg) {
         if (window.appLock && window.appLock.isLocked()) window.appLock.focusInput();
         else editor.focus();
       }, 50);
+      // Quicker 藏窗再开：visibility 常不准，显式补拉（延迟+宽限在 wakeGet 内，防空枪误报）
+      setTimeout(() => {
+        try {
+          if ((storage.getSetting('syncMethod') || 'none') === 'webdav' && window.webdavSync?.wakeGet) {
+            window.webdavSync.wakeGet({ force: true });
+          }
+        } catch (_) {}
+      }, 100);
       break;
     case 'reload':
       storage.init().then(() => { tree.render(); editor.reloadCurrent(); updateTrashBadge(); });
@@ -4203,7 +4233,7 @@ function _setCloudSyncDot(state, detail) {
 }
 
 /** 即时同步指示灯（紫点）：有其他设备在场时亮紫+呼吸。
- *  tooltip 只显示当前「最高优先级」一项：即时同步中 > 云同步状态 > 本地（不并列、不拼接）。 */
+ *  tooltip：有对端时只写形态列表（如「客户端 · 网页2」），不含「即时同步/本机」；否则用云同步状态。 */
 function _updateRtDot() {
   const btn = document.getElementById('btn-cloud-sync');
   const dot = document.getElementById('rt-sync-dot');
@@ -4212,7 +4242,11 @@ function _updateRtDot() {
   const active = !!(st && st.active);
   const syncing = !!(st && st.syncing);
   if (dot) { dot.classList.toggle('active', active); dot.classList.toggle('syncing', syncing); }
-  if (btn) btn.title = active ? '即时同步中' : _cloudBaseTitle;
+  if (btn) {
+    const text = st && st.presence && st.presence.text;
+    if (active && text) btn.title = text;
+    else btn.title = _cloudBaseTitle;
+  }
 }
 
 /** 定时刷新云同步按钮 tooltip 中的"上次同步"时间 */
@@ -4235,22 +4269,35 @@ setInterval(() => {
 window.addEventListener('zhinote-rt-status', () => { try { _updateRtDot(); } catch (_) {} });
 setInterval(() => { try { _updateRtDot(); } catch (_) {} }, 3000);
 
-/** 顶栏云同步图标：左键智能同步（脏就上传 + 检查云端拉取最新）*/
+/** 顶栏云同步图标：左键急救同步（拉起引擎 + 强制拉/推 + 必有成败提示）*/
+let _cloudSyncBusy = false;
 async function smartCloudSync() {
   const method = storage.getSetting('syncMethod') || 'none';
   if (method === 'none') {
     toast('当前已关闭云同步', 'info');
     return;
   }
-  if (method === 'webdav' && window.webdavSync) {
-    const btn = document.getElementById('btn-cloud-sync');
-    if (btn) btn.classList.add('active');
-    try {
-      editor.flushSave();
-      await window.webdavSync.manualSync();
-    } finally {
-      if (btn) setTimeout(() => btn.classList.remove('active'), 600);
-    }
+  if (method !== 'webdav' || !window.webdavSync) {
+    toast('云同步未就绪', 'warning');
+    return;
+  }
+  if (_cloudSyncBusy) {
+    toast('正在同步…', 'info');
+    return;
+  }
+  const btn = document.getElementById('btn-cloud-sync');
+  if (btn) btn.classList.add('active');
+  _cloudSyncBusy = true;
+  try {
+    editor.flushSave();
+    const res = await window.webdavSync.manualSync();
+    const n = res && res.downloaded ? res.downloaded : 0;
+    toast(n > 0 ? ('已从云端更新 ' + n + ' 篇') : '同步完成', 'success');
+  } catch (e) {
+    toast('同步失败：' + _zhSyncError(e?.message || e), 'error');
+  } finally {
+    _cloudSyncBusy = false;
+    if (btn) setTimeout(() => btn.classList.remove('active'), 600);
   }
 }
 
@@ -4270,7 +4317,21 @@ function openCloudSyncMenu(anchor) {
       </div>`;
 
   if (method === 'webdav') {
+    let rtLine = '';
+    try {
+      const st = window.realtime && window.realtime.status && window.realtime.status();
+      const text = st && st.presence && st.presence.text;
+      // 有对端才显示一行精简形态（不含本机、不写「即时同步」）；独自时不占菜单
+      if (st && st.active && text) {
+        rtLine = `<div class="context-menu-item context-menu-info" style="opacity:.9;cursor:default;pointer-events:none;">
+            <span style="width:14px;color:#8b7fd1;">●</span>
+            <span>${escapeHtml(text)}</span>
+          </div>
+          <div class="context-menu-divider"></div>`;
+      }
+    } catch (_) {}
     popup.innerHTML = `
+      ${rtLine}
       <div class="context-menu-item" data-act="sync">
         <span style="width:14px;color:var(--accent);">⟳</span>
         <span>立即同步</span>
@@ -4308,16 +4369,7 @@ function openCloudSyncMenu(anchor) {
       const act = it.dataset.act;
       close();
       if (act === 'sync') {
-        if (window.webdavSync) {
-          const btn = document.getElementById('btn-cloud-sync');
-          if (btn) btn.classList.add('active');
-          try {
-            editor.flushSave();
-            await window.webdavSync.manualSync();
-          } finally {
-            if (btn) setTimeout(() => btn.classList.remove('active'), 600);
-          }
-        }
+        await smartCloudSync();
       } else if (act === 'repair-manifest') {
         await runRepairManifestFlow();
       } else if (act === 'settings') {
@@ -4338,19 +4390,19 @@ function openCloudSyncMenu(anchor) {
   setTimeout(() => document.addEventListener('mousedown', outClick, true), 0);
 }
 
-/** 「修复云端清单」完整流程（确认 → 修复 → 反馈）。云同步菜单与设置页共用。 */
+/** 「修复云端清单」：轻量重建索引（不重传全部笔记）。云同步菜单与设置页共用。 */
 async function runRepairManifestFlow() {
   const ok = await uiConfirm({
     title: '修复云端清单',
-    message: '用于解决"云端 manifest.json 损坏（空文件）、同步一直转圈"的问题。\n\n将删除云端清单文件，并以【本机数据】为准完整重建（重新上传全部笔记）。\n\n注意：云端独有、本机没有的笔记不会进入新清单（文件仍保留在云端，可通过「扫描云端恢复」找回）。\n\n确定继续吗？',
+    message: '用于云端清单（manifest.json）变成空文件或损坏、同步反复报错时。\n\n将按【云端已有的笔记文件】快速重建目录（通常几秒），不会把全部笔记重新上传。\n\n时间戳只升不降，避免旧设备把索引写老；修不好时可到「管理云端笔记」扫描找回。\n\n确定继续吗？',
     okText: '开始修复',
   });
   if (!ok || !window.webdavSync || !window.webdavSync.repairManifest) return;
-  toast('正在修复云端清单，请勿关闭应用…', 'info');
+  toast('正在轻量修复云端清单…', 'info');
   try {
     editor.flushSave();
     const res = await window.webdavSync.repairManifest();
-    if (res.ok) toast('云端清单已修复，同步恢复正常', 'success');
+    if (res.ok) toast('云端清单已修复' + (res.noteCount != null ? '（' + res.noteCount + ' 篇）' : ''), 'success');
     else toast('修复失败：' + (res.error || '未知错误'), 'error');
   } catch (e) {
     toast('修复失败：' + e.message, 'error');
@@ -5831,7 +5883,7 @@ function openSettingsModal(initialTab) {
       const rawRt = (storage.getSetting('webdavRealtime') || '').trim();
       const rtMode = (rawRt === 'off') ? 'off' : ((!rawRt || rawRt === 'builtin') ? 'builtin' : 'custom');
       return `
-    <label style="margin-top:14px;">即时同步</label>
+    <label style="margin-top:14px;">即时同步 <span style="font-weight:400;color:var(--text-tertiary);font-size:11.5px;">· 本机设置，不跟云走</span></label>
     <select id="set-webdav-realtime-mode" style="width:100%;">
       <option value="builtin" ${rtMode==='builtin'?'selected':''}>内置（默认，免费共享额度，到顶当天自动退回网盘）</option>
       <option value="custom" ${rtMode==='custom'?'selected':''}>自建（填你部署的地址，更稳更快）</option>
@@ -5854,7 +5906,7 @@ function openSettingsModal(initialTab) {
       <button id="set-webdav-test" class="link-btn" title="测试连接">测试连接</button>
       <button id="set-webdav-sync-now" class="link-btn" title="立即同步一次">立即同步</button>
       <button id="set-webdav-recover" class="link-btn" title="查看 / 恢复 / 删除云端笔记">管理云端笔记</button>
-      <button id="set-webdav-repair" class="link-btn" title="云端清单（manifest.json）损坏、同步反复报错时使用">修复云端清单</button>
+      <button id="set-webdav-repair" class="link-btn" title="清单空文件/损坏时轻量重建目录（不重传全部笔记）">修复云端清单</button>
     </div>
     <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
     </div>
@@ -6636,8 +6688,9 @@ function openSettingsModal(initialTab) {
     btn.textContent = '同步中…';
     try {
       editor.flushSave();
-      await window.webdavSync.manualSync();
-      toast('同步完成', 'success');
+      const res = await window.webdavSync.manualSync();
+      const n = res && res.downloaded ? res.downloaded : 0;
+      toast(n > 0 ? ('已从云端更新 ' + n + ' 篇') : '同步完成', 'success');
     } catch (e) {
       toast('同步失败：' + _zhSyncError(e?.message || e), 'error');
     } finally {

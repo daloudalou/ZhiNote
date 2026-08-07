@@ -50,6 +50,20 @@
   let _base = '';
   let _activeId = null;
   let _sid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  // 设备形态：手机/平板/Quicker客户端/网页；每次发送时现取（host 可能稍后就绪）。展示不含本机、不含「枝记」。
+  function _currentDevKind() {
+    try {
+      const ua = navigator.userAgent || '';
+      const coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+      const short = Math.min(screen.width || 0, screen.height || 0);
+      if (/iPad|Tablet|Android(?!.*Mobile)/i.test(ua) || (coarse && short >= 600 && short < 1100)) return 'tablet';
+      if (/Mobi|iPhone|iPod|Android.*Mobile/i.test(ua) || (coarse && short > 0 && short < 600)) return 'phone';
+      if (window.host && typeof window.host.isQuicker === 'function' && window.host.isQuicker()) return 'quicker';
+    } catch (_) {}
+    return 'web';
+  }
+  // 对端在场表：sid → { kind, at }；旧端无 dev → other
+  let _peers = Object.create(null);
 
   // 内容房间
   let _ws = null;
@@ -96,6 +110,65 @@
   function _D() { try { if (window.__RT_DIAG__) console.log.apply(console, ['[rt]'].concat([].slice.call(arguments))); } catch (_) {} }
   /** 通知界面刷新「即时同步」指示灯（紫点）。 */
   function _notifyStatus() { try { window.dispatchEvent(new CustomEvent('zhinote-rt-status')); } catch (_) {} }
+
+  function _normDev(d) {
+    if (d === 'phone' || d === 'tablet' || d === 'quicker' || d === 'web' || d === 'pc') return d;
+    if (d === '客户端') return 'quicker';
+    if (d === '网页') return 'web';
+    if (d === '电脑') return 'pc'; // 旧版未区分客户端/网页
+    if (d === '手机') return 'phone';
+    if (d === '平板') return 'tablet';
+    return 'other';
+  }
+  function _devZh(k) {
+    if (k === 'quicker') return '客户端';
+    if (k === 'web') return '网页';
+    if (k === 'pc') return '电脑'; // 仅旧端
+    if (k === 'phone') return '手机';
+    if (k === 'tablet') return '平板';
+    return '其他';
+  }
+  function _prunePeers() {
+    const now = Date.now();
+    for (const sid in _peers) {
+      if (now - (_peers[sid].at || 0) > SIG_PEER_TTL_MS) delete _peers[sid];
+    }
+  }
+  function _touchPeer(sid, dev) {
+    if (!sid || sid === _sid) return;
+    const kind = _normDev(dev);
+    const prev = _peers[sid];
+    _peers[sid] = { kind: kind === 'other' && prev && prev.kind !== 'other' ? prev.kind : kind, at: Date.now() };
+  }
+  function _clearPeers() { _peers = Object.create(null); }
+  /** 仅对端文案：精简美观。例「客户端 · 网页2」；不含本机、不用顿号与×。 */
+  function _presenceInfo() {
+    _prunePeers();
+    const kinds = [];
+    const seen = Object.keys(_peers);
+    for (let i = 0; i < seen.length; i++) kinds.push(_peers[seen[i]].kind);
+    let otherN = kinds.length;
+    if (_occSupported && (_sigOcc | 0) >= 1) {
+      otherN = Math.max(0, (_sigOcc | 0) - 1);
+      while (kinds.length < otherN) kinds.push('other');
+    }
+    const order = ['quicker', 'web', 'pc', 'phone', 'tablet', 'other'];
+    const counts = Object.create(null);
+    for (let i = 0; i < kinds.length; i++) counts[kinds[i]] = (counts[kinds[i]] || 0) + 1;
+    const parts = [];
+    for (let i = 0; i < order.length; i++) {
+      const k = order[i];
+      const n = counts[k] | 0;
+      if (!n) continue;
+      const zh = _devZh(k);
+      parts.push(n > 1 ? (zh + n) : zh); // 网页2 = 同形态多开
+    }
+    return {
+      others: otherN,
+      text: parts.join(' · '),
+      self: _devZh(_currentDevKind()),
+    };
+  }
   /** 标记「正在传数据」：刷新呼吸窗口并即时通知界面；窗口结束再通知一次，让紫点准时转回常亮。 */
   function _pulse() {
     _syncPulseAt = Date.now();
@@ -409,6 +482,7 @@
     clearTimeout(_structSendTimer); _structSendTimer = null;
     clearTimeout(_structReplyTimer); _structReplyTimer = null;
     _sigOcc = 0;                 // 信令房间断开 → 账号级在场人数清零
+    _clearPeers();
     _stopHeartbeat();
     if (_sig) {
       try { _sig.onclose = null; _sig.onmessage = null; _sig.onerror = null; _sig.close(); } catch (_) {}
@@ -418,7 +492,12 @@
   }
 
   function _sigSend(obj) {
-    try { if (_sig && _sig.readyState === 1) _sig.send(JSON.stringify(obj)); } catch (_) {}
+    try {
+      if (_sig && _sig.readyState === 1) {
+        // 每条信令带设备形态，供对端展示「电脑/手机/平板」（旧端忽略未知字段）
+        _sig.send(JSON.stringify(Object.assign({ dev: _currentDevKind() }, obj)));
+      }
+    } catch (_) {}
   }
 
   /** 告诉同工作区对端「我离开了」→ 对端立即收起在场（紫点立刻熄灭），不必等 13s 超时。
@@ -454,11 +533,12 @@
     let msg;
     try { msg = JSON.parse(typeof data === 'string' ? data : _abToStr(data)); } catch (_) { return; }
     if (msg && msg.__zr === 'occ') {                    // 服务器实报账号级房间人数 → 紫点在场权威
-      _occSupported = true; _sigOcc = msg.n | 0; _notifyStatus(); return;
+      _occSupported = true; _sigOcc = msg.n | 0; _prunePeers(); _notifyStatus(); return;
     }
     if (!msg || msg.sid === _sid) return;               // 忽略自己的回声
     if (msg.rt !== 'hb') _D('收到信令', msg.rt);          // 心跳太密不打印，其余都记
     if (msg.rt === 'wsbye') {                            // 对端离开工作区（切后台/关笔记/关同步）→ 立即收起在场
+      if (msg.sid) delete _peers[msg.sid];
       _sigPeerSeenAt = 0; _peerSeenAt = 0; _notifyStatus(); // 多端时剩余对端的下一拍心跳(≤5s)会自动恢复
       return;
     }
@@ -466,12 +546,15 @@
       try { window.webdavSync.doGet({ force: true, silent: true }); } catch (_) {}
       return;
     }
+    _touchPeer(msg.sid, msg.dev);
     const _wasWsPeer = _sigPeerPresent();
     _sigPeerSeenAt = Date.now();                        // 收到任意对端信令 → 账号内有设备在场（紫点 + 心跳提速 + 结构门控）
     if (!_wasWsPeer) {                                  // 由「独自→有对端」
       _startHeartbeat(); _notifyStatus();               // 点亮紫点 + 转快心跳
       // 拉一次网盘，把对端（或本端）独自/离线期间攒下的全部改动快速对齐，之后转入即时
       try { window.webdavSync && window.webdavSync.doGet && window.webdavSync.doGet({ silent: true }); } catch (_) {}
+    } else {
+      _notifyStatus();                                  // 刷新人数/设备形态展示
     }
     if (msg.rt === 'hi') {
       _sigSend({ rt: 'yo', sid: _sid, note: _activeId }); // 一律回应（含跨篇）→ 对端立刻知道我在、秒点亮
@@ -757,12 +840,28 @@
     notifyShown: function () { try { _goOnline(); } catch (_) {} },
     /** 即时同步指示灯用：on=具备并已启用；connected=信令已连（断开即灭，诚实反映真实连接）；
      *  active=账号内有别的设备在场（服务器实报人数≥2，旧中转退回心跳）→ 紫点常亮；
-     *  syncing=刚发/收过正文或结构（呼吸窗口内）→ 紫点呼吸。 */
+     *  syncing=刚发/收过正文或结构（呼吸窗口内）→ 紫点呼吸；
+     *  presence=在线台数与电脑/手机/平板文案（含本机）。 */
     status: function () {
       const connected = !!(_sig && _sig.readyState === 1);
       const active = _enabled && connected && _sigPeerPresent();
-      return { on: _enabled, connected: connected, active: active, syncing: active && (Date.now() - _syncPulseAt) < SYNC_PULSE_MS };
+      const presence = _presenceInfo();
+      return {
+        on: _enabled,
+        connected: connected,
+        active: active,
+        syncing: active && (Date.now() - _syncPulseAt) < SYNC_PULSE_MS,
+        presence: presence,
+      };
     },
-    _debug: function () { return { enabled: _enabled, offline: _offline, base: _base, activeId: _activeId, room: _ws && _ws.readyState, sig: _sig && _sig.readyState, occ: _occSupported, sigOcc: _sigOcc, wsOcc: _wsOcc, peer: _peerPresent(), sigPeer: _sigPeerPresent() }; },
+    _debug: function () {
+      return {
+        enabled: _enabled, offline: _offline, base: _base, activeId: _activeId,
+        room: _ws && _ws.readyState, sig: _sig && _sig.readyState,
+        occ: _occSupported, sigOcc: _sigOcc, wsOcc: _wsOcc,
+        peer: _peerPresent(), sigPeer: _sigPeerPresent(),
+        deviceKind: _currentDevKind(), peers: Object.assign({}, _peers), presence: _presenceInfo(),
+      };
+    },
   };
 })();

@@ -2200,12 +2200,17 @@
     scheduleIdlePlay();
     // 云端带下来的加密 key：本机没 key 时尝试用网盘密码解出（换设备免重填）
     try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
-    // 本机已有 key、网盘已配好：补上行密文（先填 key 后开同步时原先不会传）
-    try { ai() && ai().syncKeyUp && ai().syncKeyUp(); } catch (_) {}
-    // 设置同步可能晚于启动到达，稍后再试一次
+    // 仅当云端还没有密钥密文时补传（有密文再 syncKeyUp 易因随机 IV/解密失败误重写 → 狂标脏）
+    try {
+      var _enc = window.storage && window.storage.getSetting && window.storage.getSetting('aiKeyEnc');
+      if (!_enc && ai() && ai().syncKeyUp) ai().syncKeyUp();
+    } catch (_) {}
     setTimeout(function () {
       try { ai() && ai().trySyncKeyDown(function () { rerender(); }); } catch (_) {}
-      try { ai() && ai().syncKeyUp && ai().syncKeyUp(); } catch (_) {}
+      try {
+        var _enc2 = window.storage && window.storage.getSetting && window.storage.getSetting('aiKeyEnc');
+        if (!_enc2 && ai() && ai().syncKeyUp) ai().syncKeyUp();
+      } catch (_) {}
     }, 15000);
   }
 
