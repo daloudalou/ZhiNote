@@ -56,9 +56,12 @@
       const ua = navigator.userAgent || '';
       const coarse = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
       const short = Math.min(screen.width || 0, screen.height || 0);
+      const isQuicker = !!(window.host && typeof window.host.isQuicker === 'function' && window.host.isQuicker());
+      // 触控短边优先：手机端 Quicker WebView 的 UA 常不像 Mobile，勿先打成「客户端」
       if (/iPad|Tablet|Android(?!.*Mobile)/i.test(ua) || (coarse && short >= 600 && short < 1100)) return 'tablet';
-      if (/Mobi|iPhone|iPod|Android.*Mobile/i.test(ua) || (coarse && short > 0 && short < 600)) return 'phone';
-      if (window.host && typeof window.host.isQuicker === 'function' && window.host.isQuicker()) return 'quicker';
+      if (/Mobi|iPhone|iPod|Android.*Mobile|Phone/i.test(ua) || (coarse && short > 0 && short < 600)) return 'phone';
+      if (isQuicker && coarse) return short >= 600 ? 'tablet' : 'phone';
+      if (isQuicker) return 'quicker';
     } catch (_) {}
     return 'web';
   }
@@ -136,23 +139,34 @@
   }
   function _touchPeer(sid, dev) {
     if (!sid || sid === _sid) return;
-    const kind = _normDev(dev);
     const prev = _peers[sid];
-    _peers[sid] = { kind: kind === 'other' && prev && prev.kind !== 'other' ? prev.kind : kind, at: Date.now() };
+    // 无 dev：只续命，不新建「其他」（人数先到、形态后到时曾误显示「其他」）
+    if (dev == null || dev === '') {
+      if (prev) prev.at = Date.now();
+      else _peers[sid] = { kind: null, at: Date.now() };
+      return;
+    }
+    const kind = _normDev(dev);
+    if (kind === 'other') {
+      if (prev) { prev.at = Date.now(); if (!prev.kind) prev.kind = null; }
+      else _peers[sid] = { kind: null, at: Date.now() };
+      return;
+    }
+    _peers[sid] = { kind: kind, at: Date.now() };
   }
   function _clearPeers() { _peers = Object.create(null); }
-  /** 仅对端文案：精简美观。例「客户端 · 网页2」；不含本机、不用顿号与×。 */
+  /** 仅对端已知形态：例「客户端 · 网页2」。不补「其他」、不含本机。 */
   function _presenceInfo() {
     _prunePeers();
     const kinds = [];
     const seen = Object.keys(_peers);
-    for (let i = 0; i < seen.length; i++) kinds.push(_peers[seen[i]].kind);
-    let otherN = kinds.length;
-    if (_occSupported && (_sigOcc | 0) >= 1) {
-      otherN = Math.max(0, (_sigOcc | 0) - 1);
-      while (kinds.length < otherN) kinds.push('other');
+    for (let i = 0; i < seen.length; i++) {
+      const k = _peers[seen[i]].kind;
+      if (k && k !== 'other') kinds.push(k);
     }
-    const order = ['quicker', 'web', 'pc', 'phone', 'tablet', 'other'];
+    let otherN = seen.length;
+    if (_occSupported && (_sigOcc | 0) >= 1) otherN = Math.max(0, (_sigOcc | 0) - 1);
+    const order = ['quicker', 'web', 'pc', 'phone', 'tablet'];
     const counts = Object.create(null);
     for (let i = 0; i < kinds.length; i++) counts[kinds[i]] = (counts[kinds[i]] || 0) + 1;
     const parts = [];
@@ -161,7 +175,7 @@
       const n = counts[k] | 0;
       if (!n) continue;
       const zh = _devZh(k);
-      parts.push(n > 1 ? (zh + n) : zh); // 网页2 = 同形态多开
+      parts.push(n > 1 ? (zh + n) : zh);
     }
     return {
       others: otherN,

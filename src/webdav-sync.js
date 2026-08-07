@@ -1299,7 +1299,7 @@
     return isFinite(t) ? t : 0;
   }
 
-  // 是否应下载该篇（下载闸唯一谓词；保护条 _hasIncomingChanges 与 _applyRemoteChanges 共用）。
+  // 是否应下载该篇（下载闸唯一谓词；保护条与 _applyRemoteChanges 共用）。
   // 20260804t1：有指纹且云端相对指纹变了 → 一律下（脏也下，交给合并）；无指纹有本地 → 先下再立基准；禁止假立基准。
   function _shouldDownloadNote(id, manifest, data) {
     if (!manifest || !manifest.notes || !manifest.notes[id]) return false;
@@ -1321,14 +1321,32 @@
   }
 
   // 远端 manifest 是否真的带来了本地需要下载的变更（新增 / 更新的笔记）。
-  // 用于决定是否需要弹"检测到其他设备更新"的保护条——避免内容早已同步过却仍误报。
   function _hasIncomingChanges(manifest) {
-    if (!manifest || !manifest.notes) return false;
+    return _listNotesToDownload(manifest).length > 0;
+  }
+  function _listNotesToDownload(manifest) {
+    if (!manifest || !manifest.notes) return [];
     const data = window.storage.getAll();
+    const ids = [];
     for (const id in manifest.notes) {
-      if (_shouldDownloadNote(id, manifest, data)) return true;
+      if (_shouldDownloadNote(id, manifest, data)) ids.push(id);
     }
-    return false;
+    return ids;
+  }
+  /** 是否值得弹只读保护条（谨慎收口，宁可不弹也不误挡打字）：
+   *  - 采纳/权威对齐：仍弹
+   *  - 当前打开的笔记在待下载列表：仍弹（防正编辑时被远端覆盖感）
+   *  - 一次待下 ≥5 篇：仍弹（批量合并体感重）
+   *  - 其它小改（别的笔记打几个字）：不弹，后台静默合并即可 */
+  function _shouldShowSyncProtection(manifest, opts) {
+    const adoptMode = !!(opts && opts.adoptMode);
+    if (adoptMode) return true;
+    const ids = _listNotesToDownload(manifest);
+    if (!ids.length) return false;
+    if (ids.length >= 5) return true;
+    let curId = null;
+    try { curId = window.editor && window.editor.currentId && window.editor.currentId(); } catch (_) {}
+    return !!(curId && ids.indexOf(curId) >= 0);
   }
 
   // ─── 瞬时错误熔断 ─────────────────────────────────────────────────────────────
@@ -1701,18 +1719,22 @@
         return;
       }
 
-      // 只有"确实有新内容要下载"才弹保护条；仅仅是云端上次由别的设备写过（内容早已同步过）不算。
-      const isOtherDevice = manifest.deviceId && manifest.deviceId !== _ensureClientId();
-      if (isOtherDevice && _hasIncomingChanges(manifest)) {
-        _emit('cloud-sync', { type: 'sync-protection-start' });
-      }
-
       // epoch 闸门：远端世代比本地已采纳的更高 → 采纳模式（云端权威，本地多余项留底后移除，不反向上传）。
       // 首次遇到本账号（stored===null）不采纳，只记录，避免老用户升级首次同步误删本地笔记。
       // adopt 强制采纳：本地多余笔记留底后移除，使本地与云端一致（"下载覆盖"语义）。
       const remoteEpoch = manifest.epoch || 1;
       const storedEpoch = _getAdoptedEpoch();
       const adoptMode = adopt || ((storedEpoch !== null) && (remoteEpoch > storedEpoch));
+
+      // 保护条（谨慎）：静默轮询 / 即时同步在场 → 不弹；小改且非当前篇 → 不弹；采纳/当前篇/批量仍弹。
+      const isOtherDevice = manifest.deviceId && manifest.deviceId !== _ensureClientId();
+      if (!silent && (adoptMode || isOtherDevice)) {
+        let rtLive = false;
+        try { rtLive = !!(window.realtime && window.realtime.status && window.realtime.status().active); } catch (_) {}
+        if (!rtLive && _shouldShowSyncProtection(manifest, { adoptMode })) {
+          _emit('cloud-sync', { type: 'sync-protection-start' });
+        }
+      }
 
       await _applyRemoteChanges(manifest, { adoptMode });
       // 有笔记因解密失败被跳过时不记录游标：下轮"manifest 未变"不会早退，被跳过的笔记会重试
@@ -2393,12 +2415,15 @@
         } else {
           // 彻底删除：notes 与 trash 都已无此 id → 记墓碑 + 清 manifest + 删云端文件。
           // 不做这步的话，manifest.notes[id] 残留，下次启动同步会把它重新下载回列表（顽固复活 bug）。
+          // 仅删「索引里曾经有过」的路径：两边都没有时再 DELETE 必 404，浏览器控制台会红字刷屏（文件多半早已不在）。
+          const hadNote = !!(manifest.notes && manifest.notes[id]);
+          const hadTrash = !!(manifest.trash && manifest.trash[id]);
           delete manifest.notes[id];
           if (manifest.trash) delete manifest.trash[id];
           manifest.deleted = manifest.deleted || {};
           manifest.deleted[id] = Date.now();
-          try { await webdavDelete(`notes/${id}.json`); } catch (_) {}
-          try { await webdavDelete(`trash/${id}.json`); } catch (_) {}
+          if (hadNote) { try { await webdavDelete(`notes/${id}.json`); } catch (_) {} }
+          if (hadTrash) { try { await webdavDelete(`trash/${id}.json`); } catch (_) {} }
         }
       }
 

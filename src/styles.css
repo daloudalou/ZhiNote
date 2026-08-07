@@ -3006,6 +3006,18 @@ body.theme-nord .context-menu { background: rgba(59,66,82,0.92); border-color: r
 body.theme-dracula .context-menu { background: rgba(52,55,70,0.92); border-color: rgba(248,248,242,0.10); box-shadow: 0 0 0 1px rgba(248,248,242,0.09), 0 2px 6px rgba(0,0,0,0.28), 0 8px 20px rgba(0,0,0,0.38); }
 body.theme-gruvbox .context-menu { background: rgba(50,48,47,0.92); border-color: rgba(235,219,178,0.10); box-shadow: 0 0 0 1px rgba(235,219,178,0.09), 0 2px 6px rgba(0,0,0,0.26), 0 8px 20px rgba(0,0,0,0.34); }
 .context-menu-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 6px; cursor: pointer; color: var(--text); transition: background var(--transition); position: relative; margin: 1px 0; }
+/* 菜单顶说明（如即时对端形态）：小字灰色顶栏，勿做成可点选项 */
+.context-menu-caption {
+  padding: 5px 12px 3px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+  cursor: default;
+  user-select: none;
+  pointer-events: none;
+}
+.context-menu-caption + .context-menu-divider { margin-top: 2px; }
 .ctx-icon-emoji { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; line-height: 1; }
 .context-menu-item:hover { background: var(--bg-hover); }
 /* 模板高亮：方向键移动时的选中态。覆盖两条路径——

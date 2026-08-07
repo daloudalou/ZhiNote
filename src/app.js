@@ -283,6 +283,8 @@ async function bootstrap() {
   function _startSyncProtection() {
     if (_syncProtectionActive) return;
     if (Date.now() < _syncProtectionCooldownUntil) return;
+    // 紫点已亮（即时同步在场）：内容多半已秒级合并，勿再只读遮罩 +「后台同步较长」toast
+    if (_realtimeLive()) return;
     _syncProtectionActive = true;
     editor.setReadonly(true);
     document.body.classList.add('sync-protection-mode');
@@ -4321,12 +4323,9 @@ function openCloudSyncMenu(anchor) {
     try {
       const st = window.realtime && window.realtime.status && window.realtime.status();
       const text = st && st.presence && st.presence.text;
-      // 有对端才显示一行精简形态（不含本机、不写「即时同步」）；独自时不占菜单
+      // 有对端才在菜单顶显示低调说明（非可点选项）；独自时不占位
       if (st && st.active && text) {
-        rtLine = `<div class="context-menu-item context-menu-info" style="opacity:.9;cursor:default;pointer-events:none;">
-            <span style="width:14px;color:#8b7fd1;">●</span>
-            <span>${escapeHtml(text)}</span>
-          </div>
+        rtLine = `<div class="context-menu-caption">${escapeHtml(text)}</div>
           <div class="context-menu-divider"></div>`;
       }
     } catch (_) {}
