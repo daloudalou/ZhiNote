@@ -6,7 +6,8 @@
  *   node publish.mjs 1.2.3        → 指定版本号的正式构建
  *
  * 版本号只在「发布」那一刻落实——本地测试打多少次包都不占号，线上版本不跳号。
- * 构建时把版本号注入 __MD_VER__（关于页显示）与 SW 缓存名，全链路同一个 vX.Y.Z。
+ * 构建时把版本号注入 __MD_VER__、whats-new.json 的 id/ver、SW 缓存名，给人看的是同一串。
+ * Quicker 用正式包 发布版本/vX.Y.Z/ZhiNote.html；dev 仅试看。打完会在资源管理器中选中刚打的那份。
  * 将所有本地 CSS/JS 原样内联到单个 HTML 文件，不做任何代码变换。
  */
 
@@ -58,7 +59,10 @@ if (_manualVer) {
   }
 }
 const version = _manualVer || getNextVersion();
-const verLabel = isRelease ? `v${version}` : `v${version}-dev`;
+let output = readFileSync(join(SRC, 'index.html'), 'utf8');
+const srcStamp = (output.match(/window\.__MD_VER__\s*=\s*'([^']+)'/) || [])[1] || '';
+// 测试包把源码轮次写进版本，否则每次都是同一个 vX.Y.Z-dev → 网页缓存不换，测的仍是上一包。
+const verLabel = isRelease ? `v${version}` : (srcStamp ? `v${version}-dev+${srcStamp}` : `v${version}-dev`);
 const outDir = isRelease ? join(OUT_BASE, `v${version}`) : join(OUT_BASE, 'dev');
 if (isRelease && existsSync(outDir)) {
   console.error(`版本目录已存在：${outDir}\n请使用新版本号或手动删除该目录。`);
@@ -67,8 +71,6 @@ if (isRelease && existsSync(outDir)) {
 if (!isRelease) rmSync(outDir, { recursive: true, force: true }); // 测试构建覆盖式输出
 
 console.log(`\n📦 枝记 ${isRelease ? '正式构建' : '测试构建（不占版本号）'} ${verLabel}\n`);
-
-let output = readFileSync(join(SRC, 'index.html'), 'utf8');
 
 // 注入版本号：关于页/控制台显示的 __MD_VER__ 与 GitHub 版本号全链路统一为 vX.Y.Z
 output = output.replace(/window\.__MD_VER__ = '[^']*'/, `window.__MD_VER__ = '${verLabel}'`);
@@ -114,11 +116,16 @@ const sw = readFileSync(join(SRC, 'sw.js'), 'utf8').replace(/__SW_VER__/g, verLa
 writeFileSync(join(webDir, 'sw.js'), sw, 'utf8');
 writeFileSync(join(webDir, 'manifest.webmanifest'), readFileSync(join(SRC, 'manifest.webmanifest'), 'utf8'), 'utf8');
 writeFileSync(join(webDir, 'icon.svg'), readFileSync(join(SRC, 'icon.svg'), 'utf8'), 'utf8');
+{
+  const wnSrc = JSON.parse(readFileSync(join(SRC, 'whats-new.json'), 'utf8'));
+  const wnOut = { id: verLabel, ver: verLabel, items: Array.isArray(wnSrc.items) ? wnSrc.items : [] };
+  writeFileSync(join(webDir, 'whats-new.json'), JSON.stringify(wnOut, null, 2) + '\n', 'utf8');
+}
 // PNG 图标：iOS 主屏图标不吃 SVG，manifest 也需要 PNG 兜底
 for (const f of ['apple-touch-icon.png', 'icon-192.png', 'icon-512.png']) {
   writeFileSync(join(webDir, f), readFileSync(join(SRC, f)));
 }
-console.log(`  网页版输出 → ${webDir}（含 sw.js / manifest / icon）`);
+console.log(`  网页版输出 → ${webDir}（含 sw.js / manifest / icon / whats-new.json）`);
 
 const finalSize = Buffer.byteLength(output, 'utf8');
 console.log(`\n✅ 构建完成！`);
@@ -126,9 +133,7 @@ console.log(`   输出：${outFile}`);
 console.log(`   大小：${(finalSize / 1024).toFixed(1)}KB`);
 console.log(`   版本：${verLabel}${isRelease ? '' : '（测试包；发布时才落实正式版本号）'}\n`);
 
-// 打开文件所在位置并选中（正式发布由 sync-public 静默调用，不弹资源管理器）
-if (!isRelease) {
-  try {
-    execSync(`explorer /select,"${outFile}"`);
-  } catch (_) {}
-}
+// 资源管理器选中刚打的包：测试选中 dev；正式发布选中 vX.Y.Z（Quicker 用这一份）
+try {
+  execSync(`explorer /select,"${outFile}"`);
+} catch (_) {}

@@ -13,6 +13,7 @@ const {
 } = window.__tiptapBundle;
 const _pmState = window.__tiptapBundle.pmState || {};
 const TextSelection = _pmState.TextSelection;
+const Selection = _pmState.Selection;
 
 // 绑定模式开启时为 true：禁止把 Unicode 表情「收成」znEmoji 写进活账本。
 // y-prosemirror 会把 PM→Y 的每次改写同步进 Y.Doc；若对端补丁后再 expand，会把 znEmoji
@@ -30,7 +31,7 @@ const TextAlign = Extension.create({
   name: 'textAlign',
   addOptions() {
     return {
-      types: ['paragraph', 'heading'],
+      types: ['paragraph', 'heading', 'toggleSummary'],
       alignments: ['left', 'center', 'right', 'justify'],
       defaultAlignment: null,
     };
@@ -179,6 +180,887 @@ const MathBlock = Node.create({
   },
 });
 
+/**
+ * Notion 式折叠块（方案 A）：toggle / toggleSummary / toggleContent。
+ * - open 写入文档属性 → 两端开合一致（同步）。
+ * - level 0=普通折叠列表；1/2/3=折叠标题。
+ * - 结构对齐 TipTap Details：标题层可编，内容层可嵌任意块（含再套折叠）。
+ */
+function _znEmptyToggle(level, open) {
+  // 新建默认收起：内容空段不抢光标，先写标题；回车再展开进内部
+  return {
+    type: 'toggle',
+    attrs: { open: open === true, level: level || 0 },
+    content: [
+      { type: 'toggleSummary' },
+      { type: 'toggleContent', content: [{ type: 'paragraph' }] },
+    ],
+  };
+}
+
+/** 折叠块标题行光标位置：atEnd=false 标题开头，true 标题末尾。失败返回 null。 */
+function _znToggleSummaryPos(doc, togglePos, atEnd) {
+  const node = doc.nodeAt(togglePos);
+  if (!node || node.type.name !== 'toggle' || node.childCount < 1) return null;
+  const sum = node.child(0);
+  if (sum.type.name !== 'toggleSummary') return null;
+  const sumPos = togglePos + 1;
+  return atEnd ? (sumPos + sum.nodeSize - 1) : (sumPos + 1);
+}
+
+/** 把选区落到某折叠的标题行（新建/同级/插入后统一用这个，避免落到内容空段）。 */
+function _znSelectToggleSummary(tr, togglePos, atEnd) {
+  const pos = _znToggleSummaryPos(tr.doc, togglePos, !!atEnd);
+  if (pos == null) return false;
+  try {
+    tr.setSelection(TextSelection.create(tr.doc, pos));
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/** 光标所在折叠块的 depth / pos；不在折叠内返回 null。 */
+function _znFindToggleAround($pos) {
+  for (let d = $pos.depth; d > 0; d--) {
+    if ($pos.node(d).type.name === 'toggle') {
+      return { depth: d, pos: $pos.before(d), node: $pos.node(d) };
+    }
+  }
+  return null;
+}
+
+/**
+ * Tab：当前折叠套进上一条折叠里（对齐 Notion）。
+ * 仅当光标在折叠标题行、且上一条兄弟也是折叠时生效。
+ */
+function _znNestToggle(editor) {
+  const { state, view } = editor;
+  const { schema, selection } = state;
+  const { $from } = selection;
+  if ($from.parent.type !== schema.nodes.toggleSummary) return false;
+  const cur = _znFindToggleAround($from);
+  if (!cur) return false;
+  const $at = state.doc.resolve(cur.pos);
+  const idx = $at.index();
+  if (idx <= 0) return true; // 吞掉 Tab，避免插空格；但无处可套
+  const prev = $at.parent.child(idx - 1);
+  if (prev.type !== schema.nodes.toggle) return true; // 无处可套：吞掉 Tab，免得焦点跳到左侧笔记树
+  const prevPos = cur.pos - prev.nodeSize;
+  const moving = cur.node;
+  const tr = state.tr.delete(cur.pos, cur.pos + moving.nodeSize);
+  const prevLive = tr.doc.nodeAt(prevPos);
+  if (!prevLive || prevLive.type !== schema.nodes.toggle || prevLive.childCount < 2) return false;
+  const sumSize = prevLive.child(0).nodeSize;
+  const contentPos = prevPos + 1 + sumSize;
+  const contentNode = prevLive.child(1);
+  const insertPos = contentPos + 1 + contentNode.content.size;
+  tr.insert(insertPos, moving);
+  tr.setNodeMarkup(prevPos, undefined, { ...prevLive.attrs, open: true });
+  if (!_znSelectToggleSummary(tr, insertPos, false)) {
+    try { tr.setSelection(TextSelection.create(tr.doc, insertPos + 2)); } catch (_) {}
+  }
+  view.dispatch(tr.scrollIntoView());
+  queueMicrotask(() => {
+    try {
+      if (editor.isDestroyed) return;
+      const p = _znToggleSummaryPos(editor.state.doc, insertPos, false);
+      if (p != null) editor.commands.setTextSelection(p);
+    } catch (_) {}
+  });
+  return true;
+}
+
+/**
+ * Shift+Tab：把当前折叠从外层折叠里拆出，放到外层后面（同级）。
+ */
+function _znUnnestToggle(editor) {
+  const { state, view } = editor;
+  const { schema, selection } = state;
+  const { $from } = selection;
+  if ($from.parent.type !== schema.nodes.toggleSummary) return false;
+  const cur = _znFindToggleAround($from);
+  if (!cur) return false;
+  const $at = state.doc.resolve(cur.pos);
+  if ($at.parent.type !== schema.nodes.toggleContent) return false;
+  let outerPos = null;
+  let outerNode = null;
+  for (let d = $at.depth; d > 0; d--) {
+    if ($at.node(d).type === schema.nodes.toggle) {
+      outerPos = $at.before(d);
+      outerNode = $at.node(d);
+      break;
+    }
+  }
+  if (outerPos == null || !outerNode) return false;
+  const afterOuter = outerPos + outerNode.nodeSize;
+  const moving = cur.node;
+  const tr = state.tr.delete(cur.pos, cur.pos + moving.nodeSize);
+  const insertAt = tr.mapping.map(afterOuter);
+  tr.insert(insertAt, moving);
+  if (!_znSelectToggleSummary(tr, insertAt, false)) {
+    try { tr.setSelection(TextSelection.create(tr.doc, insertAt + 2)); } catch (_) {}
+  }
+  view.dispatch(tr.scrollIntoView());
+  queueMicrotask(() => {
+    try {
+      if (editor.isDestroyed) return;
+      const p = _znToggleSummaryPos(editor.state.doc, insertAt, false);
+      if (p != null) editor.commands.setTextSelection(p);
+    } catch (_) {}
+  });
+  return true;
+}
+
+/** 内容区是否「空壳」：只有空段则淡三角；有字/图/嵌套块则实色。 */
+function _znIsToggleBodyEmpty(toggleNode) {
+  if (!toggleNode || toggleNode.childCount < 2) return true;
+  const body = toggleNode.child(1);
+  if (!body || body.childCount === 0) return true;
+  for (let i = 0; i < body.childCount; i++) {
+    const ch = body.child(i);
+    if (ch.type.name === 'paragraph' || ch.type.name === 'heading') {
+      if (ch.textContent.replace(/\s+/g, '')) return false;
+      let hasAtom = false;
+      ch.forEach((n) => {
+        if (n.type.name !== 'text' && n.type.name !== 'hardBreak') hasAtom = true;
+      });
+      if (hasAtom) return false;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Shift+Enter：在当前折叠后面插同级新折叠（标题行或内容里都能用，写完不用点回标题）。
+ */
+function _znInsertSiblingToggle(editor) {
+  const { state, view } = editor;
+  const { schema, selection } = state;
+  const cur = _znFindToggleAround(selection.$head);
+  if (!cur) return false;
+  const after = cur.pos + cur.node.nodeSize;
+  const level = cur.node.attrs.level || 0;
+  const fresh = schema.nodes.toggle.create(
+    { open: false, level },
+    [
+      schema.nodes.toggleSummary.create(),
+      schema.nodes.toggleContent.create(null, schema.nodes.paragraph.create()),
+    ],
+  );
+  const tr = state.tr.insert(after, fresh);
+  if (!_znSelectToggleSummary(tr, after, false)) {
+    try { tr.setSelection(TextSelection.create(tr.doc, after + 2)); } catch (_) {}
+  }
+  view.dispatch(tr.scrollIntoView());
+  queueMicrotask(() => {
+    try {
+      if (editor.isDestroyed) return;
+      const p = _znToggleSummaryPos(editor.state.doc, after, false);
+      if (p != null) editor.commands.setTextSelection(p);
+    } catch (_) {}
+  });
+  return true;
+}
+
+/**
+ * 内容区末尾空段回车 → 跳出到折叠下方普通段落（对齐 Notion「离开折叠」）。
+ */
+function _znExitToggleBelow(editor) {
+  const { state, view } = editor;
+  const { schema, selection } = state;
+  const { empty, $head } = selection;
+  if (!empty || !$head.parent.isTextblock) return false;
+  if ($head.parent.content.size > 0) return false;
+  if ($head.parentOffset !== 0) return false;
+  let contentDepth = null;
+  for (let d = $head.depth; d > 0; d--) {
+    if ($head.node(d).type === schema.nodes.toggleContent) { contentDepth = d; break; }
+  }
+  if (contentDepth == null) return false;
+  const contentNode = $head.node(contentDepth);
+  const idxInContent = $head.index(contentDepth);
+  if (idxInContent !== contentNode.childCount - 1) return false;
+  const cur = _znFindToggleAround($head);
+  if (!cur) return false;
+  const after = cur.pos + cur.node.nodeSize;
+  const para = schema.nodes.paragraph.create();
+  const tr = state.tr.insert(after, para);
+  tr.setSelection(TextSelection.create(tr.doc, after + 1));
+  view.dispatch(tr.scrollIntoView());
+  return true;
+}
+
+const ToggleSummary = Node.create({
+  name: 'toggleSummary',
+  content: 'inline*',
+  defining: true,
+  selectable: false,
+  parseHTML() {
+    return [{ tag: 'summary' }, { tag: 'div[data-type="toggleSummary"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggleSummary', class: 'zn-toggle-summary' }), 0];
+  },
+  // 必须传 content 数组：空标题没有 content 字段时若传整个 node，会再次进本函数 → 爆栈
+  renderMarkdown(node, helpers) {
+    if (!node) return '';
+    if (Array.isArray(node.content)) return helpers.renderChildren(node.content) || '';
+    return '';
+  },
+});
+
+const ToggleContent = Node.create({
+  name: 'toggleContent',
+  content: 'block+',
+  defining: true,
+  selectable: false,
+  parseHTML() {
+    return [{ tag: 'div[data-type="toggleContent"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggleContent', class: 'zn-toggle-content' }), 0];
+  },
+  renderMarkdown(node, helpers) {
+    if (!node) return '';
+    if (Array.isArray(node.content)) return helpers.renderChildren(node.content) || '';
+    return '';
+  },
+});
+
+const Toggle = Node.create({
+  name: 'toggle',
+  content: 'toggleSummary toggleContent',
+  group: 'block',
+  defining: true,
+  isolating: true,
+  // 优先于 HardBreak 的 Shift-Enter，保证同级折叠快捷键生效
+  priority: 1000,
+  addAttributes() {
+    return {
+      open: {
+        default: true,
+        parseHTML: (el) => el.hasAttribute('open') || el.getAttribute('data-open') === 'true',
+        renderHTML: ({ open }) => (open ? { open: '', 'data-open': 'true' } : { 'data-open': 'false' }),
+      },
+      level: {
+        default: 0,
+        parseHTML: (el) => {
+          const n = parseInt(el.getAttribute('data-level') || '0', 10);
+          return (n >= 0 && n <= 3) ? n : 0;
+        },
+        renderHTML: ({ level }) => ({ 'data-level': String(level || 0) }),
+      },
+    };
+  },
+  parseHTML() {
+    return [
+      { tag: 'details[data-zn-toggle]' },
+      { tag: 'div[data-type="toggle"]' },
+      {
+        tag: 'details',
+        getAttrs: (el) => ({
+          open: el.hasAttribute('open'),
+          level: parseInt(el.getAttribute('data-level') || '0', 10) || 0,
+        }),
+      },
+    ];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['details', mergeAttributes(HTMLAttributes, { 'data-zn-toggle': '', 'data-type': 'toggle', class: 'zn-toggle' }), 0];
+  },
+  renderMarkdown(node, helpers) {
+    const open = node.attrs && node.attrs.open;
+    const level = (node.attrs && node.attrs.level) || 0;
+    const kids = Array.isArray(node.content) ? node.content : [];
+    const sumNode = kids.find((k) => k && k.type === 'toggleSummary') || kids[0];
+    const bodyNode = kids.find((k) => k && k.type === 'toggleContent') || kids[1];
+    // 只渲染子节点的 content，避免空标题缺 content 时递归爆栈
+    const sum = (sumNode && Array.isArray(sumNode.content))
+      ? (helpers.renderChildren(sumNode.content) || '')
+      : '';
+    const body = (bodyNode && Array.isArray(bodyNode.content))
+      ? (helpers.renderChildren(bodyNode.content) || '')
+      : '';
+    const openAttr = open ? ' open' : '';
+    const lvl = level ? ` data-level="${level}"` : '';
+    return `<details data-zn-toggle${openAttr}${lvl}>\n<summary>${sum}</summary>\n\n${body}\n</details>`;
+  },
+  addNodeView() {
+    return ({ editor: ed, getPos, node, HTMLAttributes }) => {
+      const dom = document.createElement('div');
+      const attrs = mergeAttributes(HTMLAttributes, {
+        'data-type': 'toggle',
+        'data-zn-toggle': '',
+        class: 'zn-toggle',
+      });
+      Object.entries(attrs).forEach(([k, v]) => {
+        if (v == null || v === false) return;
+        dom.setAttribute(k, v === true ? '' : String(v));
+      });
+      const applyOpenClass = (open, level) => {
+        dom.classList.toggle('is-open', !!open);
+        dom.setAttribute('data-open', open ? 'true' : 'false');
+        dom.setAttribute('data-level', String(level || 0));
+      };
+      const applyEmptyClass = (n) => {
+        dom.classList.toggle('is-empty', _znIsToggleBodyEmpty(n));
+      };
+      applyOpenClass(node.attrs.open, node.attrs.level);
+      applyEmptyClass(node);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'zn-toggle-chevron';
+      btn.setAttribute('aria-label', '展开/折叠');
+      btn.contentEditable = 'false';
+      btn.innerHTML = '<svg class="zn-toggle-chevron-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5L19 12L8 19Z" fill="currentColor"/></svg>';
+
+      const content = document.createElement('div');
+      content.className = 'zn-toggle-inner';
+
+      dom.appendChild(btn);
+      dom.appendChild(content);
+
+      const persistOpen = (next) => {
+        if (!ed.isEditable || typeof getPos !== 'function') return;
+        const { from, to } = ed.state.selection;
+        ed.chain()
+          .command(({ tr }) => {
+            const pos = getPos();
+            if (typeof pos !== 'number') return false;
+            const cur = tr.doc.nodeAt(pos);
+            if (!cur || cur.type.name !== 'toggle') return false;
+            tr.setNodeMarkup(pos, undefined, { ...cur.attrs, open: next });
+            return true;
+          })
+          .setTextSelection({ from, to })
+          .focus(undefined, { scrollIntoView: false })
+          .run();
+      };
+
+      btn.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = typeof getPos === 'function' ? getPos() : null;
+        const cur = (typeof pos === 'number') ? ed.state.doc.nodeAt(pos) : null;
+        const nowOpen = cur ? !!cur.attrs.open : dom.classList.contains('is-open');
+        const next = !nowOpen;
+        applyOpenClass(next, (cur && cur.attrs.level) || 0);
+        persistOpen(next);
+      });
+
+      return {
+        dom,
+        contentDOM: content,
+        ignoreMutation(mutation) {
+          if (mutation.type === 'selection') return false;
+          return btn.contains(mutation.target) || mutation.target === dom;
+        },
+        update(updated) {
+          if (updated.type.name !== 'toggle') return false;
+          applyOpenClass(updated.attrs.open, updated.attrs.level);
+          applyEmptyClass(updated);
+          return true;
+        },
+      };
+    };
+  },
+  addCommands() {
+    return {
+      setToggle:
+        (attrs) =>
+        ({ state, chain }) => {
+          const level = (attrs && attrs.level) || 0;
+          const open = !attrs || attrs.open !== false;
+          const { $from, $to, empty } = state.selection;
+
+          // 当前在可编辑文本块里：把这段字收成折叠标题，正文进内容区（不丢字）
+          if ($from.parent.isTextblock && $from.parent.type.name !== 'toggleSummary') {
+            const para = $from.parent;
+            const paraPos = $from.before();
+            const paraEnd = $from.after();
+            let summaryJSON;
+            if (!empty && $from.parent === $to.parent) {
+              summaryJSON = para.cut($from.parentOffset, $to.parentOffset).content.toJSON();
+            } else {
+              summaryJSON = para.content.toJSON();
+            }
+            return chain()
+              .insertContentAt(
+                { from: paraPos, to: paraEnd },
+                {
+                  type: 'toggle',
+                  attrs: { open, level },
+                  content: [
+                    { type: 'toggleSummary', content: summaryJSON || undefined },
+                    { type: 'toggleContent', content: [{ type: 'paragraph' }] },
+                  ],
+                },
+                { updateSelection: false },
+              )
+              .command(({ tr, dispatch }) => {
+                if (dispatch) _znSelectToggleSummary(tr, paraPos, !!(summaryJSON && summaryJSON.length));
+                return true;
+              })
+              .run();
+          }
+
+          // 已在折叠标题行：只改等级
+          if ($from.parent.type.name === 'toggleSummary') {
+            return chain().setToggleLevel(level).run();
+          }
+
+          // 多块选区：整段包进内容，标题留空（少见）
+          const range = $from.blockRange($to);
+          if (!range) {
+            return chain()
+              .insertContent(_znEmptyToggle(level, open), { updateSelection: false })
+              .command(({ tr, dispatch }) => {
+                const pos = tr.selection.from;
+                let togglePos = null;
+                tr.doc.nodesBetween(Math.max(0, pos - 4), Math.min(tr.doc.content.size, pos + 12), (node, p) => {
+                  if (node.type.name === 'toggle' && togglePos == null) togglePos = p;
+                });
+                if (togglePos == null || !dispatch) return !!togglePos;
+                return _znSelectToggleSummary(tr, togglePos, false);
+              })
+              .run();
+          }
+          const slice = state.doc.slice(range.start, range.end);
+          const content = (slice.toJSON() && slice.toJSON().content) || [{ type: 'paragraph' }];
+          return chain()
+            .insertContentAt(
+              { from: range.start, to: range.end },
+              {
+                type: 'toggle',
+                attrs: { open, level },
+                content: [
+                  { type: 'toggleSummary' },
+                  { type: 'toggleContent', content },
+                ],
+              },
+              { updateSelection: false },
+            )
+            .command(({ tr, dispatch }) => {
+              if (dispatch) _znSelectToggleSummary(tr, range.start, false);
+              return true;
+            })
+            .run();
+        },
+      insertToggle:
+        (attrs) =>
+        ({ state, chain, editor: ed }) => {
+          // 插空白折叠后光标落在「标题行」（summary），不要落到内容区空段（像自动换行）
+          const level = (attrs && attrs.level) || 0;
+          const { $from } = state.selection;
+          const pinAfter = (togglePos) => {
+            queueMicrotask(() => {
+              try {
+                if (!ed || ed.isDestroyed) return;
+                const pos = _znToggleSummaryPos(ed.state.doc, togglePos, false);
+                if (pos != null) ed.commands.setTextSelection(pos);
+              } catch (_) {}
+            });
+          };
+          if ($from.parent.isTextblock && $from.parent.type.name !== 'toggleSummary') {
+            const from = $from.before();
+            const to = $from.after();
+            const ok = chain()
+              .focus()
+              .insertContentAt({ from, to }, _znEmptyToggle(level, false), { updateSelection: false })
+              .command(({ tr, dispatch }) => {
+                if (dispatch) _znSelectToggleSummary(tr, from, false);
+                return true;
+              })
+              .run();
+            if (ok) pinAfter(from);
+            return ok;
+          }
+          let insertedAt = null;
+          const ok = chain()
+            .focus()
+            .insertContent(_znEmptyToggle(level, false), { updateSelection: false })
+            .command(({ tr, dispatch }) => {
+              const { $from: $f } = tr.selection;
+              let togglePos = null;
+              for (let d = $f.depth; d > 0; d--) {
+                if ($f.node(d).type.name === 'toggle') { togglePos = $f.before(d); break; }
+              }
+              if (togglePos == null) {
+                const pos = $f.pos;
+                tr.doc.nodesBetween(Math.max(0, pos - 2), Math.min(tr.doc.content.size, pos + 8), (node, p) => {
+                  if (node.type.name === 'toggle' && togglePos == null) togglePos = p;
+                });
+              }
+              if (togglePos == null || !dispatch) return false;
+              insertedAt = togglePos;
+              return _znSelectToggleSummary(tr, togglePos, false);
+            })
+            .run();
+          if (ok && insertedAt != null) pinAfter(insertedAt);
+          return ok;
+        },
+      unsetToggle:
+        () =>
+        ({ state, chain }) => {
+          const { selection, schema } = state;
+          let togglePos = null;
+          let toggleNode = null;
+          for (let d = selection.$from.depth; d > 0; d--) {
+            const n = selection.$from.node(d);
+            if (n.type === schema.nodes.toggle) {
+              togglePos = selection.$from.before(d);
+              toggleNode = n;
+              break;
+            }
+          }
+          if (togglePos == null || !toggleNode) return false;
+          const sum = toggleNode.child(0);
+          const body = toggleNode.child(1);
+          const summaryPara = {
+            type: 'paragraph',
+            content: sum.content.toJSON() || undefined,
+          };
+          const bodyJson = (body.content.toJSON() || []);
+          const merged = [summaryPara, ...bodyJson];
+          const to = togglePos + toggleNode.nodeSize;
+          return chain()
+            .insertContentAt({ from: togglePos, to }, merged)
+            .setTextSelection(togglePos + 1)
+            .run();
+        },
+      setToggleOpen:
+        (open) =>
+        ({ state, tr, dispatch }) => {
+          const { $from } = state.selection;
+          for (let d = $from.depth; d > 0; d--) {
+            const n = $from.node(d);
+            if (n.type.name === 'toggle') {
+              if (dispatch) tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, open: !!open });
+              return true;
+            }
+          }
+          return false;
+        },
+      toggleToggleOpen:
+        () =>
+        ({ state, tr, dispatch }) => {
+          const { $from } = state.selection;
+          for (let d = $from.depth; d > 0; d--) {
+            const n = $from.node(d);
+            if (n.type.name === 'toggle') {
+              if (dispatch) tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, open: !n.attrs.open });
+              return true;
+            }
+          }
+          return false;
+        },
+      setToggleLevel:
+        (level) =>
+        ({ state, tr, dispatch }) => {
+          const lv = Math.max(0, Math.min(3, level | 0));
+          const { $from } = state.selection;
+          for (let d = $from.depth; d > 0; d--) {
+            const n = $from.node(d);
+            if (n.type.name === 'toggle') {
+              if (dispatch) tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, level: lv });
+              return true;
+            }
+          }
+          return false;
+        },
+      /** 悬浮栏/菜单：已在折叠内则改等级；否则包成对应等级折叠标题（0=普通折叠列表）。 */
+      setToggleHeading:
+        (level) =>
+        ({ state, commands }) => {
+          const lv = Math.max(0, Math.min(3, level | 0));
+          const { $from } = state.selection;
+          for (let d = $from.depth; d > 0; d--) {
+            if ($from.node(d).type.name === 'toggle') {
+              return commands.setToggleLevel(lv);
+            }
+          }
+          return commands.setToggle({ level: lv, open: true });
+        },
+      expandAllToggles:
+        () =>
+        ({ state, tr, dispatch }) => {
+          let changed = false;
+          state.doc.descendants((node, pos) => {
+            if (node.type.name === 'toggle' && !node.attrs.open) {
+              tr.setNodeMarkup(pos, undefined, { ...node.attrs, open: true });
+              changed = true;
+            }
+          });
+          if (changed && dispatch) dispatch(tr);
+          return changed;
+        },
+      collapseAllToggles:
+        () =>
+        ({ state, tr, dispatch }) => {
+          let changed = false;
+          state.doc.descendants((node, pos) => {
+            if (node.type.name === 'toggle' && node.attrs.open) {
+              tr.setNodeMarkup(pos, undefined, { ...node.attrs, open: false });
+              changed = true;
+            }
+          });
+          if (changed && dispatch) dispatch(tr);
+          return changed;
+        },
+      flipAllToggles:
+        () =>
+        ({ state, commands }) => {
+          let anyClosed = false;
+          state.doc.descendants((node) => {
+            if (node.type.name === 'toggle' && !node.attrs.open) anyClosed = true;
+          });
+          return anyClosed ? commands.expandAllToggles() : commands.collapseAllToggles();
+        },
+    };
+  },
+  addKeyboardShortcuts() {
+    return {
+      Backspace: () => {
+        const { state, view } = this.editor;
+        const { schema, selection } = state;
+        const { empty, $anchor } = selection;
+        if (!empty) return false;
+
+        // 标题行开头：拆掉折叠
+        if ($anchor.parent.type === schema.nodes.toggleSummary && $anchor.parentOffset === 0) {
+          return this.editor.commands.unsetToggle();
+        }
+
+        // 内容区「第一段开头」：退回标题行末尾（isolating 挡住了默认 join）
+        for (let d = $anchor.depth; d > 0; d--) {
+          if ($anchor.node(d).type !== schema.nodes.toggleContent) continue;
+          const contentPos = $anchor.before(d);
+          // 父块是内容区第一个子节点，且光标在该块开头
+          if ($anchor.parentOffset !== 0) return false;
+          if ($anchor.before($anchor.depth) !== contentPos + 1) return false;
+          let toggleDepth = d - 1;
+          while (toggleDepth > 0 && $anchor.node(toggleDepth).type !== schema.nodes.toggle) toggleDepth--;
+          if (toggleDepth <= 0) return false;
+          const togglePos = $anchor.before(toggleDepth);
+          const tr = state.tr;
+          if (!_znSelectToggleSummary(tr, togglePos, true)) return false;
+          view.dispatch(tr.scrollIntoView());
+          return true;
+        }
+        return false;
+      },
+      // 内容区第一段按上方向键：也回到标题行（和退格同向）
+      ArrowUp: () => {
+        const { state, view } = this.editor;
+        const { schema, selection } = state;
+        const { empty, $anchor } = selection;
+        if (!empty || $anchor.parentOffset !== 0) return false;
+        for (let d = $anchor.depth; d > 0; d--) {
+          if ($anchor.node(d).type !== schema.nodes.toggleContent) continue;
+          const contentPos = $anchor.before(d);
+          if ($anchor.before($anchor.depth) !== contentPos + 1) return false;
+          let toggleDepth = d - 1;
+          while (toggleDepth > 0 && $anchor.node(toggleDepth).type !== schema.nodes.toggle) toggleDepth--;
+          if (toggleDepth <= 0) return false;
+          const togglePos = $anchor.before(toggleDepth);
+          const tr = state.tr;
+          if (!_znSelectToggleSummary(tr, togglePos, true)) return false;
+          view.dispatch(tr.scrollIntoView());
+          return true;
+        }
+        return false;
+      },
+      Enter: () => {
+        const { state, view } = this.editor;
+        const { schema, selection } = state;
+        const { $head } = selection;
+
+        // 内容区末尾空段回车 → 跳出折叠（到下方普通段落）
+        if (_znExitToggleBelow(this.editor)) return true;
+
+        if ($head.parent.type !== schema.nodes.toggleSummary) return false;
+
+        // 标题行回车 → 进内部写（展开并落到内容区首段）；同级用 Shift+Enter / 行首 > / /折叠
+        let toggleDepth = null;
+        for (let d = $head.depth; d > 0; d--) {
+          if ($head.node(d).type === schema.nodes.toggle) { toggleDepth = d; break; }
+        }
+        if (toggleDepth == null) return false;
+        const toggleNode = $head.node(toggleDepth);
+        const togglePos = $head.before(toggleDepth);
+        const tr = state.tr;
+        if (!toggleNode.attrs.open) {
+          tr.setNodeMarkup(togglePos, undefined, { ...toggleNode.attrs, open: true });
+        }
+        // summary 之后是 content；content 内首个子节点开头
+        const live = tr.doc.nodeAt(togglePos);
+        if (!live) return false;
+        const contentPos = togglePos + 1 + live.child(0).nodeSize;
+        const innerStart = contentPos + 1;
+        const $inner = tr.doc.resolve(innerStart);
+        const near = TextSelection.near($inner, 1);
+        tr.setSelection(near);
+        tr.scrollIntoView();
+        view.dispatch(tr);
+        return true;
+      },
+      Tab: () => _znNestToggle(this.editor),
+      'Shift-Tab': () => _znUnnestToggle(this.editor),
+      // Shift+Enter：标题行或内容里都能建同级（写完内容不用点回标题）
+      'Shift-Enter': () => _znInsertSiblingToggle(this.editor),
+      'Mod-Enter': () => this.editor.commands.toggleToggleOpen(),
+      'Mod-Alt-t': () => this.editor.commands.flipAllToggles(),
+      // 在折叠标题行：Ctrl+Alt+1～3 改折叠等级；4～6→普通折叠；让位给外面则 return false
+      'Mod-Alt-1': () => _znHeadingShortcutInToggle(this.editor, 1),
+      'Mod-Alt-2': () => _znHeadingShortcutInToggle(this.editor, 2),
+      'Mod-Alt-3': () => _znHeadingShortcutInToggle(this.editor, 3),
+      'Mod-Alt-4': () => _znHeadingShortcutInToggle(this.editor, 0),
+      'Mod-Alt-5': () => _znHeadingShortcutInToggle(this.editor, 0),
+      'Mod-Alt-6': () => _znHeadingShortcutInToggle(this.editor, 0),
+    };
+  },
+});
+
+function _znHeadingShortcutInToggle(editor, level) {
+  const { $from } = editor.state.selection;
+  for (let d = $from.depth; d > 0; d--) {
+    if ($from.node(d).type.name === 'toggleSummary') {
+      return editor.commands.setToggleLevel(level);
+    }
+  }
+  return false;
+}
+
+/** 自建引用：StarterKit 的 blockquote 关掉，避免 `>` 抢成引用；改用 `"` + 空格（对齐 Notion）。 */
+const ZnBlockquote = Node.create({
+  name: 'blockquote',
+  content: 'block+',
+  group: 'block',
+  defining: true,
+  parseHTML() {
+    return [{ tag: 'blockquote' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['blockquote', mergeAttributes(HTMLAttributes), 0];
+  },
+  renderMarkdown(node, helpers) {
+    const inner = String(helpers.renderChildren(node) || '');
+    if (!inner) return '>';
+    return inner.split('\n').map((ln) => (ln.trim() === '' ? '>' : `> ${ln}`)).join('\n');
+  },
+  addCommands() {
+    return {
+      setBlockquote: () => ({ commands }) => commands.wrapIn(this.name),
+      toggleBlockquote: () => ({ commands }) => commands.toggleWrap(this.name),
+      unsetBlockquote: () => ({ commands }) => commands.lift(this.name),
+    };
+  },
+  addKeyboardShortcuts() {
+    return {
+      'Mod-Shift-b': () => this.editor.commands.toggleBlockquote(),
+    };
+  },
+});
+
+/**
+ * 行首输入规则：空块 `>` + 空格 → 折叠；`"` + 空格 → 引用；
+ * 折叠标题行空时 `#`/`##`/`###` + 空格 → 升为折叠标题。
+ */
+const ToggleQuoteInput = Extension.create({
+  name: 'toggleQuoteInput',
+  addProseMirrorPlugins() {
+    const pluginKey = new PluginKey('toggleQuoteInput');
+    return [
+      new Plugin({
+        key: pluginKey,
+        props: {
+          handleTextInput(view, from, to, text) {
+            if (text !== ' ') return false;
+            const { state } = view;
+            const $from = state.doc.resolve(from);
+            if (!$from.parent.isTextblock) return false;
+            const parent = $from.parent;
+            const textBefore = parent.textBetween(0, $from.parentOffset, '\n', '\ufffc');
+            const trimmedBlock = parent.textContent.replace(/[\u200b\ufeff]/g, '').trim();
+
+            // 折叠标题：空 summary 打 # / ＃（全角）+ 空格
+            if ($from.parent.type.name === 'toggleSummary') {
+              const tb = textBefore.replace(/＃/g, '#');
+              const blk = trimmedBlock.replace(/＃/g, '#');
+              if (/^(#{1,3})$/.test(tb) && tb === blk) {
+                const level = tb.length;
+                const tr = state.tr.delete($from.start(), from);
+                for (let d = $from.depth; d > 0; d--) {
+                  const n = $from.node(d);
+                  if (n.type.name === 'toggle') {
+                    tr.setNodeMarkup($from.before(d), undefined, { ...n.attrs, level });
+                    break;
+                  }
+                }
+                view.dispatch(tr.scrollIntoView());
+                return true;
+              }
+              return false;
+            }
+
+            if (parent.type.name !== 'paragraph') return false;
+
+            // `>` / `》` → 折叠
+            if ((trimmedBlock === '>' || trimmedBlock === '》') && (textBefore === '>' || textBefore === '》')) {
+              const schema = state.schema;
+              if (!schema.nodes.toggle) return false;
+              const blockFrom = $from.before();
+              const blockTo = $from.after();
+              const node = schema.nodes.toggle.create(
+                { open: false, level: 0 },
+                [
+                  schema.nodes.toggleSummary.create(),
+                  schema.nodes.toggleContent.create(null, schema.nodes.paragraph.create()),
+                ],
+              );
+              const tr = state.tr.replaceWith(blockFrom, blockTo, node);
+              _znSelectToggleSummary(tr, blockFrom, false);
+              view.dispatch(tr.scrollIntoView());
+              queueMicrotask(() => {
+                try {
+                  const pos = _znToggleSummaryPos(view.state.doc, blockFrom, false);
+                  if (pos != null) {
+                    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
+                  }
+                } catch (_) {}
+              });
+              return true;
+            }
+
+            // 各类引号 → 引用（英文 " " "、中文 “ ”、全角 ＂）
+            const quoteChars = ['"', '\u201c', '\u201d', '\u201e', '\u201f', '\uff02', '「'];
+            if (quoteChars.includes(trimmedBlock) && quoteChars.includes(textBefore) && trimmedBlock === textBefore) {
+              const schema = state.schema;
+              if (!schema.nodes.blockquote) return false;
+              const blockFrom = $from.before();
+              const blockTo = $from.after();
+              const node = schema.nodes.blockquote.create(null, schema.nodes.paragraph.create());
+              const tr = state.tr.replaceWith(blockFrom, blockTo, node);
+              tr.setSelection(TextSelection.create(tr.doc, blockFrom + 2));
+              view.dispatch(tr.scrollIntoView());
+              return true;
+            }
+            return false;
+          },
+        },
+      }),
+    ];
+  },
+});
+
 // 日历块：atom 节点，数据（规范 JSON 串）存 attrs.data，序列化为 ```calendar 围栏块。
 // 交互渲染全交给 window.ZhiCalendar（src/calendar.js）。数据只在用户操作时经 setNodeMarkup 回写，
 // 挂载/更新不写回，保证打开旧笔记不判脏、md 往返稳定（见 no-regression 规则）。
@@ -320,6 +1202,218 @@ const ZhichatBlock = Node.create({
   },
 });
 
+function _znRefAttrs() {
+  return {
+    kind: { default: 'note' },
+    id: { default: '' },
+    href: { default: '' },
+    title: { default: '' },
+    icon: { default: '' },
+  };
+}
+function _znRefGetAttrs(el) {
+  return {
+    kind: el.getAttribute('data-kind') || 'note',
+    id: el.getAttribute('data-id') || '',
+    href: el.getAttribute('data-href') || '',
+    title: el.getAttribute('data-title') || '',
+    icon: el.getAttribute('data-icon') || '',
+  };
+}
+function _znRefHtmlAttrs(node) {
+  const a = (node && node.attrs) || {};
+  const out = { 'data-kind': a.kind || 'note', 'data-title': a.title || '', 'data-icon': a.icon || '' };
+  if (a.id) out['data-id'] = a.id;
+  if (a.href) out['data-href'] = a.href;
+  return out;
+}
+function _znRefMarkdown(tag, flagAttr, node) {
+  const a = (node && node.attrs) || {};
+  const parts = ['<' + tag, ' ', flagAttr, ' data-kind="' + _escHtml(a.kind || 'note') + '"'];
+  if (a.id) parts.push(' data-id="' + _escHtml(a.id) + '"');
+  if (a.href) parts.push(' data-href="' + _escHtml(a.href) + '"');
+  parts.push(' data-title="' + _escHtml(a.title || '') + '"');
+  parts.push(' data-icon="' + _escHtml(a.icon || '') + '"></' + tag + '>');
+  return parts.join('');
+}
+
+function _znHostOf(href) {
+  try { return new URL(href).hostname.replace(/^www\./, ''); } catch (_) { return ''; }
+}
+function _znFileName(href) {
+  let p = String(href || '').replace(/^file:\/\/\//, '');
+  try { p = decodeURIComponent(p); } catch (_) {}
+  const parts = p.split(/[\\/]/);
+  return parts[parts.length - 1] || p;
+}
+function _znMentionAttrsFromLink(href, text) {
+  const kind = String(href || '').indexOf('file:') === 0 ? 'file' : 'url';
+  let title = String(text || '').trim();
+  if (!title) {
+    title = kind === 'file' ? (_znFileName(href) || '文件') : (_znHostOf(href) || href || '网址');
+  }
+  return {
+    kind, id: '', href: href || '', title,
+    icon: kind === 'file' ? '📁' : '🌐',
+  };
+}
+
+/** 旧下划线链接（link mark）收成胶囊。打开旧笔记 / 粘贴 / 打网址都会走到这里。 */
+function _znConvertClassicLinksTr(state, mentionType) {
+  if (!mentionType) return null;
+  const runs = [];
+  let cur = null;
+  state.doc.descendants((node, pos) => {
+    if (node.type.spec.code) { cur = null; return false; }
+    if (!node.isText) { cur = null; return; }
+    const mark = node.marks.find((m) => m.type && m.type.name === 'link' && m.attrs && m.attrs.href);
+    if (!mark) { cur = null; return; }
+    const href = mark.attrs.href;
+    const from = pos;
+    const to = pos + node.nodeSize;
+    if (cur && cur.href === href && cur.to === from) {
+      cur.to = to;
+      cur.text += node.text || '';
+    } else {
+      cur = { href, from, to, text: node.text || '' };
+      runs.push(cur);
+    }
+  });
+  if (!runs.length) return null;
+  let tr = state.tr;
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const r = runs[i];
+    tr = tr.replaceWith(r.from, r.to, mentionType.create(_znMentionAttrsFromLink(r.href, r.text)));
+  }
+  return tr.setMeta('znLinkToMention', true).setMeta('addToHistory', false);
+}
+
+/**
+ * znMention — 行内胶囊引用（外观 B 发丝边）。kind=note|url|file。
+ * 笔记改名只改显示层，不写回正文（避免打开即脏）。Markdown 走 HTML 标签。
+ * 也认旧的 <a href>，打开/粘贴时收成胶囊（见 znLinkToMention）。
+ */
+const ZnMention = Node.create({
+  name: 'znMention',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  selectable: true,
+  draggable: false,
+  priority: 1100,
+  addAttributes() { return _znRefAttrs(); },
+  parseHTML() {
+    return [
+      { tag: 'span[data-zn-mention]', getAttrs: _znRefGetAttrs },
+      {
+        tag: 'a[href]',
+        getAttrs: (el) => {
+          try {
+            if (el.closest && (el.closest('pre') || el.closest('code'))) return false;
+          } catch (_) {}
+          const href = el.getAttribute('href') || '';
+          if (!href) return false;
+          return _znMentionAttrsFromLink(href, el.textContent || '');
+        },
+      },
+    ];
+  },
+  renderHTML({ node }) {
+    return ['span', mergeAttributes(_znRefHtmlAttrs(node), { 'data-zn-mention': '', class: 'zn-mention' }), node.attrs.title || '笔记'];
+  },
+  renderText({ node }) { return (node.attrs && node.attrs.title) || ''; },
+  renderMarkdown(node) { return _znRefMarkdown('span', 'data-zn-mention=""', node); },
+  addStorage() {
+    return { clipboardTextSerializer: (node) => (node.attrs && node.attrs.title) || '' };
+  },
+  addNodeView() {
+    return ({ node, getPos, editor: ed }) => {
+      const dom = document.createElement('span');
+      let cur = node;
+      const paint = (n) => {
+        if (window.mentionUi && window.mentionUi.paintMention) window.mentionUi.paintMention(dom, n.attrs);
+        else { dom.className = 'zn-mention'; dom.textContent = (n.attrs && n.attrs.title) || '笔记'; }
+      };
+      paint(node);
+      if (window.mentionUi && window.mentionUi.bindChipEvents) {
+        window.mentionUi.bindChipEvents(dom, () => cur.attrs, getPos, ed, false);
+      }
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'znMention') return false;
+          cur = updated;
+          paint(updated);
+          return true;
+        },
+        ignoreMutation() { return true; },
+        stopEvent() { return true; },
+      };
+    };
+  },
+  addProseMirrorPlugins() {
+    const mentionType = this.type;
+    return [new Plugin({
+      key: new PluginKey('znLinkToMention'),
+      appendTransaction(trs, _old, state) {
+        if (!trs.some((tr) => tr.docChanged)) return null;
+        if (trs.some((tr) => tr.getMeta('znLinkToMention'))) return null;
+        try {
+          if (document.querySelector('#editor .ProseMirror.zn-ime-composing')) return null;
+        } catch (_) {}
+        return _znConvertClassicLinksTr(state, mentionType);
+      },
+    })];
+  },
+});
+
+/**
+ * znPageLink — 通栏入口（外观 C）。与胶囊同一套属性，可互转。
+ */
+const ZnPageLink = Node.create({
+  name: 'znPageLink',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+  addAttributes() { return _znRefAttrs(); },
+  parseHTML() {
+    return [{ tag: 'div[data-zn-pagelink]', getAttrs: _znRefGetAttrs }];
+  },
+  renderHTML({ node }) {
+    return ['div', mergeAttributes(_znRefHtmlAttrs(node), { 'data-zn-pagelink': '', class: 'zn-pagelink' }), node.attrs.title || '笔记'];
+  },
+  renderMarkdown(node) { return _znRefMarkdown('div', 'data-zn-pagelink=""', node); },
+  addStorage() {
+    return { clipboardTextSerializer: (node) => (node.attrs && node.attrs.title) || '' };
+  },
+  addNodeView() {
+    return ({ node, getPos, editor: ed }) => {
+      const dom = document.createElement('div');
+      let cur = node;
+      const paint = (n) => {
+        if (window.mentionUi && window.mentionUi.paintPageLink) window.mentionUi.paintPageLink(dom, n.attrs);
+        else { dom.className = 'zn-pagelink'; dom.textContent = (n.attrs && n.attrs.title) || '笔记'; }
+      };
+      paint(node);
+      if (window.mentionUi && window.mentionUi.bindChipEvents) {
+        window.mentionUi.bindChipEvents(dom, () => cur.attrs, getPos, ed, true);
+      }
+      return {
+        dom,
+        update(updated) {
+          if (updated.type.name !== 'znPageLink') return false;
+          cur = updated;
+          paint(updated);
+          return true;
+        },
+        ignoreMutation() { return true; },
+        stopEvent() { return true; },
+      };
+    };
+  },
+});
+
 /**
  * CustomTable — 表格序列化为 HTML（而非有损的 GFM 管道表格）
  *
@@ -369,6 +1463,8 @@ function _inlineNodesToHtml(nodes) {
       out += `<span data-math-inline data-latex="${_escHtml(lx)}">$${_escHtml(lx)}$</span>`;
     } else if (child.type === 'znEmoji') {
       out += _escHtml((child.attrs && child.attrs.emoji) || '');
+    } else if (child.type === 'znMention') {
+      out += _znRefMarkdown('span', 'data-zn-mention=""', child);
     } else if (child.content) {
       out += _inlineNodesToHtml(child.content);
     }
@@ -738,13 +1834,6 @@ function _paintZnEmojiDom(dom, emoji) {
     dom.style.backgroundImage = 'url("' + url + '")';
     dom.classList.remove('is-empty', 'is-native');
   };
-  const showNative = () => {
-    // 图库没有时显示系统表情，避免永久灰块
-    dom.style.backgroundImage = 'none';
-    dom.textContent = emoji || '';
-    dom.classList.remove('is-empty');
-    dom.classList.add('is-native');
-  };
   const showPending = () => {
     dom.textContent = '';
     dom.style.backgroundImage = 'none';
@@ -765,14 +1854,13 @@ function _paintZnEmojiDom(dom, emoji) {
         if (!dom.isConnected) return;
         const u2 = urlOf();
         if (u2) showTwemoji(u2);
-        else if (!ok) showNative();
-        else showNative();
+        else showPending();
       });
     } else {
-      showNative();
+      showPending();
     }
   } catch (_) {
-    showNative();
+    showPending();
   }
 }
 function _repaintAllZnEmojiDom() {
@@ -1550,18 +2638,9 @@ const editor = (() => {
   function _crdtReady() { const c = _crdt(); return !!(c && c.Y && c.ySyncPlugin && c.yUndoPlugin); }
   function _b64ToBytes(b64) { return window.__ydoc.b64ToBytes(b64); }
   function _bytesToB64(u8) { return window.__ydoc.bytesToB64(u8); }
-  // 读绑定开关：优先 localStorage（同步、脚本期即可读）——编辑器在 storage.init 完成前就会 initEditor，
-  //   那时 getSetting 还读不到盘上设置，会误判为关；localStorage 不受此影响。storage 设置作兜底。
-  function _readBindFlag() {
-    try {
-      if (typeof localStorage !== 'undefined') {
-        const v = localStorage.getItem('zhinote.crdtBindEditor');
-        if (v != null) return v === '1' || v === 'true';
-      }
-    } catch (_) {}
-    try { const s = window.storage && window.storage.getSetting && window.storage.getSetting('crdtBindEditor'); if (s != null) return !!s; } catch (_) {}
-    return true;   // t7 大改：默认开启「字符级实时」绑定；用户可在设置里显式关掉（存 localStorage/设置）
-  }
+  // 绑定恒开（t23 摘掉实验开关）：直绑不只服务即时同步，还随手维护合并账本（网盘慢车道的
+  //   自动合并也靠它），关掉只会降级回整篇刷新路径。引擎没就绪时 _bound 自然为 false 兜底。
+  //   旧本机开关 zhinote.crdtBindEditor 不再读取（残留键无害）。
   function isCrdtBound() { return !!(_bound && _yDoc); }
 
   // 解除当前绑定：注销 y 插件、停观察、销毁活账本。切笔记/关闭前调。
@@ -1674,9 +2753,42 @@ const editor = (() => {
       window.storage._setNoteYdoc(_currentId, _bytesToB64(_crdt().Y.encodeStateAsUpdate(_yDoc)));
     } catch (_) {}
   }
+
+  // ── 直绑哨兵（常驻对账，t18）────────────────────────────────────────────────
+  // 绑定模式下保存后对一次账：编辑器可见内容(摊平) 与 活账本还原内容 必须语义一致。
+  // 两边都过 schema.nodeFromJSON().toJSON() 归一（补默认属性），排除表示法差异导致的误报。
+  // 只记录 + 发事件轻提示，不自动改数据：误报零代价；真出入 = 直绑有 bug，凭 __ZN_SENTINEL__ 定位。
+  // 15 秒节流：大笔记逐字保存时不重复花归一化开销（真不一致会持续存在，下一次照样抓到）。
+  let _sentinelLastAt = 0, _sentinelHits = 0;
+  function _sentinelCheck(savedDoc) {
+    if (!_bound || !_yDoc || !_editor) return;
+    const nowT = Date.now();
+    if (nowT - _sentinelLastAt < 15000) return;
+    _sentinelLastAt = nowT;
+    try {
+      const cb = _crdt();
+      const canon = (j) => JSON.stringify(_editor.schema.nodeFromJSON(j).toJSON());
+      const a = canon(savedDoc);
+      const b = canon(_flattenZnEmojiDoc(cb.yDocToProsemirrorJSON(_yDoc, 'prosemirror')));
+      if (a === b) return;
+      _sentinelHits++;
+      let at = -1;
+      for (let i = 0; i < Math.max(a.length, b.length); i++) { if (a[i] !== b[i]) { at = i; break; } }
+      const rec = {
+        t: nowT, id: _currentId, at,
+        doc: a.slice(Math.max(0, at - 60), at + 60),
+        ydoc: b.slice(Math.max(0, at - 60), at + 60),
+      };
+      const log = (window.__ZN_SENTINEL__ = window.__ZN_SENTINEL__ || []);
+      log.push(rec);
+      if (log.length > 20) log.shift();
+      console.error('[sentinel] 正文与活账本不一致（已记 __ZN_SENTINEL__，当前内容不受影响）', rec);
+      try { window.dispatchEvent(new CustomEvent('zn-sentinel-mismatch', { detail: { count: _sentinelHits } })); } catch (_) {}
+    } catch (_) {}
+  }
   // 双击空格跳出续写：记录上一次空格的时间与「插入后光标位置」，
   // 只有「窗口内、原地连按第二下空格、且当前光标处有激活的行内格式」才触发。
-  const DOUBLE_SPACE_WINDOW = 200;  // ms，短一些，避免误吃正常双空格
+  const DOUBLE_SPACE_WINDOW = 320;  // ms；折叠标题里也要够按，略放宽
   let _lastSpaceAt = 0;
   let _lastSpacePos = -1;
   // 「打开时的文档基线」：记录笔记刚加载完时 getJSON() 的稳定序列化（JSON 字符串）。
@@ -1685,6 +2797,27 @@ const editor = (() => {
   // 从架构上杜绝「打开即标脏 → 顶 updatedAt → 跨设备同步反向覆盖」（详见 docs/SYNC.md「打开即标脏」）。
   let _openedDoc = null;
   const _scrollPos = {}; // { [noteId]: 上次滚动位置 scrollTop }，用于「回到上次位置」
+  const _navStack = []; // 点胶囊/通栏跳转时记下上一篇，供返回
+  function syncBackBtn() {
+    const btn = document.getElementById('btn-note-back');
+    if (!btn) return;
+    const on = _navStack.length > 0;
+    btn.disabled = !on;
+    btn.title = on ? '返回上一篇（Alt+←）' : '没有上一篇';
+  }
+  function goBack() {
+    while (_navStack.length) {
+      const id = _navStack.pop();
+      if (!id || id === _currentId) continue;
+      const note = window.storage && window.storage.get && window.storage.get(id);
+      if (!note) continue;
+      if (window.storage.isNoteDeleted && window.storage.isNoteDeleted(id)) continue;
+      open(id, { back: true });
+      return true;
+    }
+    syncBackBtn();
+    return false;
+  }
   let _imgClickTimer = null;
   let _imgResizeLayer = null;
   let _internalImgDrag = false;
@@ -1777,9 +2910,8 @@ const editor = (() => {
   function initEditor() {
     if (_editor) return _editor;
 
-    // 阶段 C 绑定开关：仅在 init 时定一次（运行时切换需刷新页面重建编辑器）。
-    // 绑定开 → 关掉 StarterKit 自带历史，改用 yUndoPlugin（两套历史会打架）。
-    _bound = _readBindFlag() && _crdtReady();
+    // 直绑恒开（t23）：引擎就绪即绑。绑定开 → 关掉 StarterKit 自带历史，改用 yUndoPlugin（两套历史会打架）。
+    _bound = _crdtReady();
     _znCrdtBoundActive = !!_bound;
 
     const bubbleMenuEl = document.getElementById('bubble-menu');
@@ -1825,10 +2957,17 @@ const editor = (() => {
           codeBlock: false,
           link: false,
           underline: false,
+          // Notion 对齐：`>` 留给折叠，引用改走 `"` + 空格（见 ZnBlockquote + ToggleQuoteInput）。
+          blockquote: false,
           // 阶段 C：绑定模式下用 yUndoPlugin 取代默认历史，否则两套撤销打架。
           //   本编辑器是 TipTap v3，关历史的开关是 undoRedo:false（不是 v2 的 history）。
           ...(_bound ? { undoRedo: false } : {}),
         }),
+        ZnBlockquote,
+        ToggleSummary,
+        ToggleContent,
+        Toggle,
+        ToggleQuoteInput,
         // 绑定模式：yUndoPlugin 只提供 undo/redo 函数、不绑快捷键，需自己补 Ctrl+Z / Ctrl+Y。
         ...(_bound ? [Extension.create({
           name: 'crdtUndoKeymap',
@@ -1867,7 +3006,7 @@ const editor = (() => {
           },
         }).configure({ multicolor: true }),
         Underline,
-        TextAlign.configure({ types: ['paragraph', 'heading'], alignments: ['left', 'center', 'right', 'justify'] }),
+        TextAlign.configure({ types: ['paragraph', 'heading', 'toggleSummary'], alignments: ['left', 'center', 'right', 'justify'] }),
         Link.extend({ inclusive() { return false; } }).configure({
           openOnClick: false,
           autolink: true,
@@ -1887,6 +3026,8 @@ const editor = (() => {
         MathBlock,
         CalendarBlock,
         ZhichatBlock,
+        ZnMention,
+        ZnPageLink,
         ZnEmoji,
         // 浮动条分两套机制（触屏端曾把"跟随选区"的桌面插件硬改成 dock 条，三层 hack 极脆）：
         // · 桌面 = Tiptap BubbleMenu 插件（Floating UI 跟随选区，工作稳定，保持不动）；
@@ -1953,17 +3094,24 @@ const editor = (() => {
         // Tab 键：列表/表格/代码块交给各自默认键位（缩进、跳格、插空格）；
         // 普通文本块里 Tab=插入 2 空格、Shift+Tab=删光标前最多 2 空格，并阻止焦点跳到工具栏图标。
         handleKeyDown: (view, event) => {
-          // 双击空格跳出续写：仅当「光标处有激活的行内格式」且「两次空格在窗口内原地连按」时，
-          // 吞掉第二个空格 + 清除该空格上的格式 + 清空 storedMarks（下一字不再续写）。
-          // 无格式时双空格照常输出，不影响正常输入；链接不参与。
+          // 双击空格跳出续写：折叠标题/内容里同样生效。
+          // 判格式：storedMarks、光标处 marks、以及「刚打出的前一字符」上的 marks（防折叠 NodeView 后选区微漂）。
           if (event.key === ' ' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing) {
             const { state } = view;
             if (state.selection.empty) {
               const now = performance.now();
               const pos = state.selection.from;
-              const fast = (now - _lastSpaceAt) <= DOUBLE_SPACE_WINDOW && _lastSpacePos === pos;
-              const marks = state.storedMarks || state.selection.$from.marks();
-              const hasFmt = marks.some((m) => m.type.name !== 'link');
+              const nearLast = _lastSpacePos === pos || _lastSpacePos === pos - 1 || _lastSpacePos === pos + 1;
+              const fast = (now - _lastSpaceAt) <= DOUBLE_SPACE_WINDOW && nearLast;
+              const markBag = (m) => m && m.type && m.type.name !== 'link';
+              let marks = state.storedMarks || state.selection.$from.marks() || [];
+              let hasFmt = marks.some(markOk);
+              if (!hasFmt && pos > 0) {
+                try {
+                  hasFmt = state.doc.resolve(pos).marks().some(markOk)
+                    || state.doc.resolve(Math.max(1, pos - 1)).marks().some(markOk);
+                } catch (_) {}
+              }
               if (fast && hasFmt && pos >= 1) {
                 event.preventDefault();
                 const tr = state.tr;
@@ -1997,6 +3145,15 @@ const editor = (() => {
             return true;
           }
           if (event.key !== 'Tab') return false;
+          // 折叠标题行：Tab 套进上一条 / Shift+Tab 拆出（对齐 Notion）
+          if (_editor) {
+            if (event.shiftKey) {
+              if (_znUnnestToggle(_editor)) { event.preventDefault(); return true; }
+            } else if (_znNestToggle(_editor)) {
+              event.preventDefault();
+              return true;
+            }
+          }
           const { state } = view;
           const { $from } = state.selection;
           for (let d = $from.depth; d > 0; d--) {
@@ -2108,9 +3265,8 @@ const editor = (() => {
             for (const f of files) {
               const label = f.name || 'file';
               _editor.chain().focus().insertContent({
-                type: 'text',
-                text: label,
-                marks: [{ type: 'link', attrs: { href: _encodeFileHref(label), target: null } }],
+                type: 'znMention',
+                attrs: _znMentionAttrsFromLink(_encodeFileHref(label), label),
               }).run();
             }
             window.toast?.('提示：复制文件后粘贴可插入完整路径链接', 'info');
@@ -2501,17 +3657,24 @@ const editor = (() => {
       _scheduleHideInlineCopy();
     });
     async function _openLocalFile(href) {
-      const path = decodeURIComponent(href.replace(/^file:\/\/\//, ''));
+      const path = String(href || '').replace(/^file:\/\/\//i, '').replace(/^file:\/\//i, '');
+      let decoded = path;
+      try { decoded = decodeURIComponent(path); } catch (_) {}
+      decoded = decoded.replace(/\//g, '\\');
+      if (!/^[a-zA-Z]:\\/.test(decoded) && decoded.indexOf('\\\\') !== 0) {
+        window.toast?.('没有完整路径，请删掉后重新插入这个文件', 'warning');
+        return;
+      }
       if (window.host?.caps.file) {
         try {
-          await window.host.file.op({ mode: 'open', path });
+          await window.host.file.op({ mode: 'open', path: decoded });
           return;
         } catch (e) {
           console.warn('[FileOp open] subprogram failed:', e);
         }
       }
       try {
-        await navigator.clipboard.writeText(path);
+        await navigator.clipboard.writeText(decoded);
         window.toast?.('文件路径已复制到剪贴板', 'info');
       } catch (_) {
         window.toast?.('无法打开本地文件', 'warning');
@@ -2538,22 +3701,20 @@ const editor = (() => {
 
     editorEl.addEventListener('click', (e) => {
       const link = e.target.closest('a[href]');
-      if (link) {
+      if (link && !link.closest('.zn-mention, .zn-pagelink')) {
         e.preventDefault();
         e.stopPropagation();
         const href = link.getAttribute('href') || '';
-        if (href.startsWith('file:///') || href.startsWith('file:\\\\')) {
-          if (e.ctrlKey || e.metaKey) {
-            _openLocalFile(href);
-          } else {
-            openLinkDialog();
-          }
-          return;
-        }
+        try { if (window.mentionUi && window.mentionUi.convertClassicLink) window.mentionUi.convertClassicLink(); } catch (_) {}
         if (e.ctrlKey || e.metaKey) {
-          window.open(link.href, '_blank');
+          if (href.startsWith('file:///') || href.startsWith('file:\\\\')) _openLocalFile(href);
+          else window.open(link.href, '_blank');
+        } else if (window.mentionUi && typeof window.mentionUi.openSelected === 'function') {
+          window.mentionUi.openSelected();
+        } else if (href.startsWith('file:///') || href.startsWith('file:\\\\')) {
+          _openLocalFile(href);
         } else {
-          openLinkDialog();
+          window.open(link.href, '_blank');
         }
         return;
       }
@@ -3040,9 +4201,8 @@ const editor = (() => {
         const href = _encodeFileHref(p);
         const label = p.split(/[\\/]/).pop();
         _editor.chain().focus().insertContent({
-          type: 'text',
-          text: label,
-          marks: [{ type: 'link', attrs: { href, target: null } }],
+          type: 'znMention',
+          attrs: _znMentionAttrsFromLink(href, label),
         }).insertContent({ type: 'text', text: ' ' }).run();
       }
     } catch (err) {
@@ -3240,7 +4400,16 @@ const editor = (() => {
       case 'toggleCode': _editor.chain().focus().toggleCode().run(); break;
       case 'toggleUnderline': _editor.chain().focus().toggleUnderline().run(); break;
       case 'toggleLink':
-        openLinkDialog();
+        if (window.mentionUi && typeof window.mentionUi.openUrlFromToolbar === 'function') {
+          window.mentionUi.openUrlFromToolbar();
+        } else if (window.mentionUi && typeof window.mentionUi.openPicker === 'function') {
+          window.mentionUi.openPicker({ asBlock: false });
+        }
+        break;
+      case 'insertPageLink':
+        if (window.mentionUi && typeof window.mentionUi.openPicker === 'function') {
+          window.mentionUi.openPicker({ asBlock: true });
+        }
         break;
       case 'unsetAllMarks': {
         const { from, to } = _editor.state.selection;
@@ -3253,12 +4422,65 @@ const editor = (() => {
         }
         break;
       }
-      case 'toggleHeading':
-        _editor.chain().focus().toggleHeading({ level: opts?.level || 1 }).run(); break;
-      case 'setParagraph': _editor.chain().focus().setParagraph().run(); break;
+      case 'toggleHeading': {
+        // 光标在折叠标题行：H1～H3 改折叠标题等级；H4～H6 / 其它 → 普通折叠列表（level 0）
+        const $from = _editor.state.selection.$from;
+        let inToggleSummary = false;
+        for (let d = $from.depth; d > 0; d--) {
+          if ($from.node(d).type.name === 'toggleSummary') { inToggleSummary = true; break; }
+        }
+        if (inToggleSummary) {
+          const lv = opts?.level;
+          const level = (lv >= 1 && lv <= 3) ? lv : 0;
+          _editor.chain().focus().setToggleLevel(level).run();
+        } else {
+          _editor.chain().focus().toggleHeading({ level: opts?.level || 1 }).run();
+        }
+        break;
+      }
+      case 'setParagraph': {
+        const $from = _editor.state.selection.$from;
+        let inToggleSummary = false;
+        for (let d = $from.depth; d > 0; d--) {
+          if ($from.node(d).type.name === 'toggleSummary') { inToggleSummary = true; break; }
+        }
+        if (inToggleSummary) {
+          _editor.chain().focus().setToggleLevel(0).run();
+        } else {
+          _editor.chain().focus().setParagraph().run();
+        }
+        break;
+      }
       case 'toggleBulletList': _editor.chain().focus().toggleBulletList().run(); break;
       case 'toggleOrderedList': _editor.chain().focus().toggleOrderedList().run(); break;
       case 'toggleTaskList': _editor.chain().focus().toggleTaskList().run(); break;
+      case 'insertToggle':
+        // 有选区/当前段有字 → 包成折叠（字变标题）；空段才插入空白折叠
+        {
+          const sel = _editor.state.selection;
+          const hasText = !sel.empty || (sel.$from.parent.isTextblock && sel.$from.parent.textContent.length > 0);
+          if (hasText && sel.$from.parent.type.name !== 'toggleSummary') {
+            _editor.chain().focus().setToggle({ level: opts?.level || 0 }).run();
+          } else {
+            _editor.chain().focus().insertToggle({ level: opts?.level || 0 }).run();
+          }
+        }
+        break;
+      case 'setToggle':
+        _editor.chain().focus().setToggle({ level: opts?.level || 0 }).run();
+        break;
+      case 'unsetToggle':
+        _editor.chain().focus().unsetToggle().run();
+        break;
+      case 'setToggleLevel':
+        _editor.chain().focus().setToggleLevel(opts?.level || 0).run();
+        break;
+      case 'setToggleHeading':
+        _editor.chain().focus().setToggleHeading(opts?.level || 0).run();
+        break;
+      case 'flipAllToggles':
+        _editor.chain().focus().flipAllToggles().run();
+        break;
       case 'toggleBlockquote': {
         // 列表项内部不能单独塞引用：折叠光标 / 部分选中时直接 toggleBlockquote 会无效。
         // 若光标落在列表（无序/有序/任务）内，先把选区扩展到整个列表再包裹 → 引用整列表。
@@ -3362,6 +4584,10 @@ const editor = (() => {
   }
 
   function openLinkDialog() {
+    if (window.mentionUi && typeof window.mentionUi.openUrlFromToolbar === 'function') {
+      window.mentionUi.openUrlFromToolbar();
+      return;
+    }
     if (!_editor) return;
     const isActive = _editor.isActive('link');
     const existingHref = isActive ? _editor.getAttributes('link').href || '' : '';
@@ -3481,7 +4707,7 @@ const editor = (() => {
             if (!raw) return;
             const parsed = JSON.parse(raw);
             const fileData = Array.isArray(parsed) ? parsed[0] : parsed;
-            const filePath = fileData.name || '';
+            const filePath = fileData.path || fileData.fullPath || fileData.name || '';
             if (!filePath) return;
             const urlInput = body.querySelector('#link-url-input');
             const textInput = body.querySelector('#link-text-input');
@@ -3512,7 +4738,7 @@ const editor = (() => {
       doc.descendants((node) => {
         if (hasAtom) return false;
         const n = node.type.name;
-        if (n === 'image' || n === 'table' || n === 'mathInline' || n === 'mathBlock' || n === 'horizontalRule' || n === 'znEmoji') {
+        if (n === 'image' || n === 'table' || n === 'mathInline' || n === 'mathBlock' || n === 'horizontalRule' || n === 'znEmoji' || n === 'znMention' || n === 'znPageLink') {
           hasAtom = true; return false;
         }
         return true;
@@ -3574,12 +4800,44 @@ const editor = (() => {
     } catch (_) {}
   }
 
+  function _ensureClassicLinksConverted(selectPos) {
+    if (!_editor) return false;
+    const type = _editor.schema.nodes.znMention;
+    let tr = _znConvertClassicLinksTr(_editor.state, type);
+    if (!tr) return false;
+    if (typeof selectPos === 'number') {
+      try {
+        const NS = _pmState.NodeSelection;
+        let pos = tr.mapping.map(selectPos);
+        let node = tr.doc.nodeAt(pos);
+        if (!node || node.type.name !== 'znMention') {
+          const prev = tr.doc.nodeAt(Math.max(0, pos - 1));
+          if (prev && prev.type.name === 'znMention') {
+            node = prev;
+            pos = pos - 1;
+          }
+        }
+        if (NS && node && node.type.name === 'znMention') {
+          tr = tr.setSelection(NS.create(tr.doc, pos));
+        }
+        _editor.view.dispatch(tr);
+        if (node && node.type.name === 'znMention') {
+          try { _editor.commands.setNodeSelection(pos); } catch (_) {}
+        }
+        return true;
+      } catch (_) {}
+    }
+    _editor.view.dispatch(tr);
+    return true;
+  }
+
   function _loadNoteIntoEditor(note) {
     if (!_editor || !note) return;
     if (note.doc) {
       try {
         _editor.commands.setContent(note.doc, { emitUpdate: false });
         _ensureEmojisExpanded();
+        _ensureClassicLinksConverted();
         return;
       } catch (e) {
         console.warn('[editor] setContent(doc) 失败，退回 markdown 路径', e);
@@ -3593,6 +4851,7 @@ const editor = (() => {
       _editor.commands.setContent(md, { emitUpdate: false, contentType: 'markdown' });
     }
     _ensureEmojisExpanded();
+    _ensureClassicLinksConverted();
   }
 
   function flushSave() {
@@ -3624,6 +4883,7 @@ const editor = (() => {
       window.storage.save({ immediate: true });
       // 保存成功后把基线推进到当前 doc，后续无新编辑则不再重复标脏。
       _openedDoc = docStr;
+      _sentinelCheck(doc);
     } catch (err) {
       console.error('[editor.flushSave]', err);
     }
@@ -3684,6 +4944,23 @@ const editor = (() => {
     const note = window.storage?.get(id);
     if (!note) return;
 
+    if (_currentId && _currentId !== id && !(opts && (opts.back || opts.initial))) {
+      if (opts && opts.fromLink) {
+        _navStack.push(_currentId);
+        if (_navStack.length > 40) _navStack.shift();
+      }
+    }
+
+    if (note.workspaceId) {
+      try {
+        const curWs = window.storage.getActiveWorkspace && window.storage.getActiveWorkspace();
+        if (curWs && curWs.id !== note.workspaceId && window.storage.setActiveWorkspace) {
+          window.storage.setActiveWorkspace(note.workspaceId);
+          if (window.tree && window.tree.render) window.tree.render();
+        }
+      } catch (_) {}
+    }
+
     // 记住离开的笔记的滚动位置（用于「回到上次位置」）
     if (_editor && _currentId && _currentId !== id) {
       try { _scrollPos[_currentId] = document.getElementById('editor')?.scrollTop || 0; } catch (_) {}
@@ -3733,6 +5010,7 @@ const editor = (() => {
         _normalizeEmptyListItems();
         // 账本里是 Unicode 表情字 → 收成 znEmoji，供光标/显示；落盘仍摊平
         _ensureEmojisExpanded();
+        _ensureClassicLinksConverted();
       }
     } else {
       _loadNoteIntoEditor(note);
@@ -3814,6 +5092,7 @@ const editor = (() => {
 
     const pinned = window.storage?.isPinned(id);
     document.getElementById('btn-pin')?.classList.toggle('active', !!pinned);
+    syncBackBtn();
   }
 
   function close() {
@@ -3956,6 +5235,38 @@ const editor = (() => {
     _editor.chain().focus().insertContent({ type: 'calendarBlock', attrs: { data } }).run();
   }
 
+  function insertToggleBlock(level) {
+    if (!_editor) return;
+    _editor.chain().focus().insertToggle({ level: level || 0 }).run();
+  }
+
+  function collectOutlineEntries() {
+    const out = [];
+    if (!_editor) return out;
+    _editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'heading') {
+        out.push({
+          level: node.attrs.level || 1,
+          text: (node.textContent || '').trim() || '无标题',
+          pos,
+        });
+        return;
+      }
+      if (node.type.name === 'toggle') {
+        const lv = node.attrs.level | 0;
+        if (lv >= 1 && lv <= 3) {
+          const sum = node.firstChild;
+          out.push({
+            level: lv,
+            text: ((sum && sum.textContent) || '').trim() || '折叠标题',
+            pos,
+          });
+        }
+      }
+    });
+    return out;
+  }
+
   function refreshOutline() {
     const el = document.getElementById('outline-content');
     if (!el) return;
@@ -3964,23 +5275,12 @@ const editor = (() => {
       el.innerHTML = '<div class="tree-empty">无内容</div>';
       return;
     }
-    const md = _editor.getMarkdown();
-    const lines = md.split('\n');
-    let insideCode = false;
-    let headingIndex = 0; // 渲染出的标题序号（与 DOM 里的 h1~h6 顺序一致，已跳过代码块）
-    lines.forEach((line) => {
-      if (/^```/.test(line.trim())) { insideCode = !insideCode; return; }
-      if (insideCode) return;
-      const m = /^(#{1,6})\s+(.*)$/.exec(line);
-      if (!m) return;
-      const level = m[1].length;
-      const text = m[2].trim();
-      const idx = headingIndex++;
+    collectOutlineEntries().forEach((it) => {
       const item = document.createElement('div');
-      item.className = `outline-item h${level}`;
-      item.textContent = text;
-      item.title = text;
-      item.addEventListener('click', () => scrollToHeading(idx));
+      item.className = `outline-item h${it.level}`;
+      item.textContent = it.text;
+      item.title = it.text;
+      item.addEventListener('click', () => scrollToOutlinePos(it.pos));
       el.appendChild(item);
     });
     if (!el.children.length) {
@@ -3988,17 +5288,40 @@ const editor = (() => {
     }
   }
 
-  /** headingIndex：0 基的标题序号，与 refreshOutline 渲染顺序、DOM 中 h1~h6 顺序一致 */
-  function scrollToHeading(headingIndex) {
+  /** 点大纲：关掉的折叠先打开，再滚到对应块（折叠标题不是 h1–h6） */
+  function scrollToOutlinePos(pos) {
     if (!_editor) return;
-    const editorEl = document.getElementById('editor');
-    if (!editorEl) return;
-    const headings = editorEl.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    const target = headings[headingIndex];
-    if (!target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    target.classList.add('outline-flash');
-    setTimeout(() => target.classList.remove('outline-flash'), 1200);
+    const view = _editor.view;
+    let opened = false;
+    try {
+      const $pos = _editor.state.doc.resolve(pos);
+      let tr = null;
+      for (let d = $pos.depth; d >= 1; d--) {
+        const n = $pos.node(d);
+        if (n.type.name === 'toggle' && !n.attrs.open) {
+          if (!tr) tr = _editor.state.tr;
+          tr.setNodeMarkup($pos.before(d), undefined, Object.assign({}, n.attrs, { open: true }));
+        }
+      }
+      if (tr) {
+        view.dispatch(tr);
+        opened = true;
+      }
+    } catch (_) {}
+    const go = () => {
+      let dom = view.nodeDOM(pos);
+      if (!dom) return;
+      if (dom.nodeType === 3) dom = dom.parentElement;
+      if (!dom) return;
+      const target = (dom.classList && dom.classList.contains('zn-toggle'))
+        ? (dom.querySelector('.zn-toggle-summary') || dom)
+        : dom;
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      target.classList.add('outline-flash');
+      setTimeout(() => target.classList.remove('outline-flash'), 1200);
+    };
+    if (opened) requestAnimationFrame(go);
+    else go();
   }
 
   // 用户是否正在打字（供 realtime.js 判断"别打断"）：有未落盘改动，或最近 1.5s 内有输入且编辑器聚焦。
@@ -4028,6 +5351,7 @@ const editor = (() => {
         if (note.ydoc) _crdt().Y.applyUpdate(_yDoc, _b64ToBytes(note.ydoc), 'remote');
       } catch (_) { try { _bindNoteCrdt(note); } catch (__) {} }
       try { _ensureEmojisExpanded(); } catch (_) {}
+      try { _ensureClassicLinksConverted(); } catch (_) {}
       try { _openedDoc = JSON.stringify(_flattenZnEmojiDoc(_editor.getJSON())); } catch (_) { _openedDoc = null; }
       try { _warmDocTwemoji(_editor.state.doc); } catch (_) {}
       refreshOutline();
@@ -4143,6 +5467,7 @@ const editor = (() => {
   const _BLOCK_TYPES = new Set([
     'paragraph', 'heading', 'blockquote', 'listItem', 'taskItem',
     'codeBlock', 'mathBlock', 'tableRow', 'tableCell', 'tableHeader', 'horizontalRule',
+    'toggle', 'toggleSummary', 'toggleContent', 'znPageLink',
   ]);
 
   /** doc JSON → 纯文本（供搜索/判空/去重；图片跳过，mathInline 取 latex，hardBreak→\n）。 */
@@ -4159,6 +5484,7 @@ const editor = (() => {
       if (t === 'mathInline') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$' + lx + '$'); return; }
       if (t === 'mathBlock') { const lx = (node.attrs && node.attrs.latex) || ''; parts.push('$$' + lx + '$$'); parts.push('\n'); return; }
       if (t === 'znEmoji') { parts.push((node.attrs && node.attrs.emoji) || ''); return; }
+      if (t === 'znMention' || t === 'znPageLink') { parts.push((node.attrs && node.attrs.title) || ''); if (t === 'znPageLink') parts.push('\n'); return; }
       if (t === 'image') return; // 跳过图片
       if (Array.isArray(node.content)) node.content.forEach(visit);
       if (_BLOCK_TYPES.has(t)) parts.push('\n');
@@ -4183,7 +5509,7 @@ const editor = (() => {
   function docIsEmpty(doc) {
     if (!doc || !Array.isArray(doc.content) || doc.content.length === 0) return true;
     let hasContent = false;
-    const MEDIA = new Set(['image', 'mathInline', 'mathBlock', 'horizontalRule', 'codeBlock', 'table', 'znEmoji']);
+    const MEDIA = new Set(['image', 'mathInline', 'mathBlock', 'horizontalRule', 'codeBlock', 'table', 'znEmoji', 'znMention', 'znPageLink']);
     const visit = (node) => {
       if (hasContent || !node) return;
       if (node.type === 'text' && (node.text || '').trim()) { hasContent = true; return; }
@@ -4210,11 +5536,12 @@ const editor = (() => {
   }
 
   return {
-    initEditor, open, close, reloadCurrent, refreshTitle,
+    initEditor, open, close, reloadCurrent, refreshTitle, goBack,
     flushSave, scheduleSave, setTheme, setReadonly, refreshOutline,
-    currentId, getValue, focus, insertAtCursor, pasteText, insertCalendarBlock, instance, execCommand,
+    currentId, getValue, focus, insertAtCursor, pasteText, insertCalendarBlock, insertToggleBlock, instance, execCommand,
     isBusyTyping, flushSaveNow,
     applyRemoteUpdate, isCrdtBound,
+    convertClassicLinks: (selectPos) => _ensureClassicLinksConverted(selectPos),
     insertImageFromDataUrl,
     showImageContextMenu,
     applyCodeBlockFoldDefault,
@@ -4227,6 +5554,7 @@ const editor = (() => {
 
 window.editor = editor;
 window.insertCalendarBlock = () => editor.insertCalendarBlock();
+window.insertToggleBlock = (level) => editor.insertToggleBlock(level);
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => editor.initEditor());

@@ -8,7 +8,9 @@
  * 对外接口：
  *   ZhiCalendar.defaultData()            → 当月默认数据（规范 JSON 串）
  *   ZhiCalendar.mount(dom, dataStr, cb)  → 挂载到 dom，数据变化时 cb(newStr)；返回 {update,destroy}
+ *   ZhiCalendar.listAgenda(dataStr)      → 近期生日/纪念日 + 记事（不含例假预测），供铃铛消息页
  *   ZhiCalendar._pendingAutoOpen         → 插入后自动弹当月月历（一次性）
+ *   ZhiCalendar._pendingGoto             → {y,m,d} 打开笔记时翻到该月（只改视图，不写入正文）
  *
  * 农历算法采用业界通用的 1900–2100 lunarInfo 表 + 天文节气偏移表（与开源日历库一致，逐日精确）。
  */
@@ -484,6 +486,11 @@
   function mount(dom, dataStr, onChange) {
     var S = parse(dataStr);
     var _data = (typeof dataStr === 'string' && dataStr) ? dataStr : canon(toObj(S));
+    if (api._pendingGoto) {
+      var g = api._pendingGoto;
+      api._pendingGoto = null;
+      if (g && typeof g.y === 'number' && typeof g.m === 'number') { S.y = g.y; S.m = g.m; }
+    }
     var now = new Date();
     var TODAY = { y: now.getFullYear(), m: now.getMonth(), d: now.getDate() };
     var card = null, cardMask = null, cardDay = 0;
@@ -1081,8 +1088,8 @@
     }
     function buildAgendaHtml() {
       var items = upcomingItems();
-      function grp(dd) { if (dd === 0) return '今天'; if (dd <= 7) return '本周'; if (dd <= 31) return '本月内'; return '以后'; }
-      var order = ['今天', '本周', '本月内', '以后'], groups = {};
+      function grp(dd) { if (dd === 0) return '今天'; if (dd <= 7) return '本周'; if (dd <= 31) return '本月内'; return '后续'; }
+      var order = ['今天', '本周', '本月内', '后续'], groups = {};
       items.forEach(function (it) { (groups[grp(it.dd)] = groups[grp(it.dd)] || []).push(it); });
       var h = '';
       order.forEach(function (g) {
@@ -2133,6 +2140,10 @@
     dom.addEventListener('zhinote:cal-cmd', function (ev) {
       var cmd = ev.detail && ev.detail.cmd; if (!cmd) return;
       if (cmd === 'today') { S.y = TODAY.y; S.m = TODAY.m; commit(); }
+      else if (cmd === 'goto') {
+        var gy = ev.detail.y, gm = ev.detail.m;
+        if (typeof gy === 'number' && typeof gm === 'number') { S.y = gy; S.m = gm; render(); }
+      }
       else if (cmd === 'compact') { S.opts.compact = !S.opts.compact; saveDefOpts(S.opts); commit(); }
       else if (cmd === 'copyText') { try { navigator.clipboard.writeText(buildSummaryText()); } catch (_) {} }
       else if (cmd === 'copySource') { try { navigator.clipboard.writeText('```calendar\n' + canon(toObj(S)) + '\n```'); } catch (_) {} }
@@ -2198,6 +2209,45 @@
     };
   }
 
-  var api = { mount: mount, defaultData: defaultData, canon: canon, dayInfo: dayInfo, _pendingAutoOpen: false };
+  function listAgenda(dataStr) {
+    var S = parse(dataStr);
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var out = [];
+    (S.recur || []).forEach(function (ev) {
+      var oc = null;
+      for (var k = 0; k < 3; k++) {
+        var t = occurInYear(ev, today.getFullYear() + k);
+        if (t && t >= today) { oc = t; break; }
+      }
+      if (!oc) return;
+      var dd = Math.round((oc - today) / 86400000);
+      if (dd >= 0 && dd <= 380) {
+        out.push({
+          ty: ev.ty,
+          name: (ev.name || '').trim() || NOTE_TYPES[ev.ty].name,
+          date: oc,
+          dd: dd
+        });
+      }
+    });
+    Object.keys(S.notes || {}).forEach(function (kk) {
+      var dt;
+      try { dt = dParse(kk); } catch (_) { return; }
+      if (isNaN(dt)) return;
+      var day = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+      var dd = Math.round((day - today) / 86400000);
+      if (dd < 0 || dd > 180) return;
+      (S.notes[kk] || []).forEach(function (n) {
+        var t = noteText(n).trim();
+        if (!t) return;
+        out.push({ ty: noteType(n), name: t, date: day, dd: dd, done: noteAllDone(n) });
+      });
+    });
+    out.sort(function (a, b) { return a.dd - b.dd; });
+    return out;
+  }
+
+  var api = { mount: mount, defaultData: defaultData, canon: canon, dayInfo: dayInfo, listAgenda: listAgenda, typeIconSvg: typeIconSvg, typeColorOf: typeColorOf, NOTE_TYPES: NOTE_TYPES, _pendingAutoOpen: false, _pendingGoto: null };
   window.ZhiCalendar = api;
 })();

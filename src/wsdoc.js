@@ -180,5 +180,25 @@
     try { bundle(); return true; } catch (e) { return false; }
   }
 
-  window.__wsdoc = { ready, build, update, merge, toData, bytesToB64, b64ToBytes };
+  /** 账本当前进度针（很小）。增量相对「上次整本」算，针不能跟着小段走。 */
+  function stateVector(b64) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(b64));
+    const out = cb.Y.encodeStateVector(yd);
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(out);
+  }
+
+  /** 从进度针到当前账本的一小段。对端先套整本再套这一段。 */
+  function diffFromSV(currentB64, svB64) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(currentB64));
+    const out = cb.Y.encodeStateAsUpdate(yd, b64ToBytes(svB64));
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(out);
+  }
+
+  window.__wsdoc = { ready, build, update, merge, toData, bytesToB64, b64ToBytes, stateVector, diffFromSV };
 })();

@@ -30,8 +30,8 @@
       if (fa !== fb) return fa < fb ? -1 : 1;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     }
-    if (fa && !fb) return 1;                // 有 frac 的排在无 frac(旧/迁移期)之后
-    if (!fa && fb) return -1;
+    if (fa && !fb) return -1;               // 无 frac 排同级末尾（新篇文件曾不带位置；排最前会把新笔记顶到最上并写死）
+    if (!fa && fb) return 1;
     const d = (a.order || 0) - (b.order || 0); if (d) return d;
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   }

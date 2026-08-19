@@ -677,6 +677,11 @@
   }
 
   function tryAt() {
+    if (window.mentionUi && typeof window.mentionUi.handleAtTrigger === 'function') {
+      hideChip();
+      window.mentionUi.handleAtTrigger();
+      return;
+    }
     if (!isEnabled()) { hideChip(); return; }
     var sel = window.getSelection();
     if (!sel || !sel.rangeCount) { hideChip(); return; }
@@ -686,7 +691,7 @@
     var target = node.nodeType === 3 ? node.parentElement : node;
     if (!target || !target.closest || !target.closest('#editor .ProseMirror') || target.closest('pre, code')) { hideChip(); return; }
     if (node.nodeType !== 3) { hideChip(); return; }
-    var before = node.textContent.slice(0, range.startOffset).replace(/[\u200b\u200c\u200d\ufeff\u00a0]/g, '');
+    var before = node.textContent.slice(0, range.startOffset).replace(/[\u200b\u200c\u200d\ufeff]/g, '');
     // 行首或空白后的 @ 才算唤出；紧贴在字符后的 @（如邮箱 a@b）不触发
     var m = before.match(/(^|\s)@([^\s@]{0,30})$/);
     if (m) { _atQuery = m[2]; showChip(range); } else hideChip();
@@ -707,6 +712,7 @@
   function installTrigger() {
     document.addEventListener('input', tryAt, true);
     document.addEventListener('keydown', function (e) {
+      if (window.mentionUi && window.mentionUi.isOpen && window.mentionUi.isOpen()) return;
       if (!chipShown()) return;
       if (e.key === 'Tab') { e.preventDefault(); e.stopImmediatePropagation(); confirmAt(); }
       else if (e.key === 'Escape') { e.preventDefault(); hideChip(); }
@@ -1670,7 +1676,7 @@
     var h = '<div class="mascot-set">';
     h += row('启用小枝', '你的 AI 笔记助手', '<span class="mascot-sw' + (en ? ' on' : '') + '" id="mascot-sw" role="switch" tabindex="0"></span>');
     if (en) {
-      h += row('唤出方式', '都在正文就地插对话块，问答留在笔记里；点屏幕上的常驻小枝才开小窗', '<span class="mascot-hint"><span class="mascot-kbd">Alt</span>+<span class="mascot-kbd">A</span>，或正文输入 <span class="mascot-kbd">@</span></span>');
+      h += row('唤出方式', '都在正文就地插对话块，问答留在笔记里；点屏幕上的常驻小枝才开小窗', '<span class="mascot-hint"><span class="mascot-kbd">Alt</span>+<span class="mascot-kbd">A</span>，或正文输入 <span class="mascot-kbd">@</span>（也可引用笔记）</span>');
       h += row('常驻屏幕上', '默认在右下角，按住可拖到任意位置（会记住）；悬浮出常用语菜单，右键听它闲聊；Alt+Shift+A 随时切换', '<span class="mascot-sw' + (res ? ' on' : '') + '" id="mascot-res" role="switch" tabindex="0"></span>');
       h += '<div class="mascot-row"><div class="mascot-lbl">常驻形象<small>谷歌动图表情'
         + (window.NOTO_EMOJI ? ' ' + window.NOTO_EMOJI.items.length + ' 个随便挑' : '')
@@ -2233,6 +2239,16 @@
     renderMdInto: renderMd,
     mountChatBlock: mountChatBlock,
     insertChatBlock: insertChatBlock,
+    insertBlockAt: insertBlockAt,
+    askInline: function (q) {
+      try {
+        var inst = window.editor && window.editor.instance && window.editor.instance();
+        if (!inst || !inst.isEditable) return false;
+        _pendingBlockQ = q || '';
+        inst.chain().focus().insertContent({ type: 'zhichatBlock', attrs: { data: JSON.stringify({ v: 1, items: [] }) } }).run();
+        return true;
+      } catch (_) { _pendingBlockQ = ''; return false; }
+    },
     pickNote: openNotePicker, // 层级选笔记浮层（笔记本→笔记），供其它模块复用
   };
 })();

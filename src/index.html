@@ -17,7 +17,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="枝记">
-  <link rel="stylesheet" href="styles.css?v=20260807t4">
+  <link rel="stylesheet" href="styles.css?v=20260819t32">
   <style>body:not(.app-ready) { opacity: 0; }</style>
 </head>
 <body class="theme-light">
@@ -122,11 +122,18 @@
         <button id="btn-toggle-sidebar" class="icon-btn" title="侧边栏">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><line x1="9" y1="4" x2="9" y2="20"/></svg>
         </button>
+        <button type="button" id="btn-note-back" class="icon-btn" title="返回上一篇（Alt+←）" disabled>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
         <div id="breadcrumb"></div>
         <input type="text" id="title-input" placeholder="无标题" disabled spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off">
         <span id="editor-mode-bar" class="editor-mode-bar hidden" role="status" aria-live="polite"></span>
         <div class="topbar-right">
           <span id="word-count" class="word-count"></span>
+          <button id="btn-whats-new" class="icon-btn" type="button" title="日程、版本与消息">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 1 1 12 0c0 7 3 7 3 9H3c0-2 3-2 3-9"/><path d="M10 21a2 2 0 0 0 4 0"/></svg>
+            <span class="hint-dot"></span>
+          </button>
           <button id="btn-pin" class="icon-btn" title="置顶当前笔记">
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M8 4h8"/><path d="M9 4v5l-2 4h10l-2-4V4"/></svg>
           </button>
@@ -318,43 +325,53 @@
     </div>
   </div>
 
-  <!-- CDN dependencies (non-editor) -->
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pinyin-pro@3.18.6/dist/index.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <!-- 打包进本地，避免浏览器拦截外链读存储（公式库仍走网上） -->
+  <script src="jszip.min.js"></script>
+  <script src="pinyin-pro.js"></script>
+  <script src="lz-string.min.js"></script>
+  <script src="mammoth.min.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script>
-    window.__MD_VER__ = '20260807t6';
+    window.__MD_VER__ = '20260819t34';
     // 小枝第一套：Cloudflare 代取（见 docs/emoji-proxy-worker.js）；失败自动回退谷歌
     window.__NOTO_EMO_HOST__ = 'https://emoji.zhinote.net';
-    console.log('[ZhiNote] 运行版本标记 __MD_VER__ =', window.__MD_VER__);
   </script>
   <script src="donate-qr.js?v=20260611t70"></script>
   <script src="host.js?v=20260610t27"></script>
   <script src="text-search-engine.js"></script>
-  <script src="order.js?v=20260625t7"></script>
-  <script src="storage.js?v=20260807t2"></script>
-  <script src="webdav-sync.js?v=20260807t6"></script>
+  <script src="order.js?v=20260814t5"></script>
+  <script src="storage.js?v=20260816t2"></script>
+  <script src="webdav-sync.js?v=20260818t23"></script>
 
   <script src="tree.js?v=20260730t24"></script>
   <script src="search.js?v=20260730t24"></script>
-  <script src="template.js?v=20260710t7"></script>
+  <script src="template.js?v=20260819t12"></script>
   <script src="palette.js?v=20260730t24"></script>
+  <script>
+    (function () {
+      var w = console.warn;
+      console.warn = function () {
+        var a0 = arguments[0];
+        if (typeof a0 === 'string' && a0.indexOf('TextSelection endpoint not pointing') !== -1) return;
+        return w.apply(console, arguments);
+      };
+    })();
+  </script>
   <script src="tiptap.bundle.js"></script>
   <script src="crdt.bundle.js?v=20260624t32"></script>
-  <script src="ydoc.js?v=20260722t5"></script>
-  <script src="wsdoc.js?v=20260722t5"></script>
-  <script src="realtime.js?v=20260807t4"></script>
-  <script src="calendar.js?v=20260728t2"></script>
+  <script src="ydoc.js?v=20260818t19"></script>
+  <script src="wsdoc.js?v=20260817t7"></script>
+  <script src="realtime.js?v=20260818t19"></script>
+  <script src="calendar.js?v=20260819t30"></script>
   <script src="applock.js?v=20260716t6"></script>
   <script src="ai.js?v=20260805t3"></script>
-  <script src="emoji-ui.js?v=20260730t40"></script>
+  <script src="emoji-ui.js?v=20260817t5"></script>
   <script src="zn-emoji-util.js?v=20260730t38"></script>
   <script src="mascot-emoji.js?v=20260728t7"></script>
-  <script src="mascot.js?v=20260806t2"></script>
-  <script src="editor.js?v=20260731t2"></script>
-  <script src="app.js?v=20260807t5"></script>
+  <script src="mascot.js?v=20260819t11"></script>
+  <script src="mention-ui.js?v=20260819t31"></script>
+  <script src="editor.js?v=20260819t31"></script>
+  <script src="app.js?v=20260819t34"></script>
 </body>
 </html>

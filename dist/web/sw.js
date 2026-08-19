@@ -8,9 +8,9 @@
  * - 跨域请求（CDN 依赖 / WebDAV / 代理）：完全不拦截，交给浏览器自身的 HTTP 缓存与网络。
  *   网盘数据绝不能被 SW 缓存，否则会读到陈旧的同步状态。
  *
- * v1.2.6 由发布脚本替换为版本号；版本变化 → 缓存名变化 → 旧缓存在 activate 时清除。
+ * v2.0.1 由发布脚本替换为版本号；版本变化 → 缓存名变化 → 旧缓存在 activate 时清除。
  */
-const VERSION = 'v1.2.6';
+const VERSION = 'v2.0.1';
 const CACHE = 'zhinote-' + VERSION;
 
 self.addEventListener('install', (e) => {
@@ -37,6 +37,11 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // 跨域不拦截
+  // 升级告知：每次要最新，不走 SW 缓存
+  if (url.pathname.endsWith('/whats-new.json')) {
+    e.respondWith(fetch(req, { cache: 'no-store' }));
+    return;
+  }
 
   // 页面导航 + 静态资源统一：缓存优先 + 后台更新（秒开；新版本下次启动生效）
   e.respondWith((async () => {

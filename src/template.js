@@ -13,11 +13,23 @@ const template = (() => {
   let _currentFilter = '';
   let _slashInserted = false;
 
-  // 内置「简易日历」：不落库（不进模板 CRUD/同步），选中即插入日历块。始终出现在快选列表首位。
+  // 内置「简易日历」：不落库（不进模板 CRUD/同步），选中即插入日历块。折叠最常用 → 快选第一位，日历第二。
+  const BUILTIN_TOGGLE = { id: 'tpl-toggle', name: '折叠列表', builtin: true, action: 'toggle', level: 0 };
+  const BUILTIN_PAGELINK = { id: 'tpl-pagelink', name: '页面链接', builtin: true, action: 'pagelink' };
   const BUILTIN_CALENDAR = { id: 'tpl-calendar', name: '简易日历', builtin: true, action: 'calendar' };
   // 日历图标（线性·日历带勾），与右键「插入 → 简易日历」保持一致。
   const CAL_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><path d="M9 14.5l2 2 4-4"/></svg>';
-  function withBuiltins(list) { return [BUILTIN_CALENDAR].concat(list || []); }
+  const TOGGLE_ICON = '<span style="font-size:13px;line-height:1;">▸</span>';
+  const PAGE_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M10 13a5 5 0 007.54.54l1.42-1.42a5 5 0 00-7.07-7.07L10.5 6.5"/><path d="M14 11a5 5 0 00-7.54-.54L5.04 11.88a5 5 0 007.07 7.07L13.5 17.5"/></svg>';
+  function withBuiltins(list) {
+    return [BUILTIN_TOGGLE, BUILTIN_PAGELINK, BUILTIN_CALENDAR].concat(list || []);
+  }
+  function tplIcon(tpl) {
+    if (tpl.action === 'calendar') return CAL_ICON;
+    if (tpl.action === 'toggle') return TOGGLE_ICON;
+    if (tpl.action === 'pagelink') return PAGE_ICON;
+    return '⌗';
+  }
 
   /** 模板模糊匹配：直接子串 / 拼音全拼 / 拼音首字母 / 字符子序列。空查询返回全部 */
   function matchTemplates(list, query) {
@@ -85,68 +97,58 @@ const template = (() => {
   }
 
   /** 真正的触发判定。
-   *  策略（彻底简化）：只看光标前的局部文字，不再尝试找 block 容器、不依赖整段判定。
-   *  这样编辑器的任何装饰字符都不会影响判定。
-   *
-   *  匹配规则（严格）：当前段落级块的整段内容（清洗零宽字符 + trim）形如 `/xxx`
-   *  - 空行打 `/` → 块文本就是 "/" → 匹配，弹出
-   *  - 继续打 `/abc` → 块文本是 "/abc" → 匹配，按 abc 筛选
-   *  - "笔记 /abc" → 块文本不是 / 开头 → 不匹配，避免行内误触
+   *  光标左侧立刻是「行首或空白后的 /筛选字」才弹。
+   *  文中先空一格再打 / 即可；日期 2026/08、网址 https:// 前面不是空白，不弹。
    */
   function tryTrigger() {
     const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
+    if (!sel || sel.rangeCount === 0) { hideIfShown(); return; }
     const range = sel.getRangeAt(0);
     const node = range.startContainer;
     const target = node.nodeType === 3 ? node.parentElement : node;
     if (!target?.closest('#editor .ProseMirror')) { hideIfShown(); return; }
     if (target.closest('pre, code')) { hideIfShown(); return; }
 
-    // 找当前段落块；取整段文本判定（必须以 / 起头，后面任意字符都允许，让用户能继续打字筛选）
-    const block = findLineBlock(node);
-    const blockText = (block?.textContent ?? node.textContent ?? '')
-      .replace(/[\u200b\u200c\u200d\ufeff\u00a0]/g, '');
-    const trimmed = blockText.trim();
+    const inst = window.editor?.instance?.();
+    let left = '';
+    if (inst) {
+      try {
+        const $from = inst.state.selection.$from;
+        if (!$from.parent.isTextblock) { hideIfShown(); return; }
+        left = inst.state.doc.textBetween($from.start(), $from.pos, '\n', '\ufffc');
+      } catch (_) { left = ''; }
+    }
+    if (!left) {
+      const before = (node.nodeType === 3 ? node.textContent.slice(0, range.startOffset) : '');
+      left = before;
+    }
+    // 只剥零宽字符；普通空格 / 不间断空格都当空白，这样「/ 后空格」会关菜单。
+    const cleaned = left.replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+    const match = /(^|[\s\n>])\/([a-zA-Z\u4e00-\u9fa5]*)$/.exec(cleaned);
 
-    if (window.__MD_DEBUG__) console.log('[/] block=', JSON.stringify(trimmed));
+    if (window.__MD_DEBUG__) console.log('[/] left=', JSON.stringify(cleaned));
 
-    // 必须以 / 起头且不跨行；filter 非空时若没有任何匹配则自动关闭（避免一直挡视线）
-    if (trimmed.startsWith('/') && !trimmed.includes('\n')) {
-      const filter = trimmed.slice(1);
-      if (filter && matchTemplates(storage.getTemplates(), filter).length === 0) {
+    if (match) {
+      const filter = match[2] || '';
+      if (filter && matchTemplates(withBuiltins(storage.getTemplates()), filter).length === 0) {
         hideIfShown();
         return;
       }
       _currentFilter = filter;
       clearTimeout(_pendingTimer);
-      _pendingTimer = setTimeout(() => {
-        const sel2 = window.getSelection();
-        if (sel2 && sel2.rangeCount) showPopup(sel2.getRangeAt(0));
-      }, 60);
+      _pendingTimer = null;
+      const sel2 = window.getSelection();
+      if (sel2 && sel2.rangeCount) showPopup(sel2.getRangeAt(0));
     } else {
       hideIfShown();
     }
   }
 
-  /** 找最近的"段落级块容器"。遇到 ProseMirror 外壳就 stop。 */
-  function findLineBlock(node) {
-    let el = node.parentElement;
-    while (el) {
-      if (el.classList) {
-        if (el.classList.contains('ProseMirror')
-         || el.id === 'editor'
-         || el.tagName === 'BODY') return null;
-      }
-      if (/^(P|LI|H[1-6]|BLOCKQUOTE|TD|TH|FIGCAPTION|DT|DD)$/i.test(el.tagName)) return el;
-      el = el.parentElement;
-    }
-    return null;
-  }
-
   let _pendingTimer = null;
   function hideIfShown() {
+    clearTimeout(_pendingTimer);
+    _pendingTimer = null;
     if (_popupEl && !_popupEl.classList.contains('hidden')) {
-      clearTimeout(_pendingTimer);
       hidePopup();
     }
   }
@@ -193,7 +195,7 @@ const template = (() => {
       filtered.forEach((tpl, i) => {
         const it = document.createElement('div');
         it.className = 'context-menu-item tpl-item' + (i === 0 ? ' active' : '');
-        it.innerHTML = `<span style="width:14px;color:var(--accent);display:inline-flex;">${tpl.action === 'calendar' ? CAL_ICON : '⌗'}</span><span>${escapeHtml(tpl.name)}</span>`;
+        it.innerHTML = `<span style="width:14px;color:var(--accent);display:inline-flex;">${tplIcon(tpl)}</span><span>${escapeHtml(tpl.name)}</span>`;
         it.addEventListener('click', () => {
           insertTemplate(tpl);
           hidePopup();
@@ -283,22 +285,25 @@ const template = (() => {
     if (!id) return;
     const note = storage.get(id);
 
-    // 先清掉触发用的 "/xxx" 文本（无论哪种模板都要）。
-    const sel = window.getSelection();
-    if (sel && sel.rangeCount) {
-      const range = sel.getRangeAt(0);
-      const node = range.startContainer;
-      if (node.nodeType === 3) {
-        const text = node.textContent || '';
-        const pos = range.startOffset;
-        const beforeCaret = text.slice(0, pos);
-        const match = /(^|[\s\n>])\/([a-zA-Z\u4e00-\u9fa5]*)$/.exec(beforeCaret);
-        if (match) {
-          const delStart = pos - match[2].length - 1;
-          const newRange = document.createRange();
-          newRange.setStart(node, delStart);
-          newRange.setEnd(node, pos);
-          newRange.deleteContents();
+    // 用编辑器命令删掉 "/xxx"（不要只改 DOM：否则状态还留着 /，会被包进折叠标题）
+    const cleared = _clearSlashQueryInEditor();
+    if (!cleared) {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount) {
+        const range = sel.getRangeAt(0);
+        const node = range.startContainer;
+        if (node.nodeType === 3) {
+          const text = node.textContent || '';
+          const pos = range.startOffset;
+          const beforeCaret = text.slice(0, pos);
+          const match = /(^|[\s\n>])\/([a-zA-Z\u4e00-\u9fa5]*)$/.exec(beforeCaret);
+          if (match) {
+            const delStart = pos - match[2].length - 1;
+            const newRange = document.createRange();
+            newRange.setStart(node, delStart);
+            newRange.setEnd(node, pos);
+            newRange.deleteContents();
+          }
         }
       }
     }
@@ -308,9 +313,44 @@ const template = (() => {
       if (typeof window.insertCalendarBlock === 'function') window.insertCalendarBlock();
       return;
     }
+    // 内置折叠列表：有字则包成折叠标题，空段才插空白折叠
+    if (tpl && tpl.action === 'toggle') {
+      if (typeof window.editor?.execCommand === 'function') {
+        window.editor.execCommand('insertToggle', { level: tpl.level || 0 });
+      } else if (typeof window.insertToggleBlock === 'function') {
+        window.insertToggleBlock(tpl.level || 0);
+      }
+      return;
+    }
+    if (tpl && tpl.action === 'pagelink') {
+      if (typeof window.editor?.execCommand === 'function') {
+        window.editor.execCommand('insertPageLink');
+      }
+      return;
+    }
 
     const content = applyVariables(tpl.content || '', { title: note?.title });
     editor.insertAtCursor(content);
+  }
+
+  /** 在 TipTap 里删掉光标前的 /筛选字，返回是否删成功 */
+  function _clearSlashQueryInEditor() {
+    try {
+      const inst = window.editor?.instance?.();
+      if (!inst) return false;
+      const { state } = inst;
+      const $from = state.selection.$from;
+      if (!$from.parent.isTextblock) return false;
+      const left = state.doc.textBetween($from.start(), $from.pos, '\n', '\ufffc');
+      const m = /\/([a-zA-Z\u4e00-\u9fa5]*)$/.exec(left);
+      if (!m) return false;
+      const from = $from.pos - m[0].length;
+      const to = $from.pos;
+      if (to <= from) return false;
+      return inst.chain().focus().deleteRange({ from, to }).run();
+    } catch (_) {
+      return false;
+    }
   }
 
   // ========== 模板管理 UI ==========
@@ -426,7 +466,7 @@ const template = (() => {
       list.forEach(tpl => {
         const it = document.createElement('div');
         it.className = 'context-menu-item';
-        it.innerHTML = `<span style="width:16px;color:var(--accent);display:inline-flex;">${tpl.action === 'calendar' ? CAL_ICON : '⌗'}</span><span style="flex:1;">${escapeHtml(tpl.name)}</span><span style="color:var(--text-tertiary);font-size:11px;">↵</span>`;
+        it.innerHTML = `<span style="width:16px;color:var(--accent);display:inline-flex;">${tplIcon(tpl)}</span><span style="flex:1;">${escapeHtml(tpl.name)}</span><span style="color:var(--text-tertiary);font-size:11px;">↵</span>`;
         it.addEventListener('click', () => {
           insertTemplate(tpl);
           remove();

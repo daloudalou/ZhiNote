@@ -385,6 +385,7 @@ const storage = (() => {
   async function init() {
     _data = await rawLoad();
     migrate(_data);
+    _restoreDirty(); // 关窗前没传完的脏记号在本机，重开还能补传（人到了、字/位置没到的根因之一）
     _psSeedCaches(); // 装载后立基线：之后每次 flush 只写真正变化的分片
     // 启动即自愈：把早期同步缺陷导致从 rootOrder 掉出 / 笔记本丢失而"消失"的笔记重新接回并落盘。
     // 这些笔记的数据其实仍在本地 _data.notes（以及云端 notes/*.json）里，只是没挂在可见的顺序上。
@@ -417,6 +418,8 @@ const storage = (() => {
     // 不批量标脏、不在此建账本（账本随编辑/合并按需懒建）；声明 v3 仅用于版本闸（旧客户端见之暂停）。
     // v1 未 JSON 化的数据保持 1，待 migrateNotesToDoc() 一次性升到 3。
     if (data.dataFormatVersion === 2) data.dataFormatVersion = 3;
+    if (data.dataFormatVersion === 3) data.dataFormatVersion = 4;
+    if (data.dataFormatVersion === 4) data.dataFormatVersion = 5;
     data.notes ??= {};
     data.rootOrder ??= [];
     data.trash ??= {};
@@ -1208,7 +1211,8 @@ const storage = (() => {
     // 根笔记顺序由 rootOrder 决定（子笔记由各自 order 决定）；把根序换算进 note.order 入账。
     // **关键**：用「本笔记本内的下标」而非全局下标——否则别的笔记本多/少一篇就会让本篇 order 变化，
     // 两端 order 永远对不齐 → 合并来回冲突 → 反复重发整账（位置乱跳 + 信令被刷爆导致掉线）。
-    _backfillFrac(_data);   // 迁移/自愈：给历史笔记确定性补齐 frac（引擎未就绪则跳过，下次再补）
+    // 不在入账前补 frac：刚收下、还没对上云端目录的新篇若在这里编造位置，会盖掉对端的真位置（排到最前）。
+    // 缺的位置等总账落地后再补（order.js 补到同一层末尾）。
     // 每个同级组按 frac 权威序算「下标 rank」当 order：rank 是已收敛 frac 的确定性函数，
     //   两端逐字节一致、入账后不再抖动（旧版无 frac 时靠它兜底排序）；frac 原样入账作新版权威键。
     const rankIdx = {};
@@ -1229,9 +1233,9 @@ const storage = (() => {
         icon: n.icon || '', parentId: n.parentId == null ? null : n.parentId,
         workspaceId: n.workspaceId || 'ws-default',
         order: (rankIdx[id] != null ? rankIdx[id] : (n.order || 0)),
-        frac: (typeof n.frac === 'string' ? n.frac : ''),
         expanded: !!n.expanded, createdAt: n.createdAt || '', updatedAt: n.updatedAt || '',
       };
+      if (typeof n.frac === 'string' && n.frac) notes[id].frac = n.frac;
     }
     const workspaces = {};
     (_data.workspaces || []).forEach((w, i) => { workspaces[w.id] = { name: w.name || '', icon: w.icon || '', order: i }; });
@@ -1294,13 +1298,18 @@ const storage = (() => {
       return _data.structLedger;
     } catch (_) { return _data.structLedger; }
   }
-  /** 把云端总账按规则并入本地：未扎根(本地独立创世/从未同步)→认领对方基线；已扎根→正常合并。 */
-  function _webdavApplyStructLedger(remoteB64) {
+  /** 把云端总账按规则并入本地：未扎根(本地独立创世/从未同步)→认领对方基线；已扎根→正常合并。
+   *  opts.skipMaintain：下行专用——不要先把「本机此刻可能半套的树」写进账再和云端并，
+   *    否则子笔记先到、父笔记未到时自愈提成顶层，会盖掉云端正确的父子关系。
+   *  opts.skipOrphan：下行中途不要把「父还没落到本机」的子笔记提成顶层。 */
+  function _webdavApplyStructLedger(remoteB64, opts) {
     try {
       const W = window.__wsdoc;
       if (!W || !W.ready() || !remoteB64) return false;
+      const skipMaintain = !!(opts && opts.skipMaintain);
+      const skipOrphan = !!(opts && opts.skipOrphan);
       const before = _data.structLedger;
-      _maintainStructLedger();           // 确保本地总账反映当前结构
+      if (!skipMaintain) _maintainStructLedger();           // 上传路径：先刷入本机最新结构
       if (!_data.structLedger || !_data.structLedgerRooted) {
         // 认领：在对方基线上叠加本端当前结构，丢弃本地独立创世（避免撞车丢数据）
         _data.structLedger = W.update(remoteB64, _buildStructSnapshot());
@@ -1311,9 +1320,12 @@ const storage = (() => {
       _data.structLedgerRooted = true;
       save();
       const merged = _data.structLedger !== before;
-      // 让总账当「结构/元数据」权威：把合并结果落地到真实结构（只动元数据、不碰正文、不造空壳）。
+      // 无论账本字节有没有变，都对照一次：目录有、本地没有的要告诉同步层去拉正文（上一轮只并了目录、正文没到）。
       let missing = [];
-      if (merged) { try { const ar = _applyStructLedgerToData(); if (ar && ar.missing) missing = ar.missing; } catch (_) {} }
+      try {
+        const ar = _applyStructLedgerToData({ skipOrphan });
+        if (ar && ar.missing) missing = ar.missing;
+      } catch (_) {}
       return { changed: merged, missing: missing };
     } catch (e) { console.warn('[storage] 并入云端结构总账失败（忽略，不影响主同步）', e); return { changed: false, missing: [] }; }
   }
@@ -1373,8 +1385,8 @@ const storage = (() => {
       _data.structLedger = remoteB64;     // 以云端权威总账为准（丢弃本地独立创世/旧墓碑）
       _data.structLedgerRooted = true;
       save();
-      _applyStructLedgerToData();          // 按权威总账落地结构/元数据（只动元数据，不碰正文、不造空壳）
-      return true;
+      const ar = _applyStructLedgerToData();          // 按权威总账落地（只动元数据，不碰正文、不造空壳）
+      return ar && typeof ar === 'object' ? ar : { changed: true, missing: [] };
     } catch (e) { console.warn('[storage] 采纳云端结构总账失败', e); return false; }
   }
 
@@ -1484,7 +1496,7 @@ const storage = (() => {
    *  只动元数据/笔记本/模板/回收站开关，绝不碰正文；本地没有的笔记不创建空壳。
    *  永久删除墓碑删本体前，先复用网盘「同步留底」备份，可在留底里找回。
    *  落地后自愈 + 存盘 + 发 global-sync 让侧栏/切换器刷新（global-sync 不反向上传、不再自维护账本）。 */
-  function _applyStructLedgerToData() {
+  function _applyStructLedgerToData(opts) {
     try {
       const W = window.__wsdoc;
       if (!W || !W.ready() || !_data || !_data.structLedger) return false;
@@ -1496,7 +1508,7 @@ const storage = (() => {
         }
       }
       if (r.changed) {
-        reconcileStructure();
+        reconcileStructure({ skipDirty: true, skipOrphan: !!(opts && opts.skipOrphan) });
         save({ immediate: true });
         emit('change', { type: 'global-sync' });
       }
@@ -2214,10 +2226,44 @@ const storage = (() => {
   }
 
   let _pendingFull = false;
+  function _writeDirtyToData() {
+    if (!_data) return;
+    if (_dirtyNoteIds.size || _globalDirty || _indexDirty) {
+      _data._webdavDirty = {
+        notes: Array.from(_dirtyNoteIds),
+        global: !!_globalDirty,
+        index: !!_indexDirty,
+        indexIds: Array.from(_indexPendingIds),
+      };
+    } else if (_data._webdavDirty) {
+      delete _data._webdavDirty;
+    }
+  }
+  function _restoreDirty() {
+    try {
+      const d = _data && _data._webdavDirty;
+      if (!d || typeof d !== 'object') return;
+      if (Array.isArray(d.notes)) {
+        for (let i = 0; i < d.notes.length; i++) {
+          const id = d.notes[i];
+          if ((_data.notes && _data.notes[id]) || (_data.trash && _data.trash[id])) _dirtyNoteIds.add(id);
+        }
+      }
+      if (d.global) _globalDirty = true;
+      if (d.index) _indexDirty = true;
+      if (Array.isArray(d.indexIds)) {
+        for (let i = 0; i < d.indexIds.length; i++) {
+          if (d.indexIds[i]) _indexPendingIds.add(d.indexIds[i]);
+        }
+      }
+    } catch (_) {}
+  }
+
   async function _flush({ full = false } = {}) {
     if (_saveInFlight) { _pendingSave = true; _pendingFull = _pendingFull || full; return; }
     _saveInFlight = true;
     try {
+      _writeDirtyToData();
       await rawSave(_data, { full });
     } catch (err) {
       console.error('[storage] 保存失败', err);
@@ -2236,11 +2282,13 @@ const storage = (() => {
   // WebDAV dirty 追踪
   let _dirtyNoteIds = new Set();
   let _globalDirty = false;
+  let _indexDirty = false;
+  let _indexPendingIds = new Set();
 
   // 这些变更会改动全局结构（rootOrder / trashOrder / 树形 / 笔记本归属），
   // 即使带 id 也必须标记 globalDirty。否则新建/删除/移动笔记后 rootOrder 不会上传，
   // 其它设备拿不到顺序、笔记被后续上传从 rootOrder 中抹掉 → 在所有设备上"同步消失"。
-  const _STRUCTURAL_CHANGE = new Set(['create', 'delete', 'restore', 'purge', 'move']);
+  const _STRUCTURAL_CHANGE = new Set(['create', 'delete', 'restore', 'purge', 'move', 'rename', 'icon', 'color', 'pinned']);
   function emit(event, payload) {
     if (event === 'change') {
       const t = payload?.type;
@@ -2250,7 +2298,7 @@ const storage = (() => {
       } else if (!payload?.id && t !== 'reload' && t !== 'global-sync' && t !== 'collapseAll' && t !== 'expandAll') {
         _globalDirty = true;
       }
-      if (t === 'reload') { _dirtyNoteIds.clear(); _globalDirty = false; }
+      if (t === 'reload') { _dirtyNoteIds.clear(); _globalDirty = false; _indexDirty = false; _indexPendingIds.clear(); }
       // 收口：本地任何会产生脏数据的变更（新建/删除/改名/移动/颜色图标/回收站/笔记本/设置…）
       // 统一在此安排一次「去抖的」上传，让它们也像编辑文字一样触发同步、点亮徽标，
       // 不再只靠失焦/隐藏才推（关闭前来不及推 → 重开拉云端对不齐 → 冲突）。
@@ -2272,6 +2320,11 @@ const storage = (() => {
   }
   function markNotesDirtyByIds(ids) {
     for (const id of ids) _dirtyNoteIds.add(id);
+    save({ immediate: true });
+  }
+  function markGlobalDirty() {
+    _globalDirty = true;
+    save({ immediate: true });
   }
   function markAllNotesDirty() {
     for (const id in _data.notes) _dirtyNoteIds.add(id);
@@ -2335,7 +2388,7 @@ const storage = (() => {
 
     // 3) 置格式版本 + 全部标脏（下次同步把 doc 全集推上云，并由 webdav 首推时 epoch++）
     //    直接置 v3（账本感知客户端）：账本随后按需懒建，此处不建以免拖慢迁移。
-    _data.dataFormatVersion = 3;
+    _data.dataFormatVersion = 5;
     markAllNotesDirty();
     await save({ immediate: true });
     const report = { ran: true, migrated, skipped, failed };
@@ -2346,6 +2399,14 @@ const storage = (() => {
   }
   function isGlobalDirty() { return _globalDirty; }
   function clearGlobalDirty() { _globalDirty = false; }
+  function isIndexDirty() { return _indexDirty; }
+  function getIndexPendingIds() { return Array.from(_indexPendingIds); }
+  function markIndexDirty(id) {
+    _indexDirty = true;
+    if (id) _indexPendingIds.add(id);
+    save({ immediate: true });
+  }
+  function clearIndexDirty() { _indexDirty = false; _indexPendingIds.clear(); }
 
   // ─── WebDAV 辅助函数（供 webdav-sync.js 调用） ──────────────────────────────
   // 结构/属性的唯一权威 = 结构总账(CRDT)。按篇网盘文件**只管正文**，不再仲裁这些字段（Stage B 收口）。
@@ -2480,9 +2541,10 @@ const storage = (() => {
   /**
    * 结构自愈：把"仍存在于 _data.notes 里、却没挂在 rootOrder / 有效笔记本上"的笔记重新接回，
    * 修复早期同步缺陷（全局集合被整体覆盖）导致笔记从 rootOrder 掉出而"消失"的历史数据。
-   * 幂等：重复运行不会再产生变化；有改动时置 _globalDirty 让恢复结果回传云端。
+   * 幂等：重复运行不会再产生变化。
+   * skipDirty：网盘下行自愈用——只修本机树，不写回云端（避免拉完又把目录时间改脏、对端再整库下）。
    */
-  function reconcileStructure() {
+  function reconcileStructure(opts) {
     if (!_data) return false;
     let changed = false;
     _data.notes ??= {};
@@ -2495,10 +2557,13 @@ const storage = (() => {
     let fallbackWs = _data.settings.activeWorkspace;
     if (!fallbackWs || !wsIds.has(fallbackWs)) fallbackWs = _data.workspaces[0].id;
 
-    // 1) 父节点不存在 → 提升为顶级，避免笔记永久不可见
-    for (const id in _data.notes) {
-      const n = _data.notes[id];
-      if (n && n.parentId != null && !_data.notes[n.parentId]) { n.parentId = null; changed = true; }
+    // 1) 父节点不存在 → 提升为顶级，避免笔记永久不可见。
+    //    下行中途（skipOrphan）不要做：父篇可能还在同一轮补拉里，提前提升会让「2」跑到顶层。
+    if (!(opts && opts.skipOrphan)) {
+      for (const id in _data.notes) {
+        const n = _data.notes[id];
+        if (n && n.parentId != null && !_data.notes[n.parentId]) { n.parentId = null; changed = true; }
+      }
     }
     // 2) workspaceId 指向不存在的笔记本 → 分两种情况处理：
     //    a. 指向「已彻底删除(有墓碑)」的笔记本：这是被删本子的漏网/竞态笔记（删除时还没到、或子笔记 workspaceId 没更新）
@@ -2534,15 +2599,14 @@ const storage = (() => {
     }
     _data.trashOrder = cleanedTrash;
 
-    if (changed) _globalDirty = true;
+    if (changed && !(opts && opts.skipDirty)) _globalDirty = true;
     return changed;
   }
 
   function _webdavApplyGlobal(remote) {
     if (!_data) return;
-    // 【单一裁判·第一刀】结构总账(CRDT)就绪时：顺序/笔记本/模板的唯一权威 = 总账
-    //   （本周期稍后 _applyStructLedgerToData 落地）。这里**不再**用网盘清单"远端优先"覆盖结构，
-    //   杜绝"网盘先按远端排一遍→账本再纠正"的双裁判闪跳/互踩。
+    // 【单一裁判】结构总账就绪时：顺序/笔记本/模板的唯一权威 = 总账
+    //   （doGet 已先并总账，见 webdav-sync 20260817t5）。这里**不再**用网盘清单"远端优先"覆盖结构。
     //   总账未就绪(旧数据/未生根/旧版云端)时回退旧的"远端优先并集"兜底，保证单设备/异步也能同步结构。
     //   两种模式都处理：设置、回收站顺序、墓碑（可加性安全）。
     const ledgerAuthoritative = !!(window.__wsdoc && window.__wsdoc.ready && window.__wsdoc.ready() && _data.structLedger);
@@ -2598,7 +2662,7 @@ const storage = (() => {
     if (!_data.workspaces.some(w => w.id === _data.settings.activeWorkspace)) {
       _data.settings.activeWorkspace = _data.workspaces[0].id;
     }
-    reconcileStructure();
+    reconcileStructure({ skipDirty: true });
     save({ immediate: true });
     emit('change', { type: 'global-sync' });
   }
@@ -2702,8 +2766,10 @@ const storage = (() => {
     if (method === 'none') return;
     if (method === 'webdav' && window.webdavSync) {
       try {
-        console.log('[sync-dirty]', reason || 'markDirty',
-          'global=', _globalDirty, 'notes=', _dirtyNoteIds.size);
+        if (window.__MD_DEBUG__) {
+          console.log('[sync-dirty]', reason || 'markDirty',
+            'global=', _globalDirty, 'notes=', _dirtyNoteIds.size);
+        }
       } catch (_) {}
       window.webdavSync.schedulePut(reason || 'markDirty');
     }
@@ -2742,12 +2808,13 @@ const storage = (() => {
     getWorkspaces, getActiveWorkspace, setActiveWorkspace, createWorkspace, renameWorkspace, setWorkspaceIcon, deleteWorkspace,
     exportJSON, importJSON, exportCurrentNoteMd, exportAllAsTree,
     startAutoSync, markDirty, flushBeforeHide,
-    isDirty: () => _dirtyNoteIds.size > 0 || _globalDirty,
+    isDirty: () => _dirtyNoteIds.size > 0 || _globalDirty || _indexDirty,
     save,
     on,
     isQuicker,
     // WebDAV sync support
-    getDirtyNoteIds, clearDirtyNoteIds, removeDirtyNoteIds, markNotesDirtyByIds, markAllNotesDirty, isGlobalDirty, clearGlobalDirty,
+    getDirtyNoteIds, clearDirtyNoteIds, removeDirtyNoteIds, markNotesDirtyByIds, markAllNotesDirty, isGlobalDirty, clearGlobalDirty, markGlobalDirty,
+    isIndexDirty, markIndexDirty, clearIndexDirty, getIndexPendingIds,
     getDataFormatVersion, migrateNotesToDoc,
     switchSyncMethod, reconcileStructure,
     _webdavApplyNote, _webdavRemoveNote, _webdavApplyGlobal, _webdavMergeWorkspaces, _webdavStoreImage, _emitCloudSync, _realtimeApply, _realtimeMaterializeNote,

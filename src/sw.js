@@ -37,6 +37,11 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return; // 跨域不拦截
+  // 升级告知：每次要最新，不走 SW 缓存
+  if (url.pathname.endsWith('/whats-new.json')) {
+    e.respondWith(fetch(req, { cache: 'no-store' }));
+    return;
+  }
 
   // 页面导航 + 静态资源统一：缓存优先 + 后台更新（秒开；新版本下次启动生效）
   e.respondWith((async () => {

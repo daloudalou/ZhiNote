@@ -8,7 +8,8 @@
  *
  * 设计原则（关键）：中转只是「傻瓜转发的群」，所有聪明都在本文件（随发布自动更新），
  *   中转一行都不用改 —— 故自建用户永不用升级中转。具体靠两条 WebSocket：
- *   1) 内容房间（按笔记）：只走加密的整篇账本快照，中转存「最近一份」给后到设备引导。
+ *   1) 内容房间（按笔记）：走加密的账本载荷。t19 起优先发**增量**（几十字节），换篇/断线/新人加入
+ *      发全量兜底；收端影子试并发现漏包 → ybreq 向对端索要全量。中转存「最近一份」给后到设备引导。
  *   2) 信令房间（按工作区）：走明文小消息——在场招呼/心跳（决定是否值得发正文）、结构变更暗号。
  *
  * 在场感知：进信令房间先喊一声，没人应就不发正文（零浪费）；有人应才互发并各推一份对齐。
@@ -21,6 +22,7 @@
  *
  * 隐私（命门）：正文发出前用同步口令加密（webdavSync.rtEncrypt）→ 中转只见密文；
  *   房间号由口令 + 网盘账号哈希得出（webdavSync.rtRoomId），他人既进不来也解不开。
+ *   v5 起房间前缀换成 zhinote-room-v5:，旧版即时进不了新房间（网盘闸停了仍防中转灌旧结构）。
  */
 (function () {
   'use strict';
@@ -73,10 +75,18 @@
   let _roomId = null;
   let _connectAt = 0;            // 内容房间本次 connect 发起时刻 → 看门狗据此判「卡在半连接」强制重连
   let _applyingRemote = false;
-  let _pendingYb = null;         // 打字期间暂存的对端账本（累积合并）
+  let _pendingYb = null;         // 打字期间暂存的对端载荷（增量/全量混合，Y.mergeUpdates 级联，不丢缺依赖部分）
   let _pendingTimer = null;
   let _reconnectTimer = null;
   let _reconnectDelay = 2000;
+
+  // ── 增量直推（t19 C2）：发端记「上次发到哪」的指纹，此后只发新增几笔（几十字节 vs 整本几 KB+）──
+  //   指纹失效（换篇/断线/新设备加入）→ 退回发全量。收端见「中间漏包」→ ybreq 向对端要全量。
+  let _sentSV = null, _sentSVNote = null;          // 内容房间：上次发出后的账本指纹（同篇同连接内有效）
+  let _sigSentSV = Object.create(null);            // 账号级直推：id → 指纹（对端进出/重连即清空 → 回全量）
+  let _ybReqAt = Object.create(null);              // 全量索要节流：id → 上次索要时刻（3s 一次防风暴）
+  function _resetContentSV() { _sentSV = null; _sentSVNote = null; }
+  function _resetSigSV() { _sigSentSV = Object.create(null); }
 
   // 信令房间
   let _sig = null;
@@ -221,6 +231,7 @@
     _activeId = id || null;
     _peerSeenAt = 0;                       // 换篇 → 同篇在场重新探测
     _pendingYb = null;
+    _resetContentSV();                     // 换篇 → 增量指纹作废，下次先发全量
     if (!_enabled) return;
     if (!_activeId) {                      // 关掉所有笔记：仅关内容房间；信令(账号级在场+结构)继续连着
       _disconnect();                       // → 本端仍在线，紫点不灭、结构照旧即时
@@ -236,6 +247,7 @@
   // ── 内容房间 ───────────────────────────────────────────────────────────────
   async function _ensureRoom(id) {
     if (!_enabled || !id) return;
+    if (_offline) return; // 显式离线（隐藏/最小化）期间，任何入口都不得把内容房间建回来；恢复统一走 _goOnline
     const note = window.storage && window.storage.get(id);
     if (!note) { _disconnect(); return; }
     let roomId;
@@ -263,7 +275,7 @@
       //   否则隐藏后这条 socket 可能僵尸式复活、紫点该灭不灭。恢复由 _goOnline 统一接管。
       if (_ws === ws) { _ws = null; if (_enabled && !_offline && _activeId && _roomId === myRoom) _scheduleReconnect(); }
     };
-    ws.onerror = function () { try { ws.close(); } catch (_) {} };
+    ws.onerror = function () { if (ws.readyState === 1) { try { ws.close(); } catch (_) {} } };
   }
 
   function _scheduleReconnect() {
@@ -273,27 +285,53 @@
     _reconnectDelay = Math.min(_reconnectDelay * 2, RECONNECT_MAX);
   }
 
+  function _quietClose(ws) {
+    if (!ws) return;
+    try {
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+      if (ws.readyState === 1) ws.close();
+      else if (ws.readyState === 0) ws.onopen = function () { try { ws.close(); } catch (_) {} };
+    } catch (_) {}
+  }
+
   function _disconnect() {
     clearTimeout(_reconnectTimer); _reconnectTimer = null;
     clearTimeout(_pendingTimer); _pendingTimer = null;
     _pendingYb = null;
+    _resetContentSV();           // 断开 → 指纹作废（重连后对端可能换过人/漏过包），下次先发全量
     _wsOcc = 0;                  // 内容房间断开 → 本篇在场人数清零
     if (_ws) {
-      try { _ws.onclose = null; _ws.onmessage = null; _ws.onerror = null; _ws.close(); } catch (_) {}
+      _quietClose(_ws);
       _ws = null;
     }
     _roomId = null;
   }
 
-  /** 把本端当前笔记的完整账本（加密）发往内容房间。仅在「有人同看 + 账本已存在」时才发。 */
+  /** 把本端当前笔记的账本发往内容房间。仅在「有人同看 + 账本已存在」时才发。
+   *  t19 增量直推：有上次指纹 → 只发新增几笔（信封 {__zn:'u',m:'d'}）；否则发全量（m:'f'）。
+   *  指纹在发送成功后才推进——发失败下次仍从旧指纹起算，对端不缺包；真缺包也有 ybreq 全量兜底。 */
   async function _sendLocal(id) {
     if (!_ws || _ws.readyState !== 1 || !id || id !== _activeId) return;
     if (!_peerPresent()) return;            // 没人同看 → 不发，零浪费
     const note = window.storage && window.storage.get(id);
     if (!note || !note.ydoc) return;        // 账本未建（同源未定）→ 退回网盘，不走快车道
     try {
-      const cipher = await window.webdavSync.rtEncrypt(note.ydoc);
-      if (_ws && _ws.readyState === 1 && id === _activeId) { _ws.send(cipher); _pulse(); }
+      let mode = 'f', payload = note.ydoc;
+      try {
+        if (_sentSVNote === id && _sentSV) {
+          const d = window.__ydoc.diff(note.ydoc, _sentSV);
+          if (d && d.length < payload.length) { payload = d; mode = 'd'; }
+        }
+      } catch (_) { mode = 'f'; payload = note.ydoc; }
+      const cipher = await window.webdavSync.rtEncrypt(payload);
+      if (_ws && _ws.readyState === 1 && id === _activeId) {
+        _ws.send(JSON.stringify({ __zn: 'u', m: mode, yb: cipher }));
+        try { _sentSV = window.__ydoc.sv(note.ydoc); _sentSVNote = id; } catch (_) { _resetContentSV(); }
+        _pulse();
+        _D('发正文(内容房)', mode === 'd' ? '增量' : '全量', cipher.length, '字节');
+      }
     } catch (_) {}
   }
 
@@ -308,11 +346,26 @@
     const note = window.storage && window.storage.get(id);
     if (!note || !note.ydoc) return;                      // 账本未建（同源未定）→ 退回网盘，不走快车道
     try {
-      const cipher = await window.webdavSync.rtEncrypt(note.ydoc);
-      if (_sig && _sig.readyState === 1) { _sigSend({ rt: 'noteupd', sid: _sid, id: id, yb: cipher }); _pulse(); }
+      // t19 增量直推：对这篇发过且期间无设备进出 → 只发新增几笔；否则全量。收端漏包有 ybreq 兜底。
+      let mode = 'f', payload = note.ydoc;
+      try {
+        const known = _sigSentSV[id];
+        if (known) {
+          const d = window.__ydoc.diff(note.ydoc, known);
+          if (d && d.length < payload.length) { payload = d; mode = 'd'; }
+        }
+      } catch (_) { mode = 'f'; payload = note.ydoc; }
+      const cipher = await window.webdavSync.rtEncrypt(payload);
+      if (_sig && _sig.readyState === 1) {
+        _sigSend({ rt: 'noteupd', sid: _sid, id: id, m: mode, yb: cipher });
+        try { _sigSentSV[id] = window.__ydoc.sv(note.ydoc); } catch (_) { delete _sigSentSV[id]; }
+        _pulse();
+        _D('发正文(账号级)', mode === 'd' ? '增量' : '全量', cipher.length, '字节');
+      }
     } catch (_) {}
   }
-  /** 收到账号级直推的整篇账本：当前打开这篇→走 _ingestActiveYb（含打字暂存/重载）；否则后台并入存储。 */
+  /** 收到账号级直推的正文载荷（增量或全量，收端统一处理、自动识别漏包）：
+   *  当前打开这篇→走 _ingestActiveYb（含打字暂存/重载）；否则后台并入存储。 */
   async function _onNoteUpd(id, cipher) {
     if (!id || !cipher) return;
     let plainYb;
@@ -320,6 +373,26 @@
     if (!plainYb) return;
     if (id === _activeId) _ingestActiveYb(id, plainYb);
     else _applyRemoteBackground(id, plainYb);
+  }
+
+  // ── 漏包兜底：收端发现载荷缺依赖（中间丢过消息）→ 向账号内对端索要一份全量账本 ────────
+  function _requestYbFull(id) {
+    if (!id || !_sig || _sig.readyState !== 1) return;
+    const now = Date.now();
+    if (_ybReqAt[id] && now - _ybReqAt[id] < 3000) return;   // 3s 节流：pending 期间可能连收多条增量
+    _ybReqAt[id] = now;
+    _sigSend({ rt: 'ybreq', sid: _sid, id: id });
+    _D('缺依赖(中间漏包) → 索要全量', id);
+  }
+  /** 对端喊「我缺账」→ 把本端这篇的整本账（加密）经 noteupd(m:'f') 发回。 */
+  async function _replyYbFull(id) {
+    if (!_sig || _sig.readyState !== 1 || !id) return;
+    const note = window.storage && window.storage.get(id);
+    if (!note || !note.ydoc) return;
+    try {
+      const cipher = await window.webdavSync.rtEncrypt(note.ydoc);
+      if (_sig && _sig.readyState === 1) { _sigSend({ rt: 'noteupd', sid: _sid, id: id, m: 'f', yb: cipher }); _pulse(); _D('回发全量账本', id); }
+    } catch (_) {}
   }
 
   function _abToStr(buf) {
@@ -330,13 +403,20 @@
     } catch (_) { return ''; }
   }
 
-  /** 收到内容房间的密文：解密 → 按「是否正在打字」决定立即落地或暂存。 */
+  /** 收到内容房间的消息：解密 → 按「是否正在打字」决定立即落地或暂存。
+   *  t19 起本端发的是 JSON 信封 {__zn:'u',m:'d'|'f',yb:密文}；旧端裸密文（=全量）仍兼容收。 */
   async function _onContent(data) {
-    const cipher = (typeof data === 'string') ? data : _abToStr(data);
-    if (!cipher) return;
-    // 服务器在场广播（{__zr:'occ',n}，明文 JSON，以 '{'(123) 开头；密文 base64 不会以 '{' 开头）→ 更新本篇人数。
-    if (cipher.charCodeAt(0) === 123) {
-      try { const c = JSON.parse(cipher); if (c && c.__zr === 'occ') { _occSupported = true; _wsOcc = c.n | 0; _notifyStatus(); return; } } catch (_) {}
+    const raw = (typeof data === 'string') ? data : _abToStr(data);
+    if (!raw) return;
+    let cipher = raw;
+    // 明文 JSON 以 '{'(123) 开头；密文 base64 不会。两类 JSON：服务器在场广播 __zr / 本端信封 __zn。
+    if (raw.charCodeAt(0) === 123) {
+      try {
+        const c = JSON.parse(raw);
+        if (c && c.__zr === 'occ') { _occSupported = true; _wsOcc = c.n | 0; _notifyStatus(); return; }
+        if (c && c.__zn === 'u' && c.yb) cipher = c.yb;
+        else return;                                     // 不认识的 JSON → 忽略
+      } catch (_) { return; }
     }
     const id = _activeId;
     if (!id) return;
@@ -354,20 +434,20 @@
     if (!note) return;
     // 本端无账本 → 不再绕去云端重拉（那样会和对端的上传抢跑、扑空），改为「后到设备领用」：
     //   直接收下对端账本作同源基线，第一推就能即时落地（见 _applyRemote）。
-    // 正在打字：先合进 pending、不动编辑器，停手后再落地（避免打断输入 / 误删对端改动）
+    // 正在打字：先合进 pending、不动编辑器，停手后再落地（避免打断输入 / 误删对端改动）。
+    //   t19：改用 mergeUpdates（载荷级合并）——增量/全量混合都不丢；旧 merge() 走 Doc 会把缺依赖的增量静默丢掉。
     const busy = (() => { try { return !!(window.editor && window.editor.isBusyTyping && window.editor.isBusyTyping()); } catch (_) { return false; } })();
     if (busy) {
-      try { _pendingYb = _pendingYb ? window.__ydoc.merge(_pendingYb, plainYb) : plainYb; } catch (_) { _pendingYb = plainYb; }
+      try { _pendingYb = _pendingYb ? window.__ydoc.mergeUpdates([_pendingYb, plainYb]) : plainYb; } catch (_) { _pendingYb = plainYb; }
       _scheduleApplyPending();
       return;
     }
     _applyRemote(id, plainYb);
   }
 
-  /** 后台落地「当前没打开的那篇」的对端账本：与 _applyRemote 同等的冲突安全策略（同源 merge / 无账本领用 /
-   *  有未上传脏改动且无账本 → 退网盘安全合并），唯一区别是不重载编辑器（这篇没开着）。
-   *  这样对端改了你没打开的笔记，也即时并入本地存储 → 你一切过去就是最新的（#2 跨笔记即时）。
-   *  单设备无对端时根本不会被调用，日常网盘同步零影响。 */
+  /** 后台落地「当前没打开的那篇」的对端载荷（增量/全量）：与 _applyRemote 同等的冲突安全策略
+   *  （影子试并防漏包 / 同源合并 / 无账本领用 / 有未上传脏改动且无账本 → 退网盘安全合并），
+   *  唯一区别是不重载编辑器（这篇没开着）。单设备无对端时根本不会被调用，日常网盘同步零影响。 */
   function _applyRemoteBackground(id, plainYb) {
     const note = window.storage && window.storage.get(id);
     if (!note) return;                                   // 本端没有这篇 → 由 structreq/notereq 的「建出」通道处理，这里不造笔记
@@ -378,7 +458,10 @@
       if (dirty) { try { window.webdavSync.doGet({ force: true, silent: true }); } catch (_) {} return; }
     }
     try {
-      const merged = note.ydoc ? window.__ydoc.merge(note.ydoc, plainYb) : plainYb;
+      // 影子试并：增量若缺依赖（中间漏过包）→ 不落地、向对端要全量；全量载荷永不缺依赖，行为同旧版。
+      const r = window.__ydoc.applyDiff(note.ydoc || '', plainYb);
+      if (r.pending) { _requestYbFull(id); return; }
+      const merged = r.b64;
       const mergedDoc = window.__ydoc.toDoc(merged);
       _applyingRemote = true;
       const changed = window.storage._realtimeApply(id, mergedDoc, merged);
@@ -404,14 +487,26 @@
     }, 600);
   }
 
-  /** 落地对端账本 → 当前笔记则重载编辑器（保光标）。
-   *  本端已有账本 → 双向合并；本端尚无账本 → 直接领用对端账本作同源基线（后到设备对齐，省一个云端来回）。
-   *  没账本即说明本端没在本地改过这篇（改过就会有账本），故领用不会盖掉本地改动；落地后照样 markDirty 经网盘兜底。 */
+  /** 落地对端载荷（增量/全量统一）→ 当前笔记则就地打补丁/重载（保光标）。
+   *  t19 顺序：①影子试并防漏包（缺依赖 → 要全量、本次不落地）；②直绑就把**原始载荷**并入活账本
+   *  （Y.applyUpdate 对增量/全量同样适用，活账本 ⊇ 影子基线，影子通过则活账本必通过）；
+   *  ③非直绑走存储合并。本端尚无账本 → 领用（没账本=没改过本地，领用不盖本地改动）。 */
   function _applyRemote(id, plainYb) {
     const note = window.storage && window.storage.get(id);
     if (!note) return;
-    // 阶段 C 绑定模式 + 这篇正打开着 → 增量并入编辑器活账本：ySync 就地打补丁，
-    //   光标不跳、不整篇重载、不打断输入法。落地后由编辑器 onUpdate→flushSave 持久化 note.doc/ydoc+标脏。
+    // ① 影子试并：不动真实数据。pending=增量缺依赖（中间漏包）→ 要全量，本次不落地。
+    //   全量载荷永不 pending → 行为与旧版一致。领用场景（本端无账本）：增量必 pending → 自动转全量索要。
+    let merged;
+    try {
+      const r = window.__ydoc.applyDiff(note.ydoc || '', plainYb);
+      if (r.pending) { _requestYbFull(id); return; }
+      merged = r.b64;
+    } catch (_) {
+      try { window.webdavSync.doGet({ force: true, silent: true }); } catch (_) {} // 账本引擎异常 → 退回网盘兜底
+      return;
+    }
+    // ② 阶段 C 绑定模式 + 这篇正打开着 → 原始载荷并入编辑器活账本：ySync 就地打补丁，
+    //   光标不跳、不整篇重载、不打断输入法。落地后由编辑器把 note.doc/ydoc 持久化+标脏。
     try {
       if (window.editor && window.editor.isCrdtBound && window.editor.isCrdtBound()
           && window.editor.currentId && window.editor.currentId() === id
@@ -428,8 +523,8 @@
       try { dirty = window.storage.getDirtyNoteIds().indexOf(id) >= 0; } catch (_) {}
       if (dirty) { try { window.webdavSync.doGet({ force: true, silent: true }); } catch (_) {} return; }
     }
+    // ③ 非直绑：落地影子合并结果
     try {
-      const merged = note.ydoc ? window.__ydoc.merge(note.ydoc, plainYb) : plainYb;
       const mergedDoc = window.__ydoc.toDoc(merged);
       _applyingRemote = true;
       const changed = window.storage._realtimeApply(id, mergedDoc, merged);
@@ -447,6 +542,7 @@
   // ── 信令房间（在场感知 + 结构暗号）────────────────────────────────────────
   async function _ensureSignal() {
     if (!_enabled) return;                          // 账号级：开 App 即连，不再要求先打开某篇笔记
+    if (_offline) return;                           // 显式离线期间不得建回信令（对端会重新看到紫点）；恢复统一走 _goOnline
     let roomId;
     // 账号级在场/结构房间：只按账号(网盘账号+口令)派生，与笔记本/笔记无关 →
     //   任意设备一上线就互相可见、任意笔记本的结构改动都即时送达每台在线设备。
@@ -481,7 +577,7 @@
       //   直到你碰巧切回窗口/点开笔记才"莫名其妙"亮起紫点（=用户报的"找不到规律"）。显式离线时不重连，恢复由 _goOnline 接。
       if (_sig === ws) { _sig = null; _stopHeartbeat(); _sigOcc = 0; if (_enabled && !_offline && _sigRoomId === myRoom) _sigScheduleReconnect(); }
     };
-    ws.onerror = function () { try { ws.close(); } catch (_) {} };
+    ws.onerror = function () { if (ws.readyState === 1) { try { ws.close(); } catch (_) {} } };
   }
 
   function _sigScheduleReconnect() {
@@ -496,10 +592,11 @@
     clearTimeout(_structSendTimer); _structSendTimer = null;
     clearTimeout(_structReplyTimer); _structReplyTimer = null;
     _sigOcc = 0;                 // 信令房间断开 → 账号级在场人数清零
+    _resetSigSV();               // 重连后对端可能漏过包 → 账号级增量指纹作废，先发全量
     _clearPeers();
     _stopHeartbeat();
     if (_sig) {
-      try { _sig.onclose = null; _sig.onmessage = null; _sig.onerror = null; _sig.close(); } catch (_) {}
+      _quietClose(_sig);
       _sig = null;
     }
     _sigRoomId = null;
@@ -547,7 +644,10 @@
     let msg;
     try { msg = JSON.parse(typeof data === 'string' ? data : _abToStr(data)); } catch (_) { return; }
     if (msg && msg.__zr === 'occ') {                    // 服务器实报账号级房间人数 → 紫点在场权威
-      _occSupported = true; _sigOcc = msg.n | 0; _prunePeers(); _notifyStatus(); return;
+      const prevOcc = _sigOcc;
+      _occSupported = true; _sigOcc = msg.n | 0; _prunePeers(); _notifyStatus();
+      if (_sigOcc !== prevOcc) _resetSigSV();           // 有设备进出 → 账号级增量指纹作废，下次发全量（新设备没有前情）
+      return;
     }
     if (!msg || msg.sid === _sid) return;               // 忽略自己的回声
     if (msg.rt !== 'hb') _D('收到信令', msg.rt);          // 心跳太密不打印，其余都记
@@ -572,7 +672,13 @@
     }
     if (msg.rt === 'hi') {
       _sigSend({ rt: 'yo', sid: _sid, note: _activeId }); // 一律回应（含跨篇）→ 对端立刻知道我在、秒点亮
-      if (msg.note && msg.note === _activeId) _markPeer(); // 同看本篇 → 互推正文
+      _resetSigSV();                                      // 新对端上线（或重连）→ 它没有前情，账号级下次发全量
+      if (msg.note && msg.note === _activeId) {           // 同看本篇 → 互推正文
+        _resetContentSV();                                //   内容房间同理：给它的第一份必须是全量
+        const wasP = _peerPresent();
+        _markPeer();                                      //   无人→有人 时 _markPeer 自己会推一份（全量）
+        if (wasP) _sendLocal(_activeId);                  //   已有人在场（第 2+ 台加入）→ 补推一份全量给新来的
+      }
       _scheduleStructReply();                             // 切入接力：补推一份结构总账（多端同时来则合并）
     } else if (msg.rt === 'yo' || msg.rt === 'hb') {
       if (msg.note && msg.note === _activeId) _markPeer();
@@ -585,6 +691,8 @@
       _scheduleStructReply();                             // 切入接力：把本端当前总账推给刚进来的设备
     } else if (msg.rt === 'notereq') {
       _replyNotes(msg.ids);                               // 对端缺笔记 → 把本端有的整篇发回
+    } else if (msg.rt === 'ybreq') {
+      _replyYbFull(msg.id);                               // 对端漏包缺账 → 回发这篇的全量账本
     } else if (msg.rt === 'note') {
       _onNoteSignal(msg.id, msg.yb);                      // 收到整篇 → 本端缺则就地建出（秒级出现）
     } else if (msg.rt === 'noteupd') {
@@ -753,7 +861,12 @@
   // 显式恢复（窗口显示/聚焦/页面可见）：清离线态、重连两房间。连上后 onopen 会自动招呼+索要结构，
   //   故无需在此重发；幂等（已连上时 _ensureSignal/_ensureRoom 早退）。
   //   可由 focus/pointerdown/pointermove/keydown/visibilitychange 等高频事件调用 → 在线时必须**零开销**早退。
-  function _goOnline() {
+  //   fromHost=true 仅由 notifyShown 传入（事件监听传的是 Event 对象，恒非 true）：
+  //   宿主按钮「隐藏」后的 1.5 秒内，拖尾的鼠标/聚焦噪声不许把离线顶回来（曾致「隐藏了对面紫点还亮」——
+  //   点完隐藏鼠标一动，pointermove 就把 800ms 消抖断开取消了）；notifyShown 与 1.5 秒后的交互不受限。
+  function _goOnline(fromHost) {
+    if (fromHost === true) _hostHiddenAt = 0;
+    else if (_hostHiddenAt && (Date.now() - _hostHiddenAt) < 1500) return;
     if (_byeTimer) { clearTimeout(_byeTimer); _byeTimer = null; } // 短暂失焦又回来/手一动 → 取消待执行的离线断开
     if (_offline) {                                        // 从离线恢复：重连两房间（onopen 自动招呼+索要结构）
       _offline = false;
@@ -767,14 +880,16 @@
     // 未离线但信令连接意外掉了 → 顺手自愈一次（不发状态事件，避免高频事件刷爆 UI）。在线且已连 → 纯早退。
     if (_enabled && (!_sig || _sig.readyState > 1)) _ensureSignal();
   }
-  // 显式离线（窗口隐藏/最小化/关闭、页面不可见）：消抖 800ms 后**主动断开**两房间。
+  // 显式离线（窗口隐藏/最小化/关闭、页面不可见）：主动断开两房间。
   //   断开即让中转服务器侧 webSocketClose 触发 → 对端实报人数 -1、紫点即时熄灭（不靠对端等心跳超时）。
   //   置 _offline=true 让看门狗/重连都不再自愈，直到显式恢复——这才是「隐藏=暂时断开」的可靠实现。
-  //   消抖防止短暂失焦/系统偶发可见性事件造成的反复断连。
-  function _goOffline() {
+  //   系统可见性事件走 800ms 消抖（防短暂失焦/偶发事件反复断连）；
+  //   宿主按钮「隐藏/最小化」是明确意图 → immediate 立即断开（消抖窗口曾被拖尾 pointermove 取消，见 _goOnline）。
+  let _hostHiddenAt = 0;
+  function _goOffline(opts) {
     if (_offline) return;
     clearTimeout(_byeTimer);
-    _byeTimer = setTimeout(function () {
+    const run = function () {
       _byeTimer = null;
       _offline = true;
       try { _leaveSig(); } catch (_) {}                    // 礼貌告知对端（旧中转兜底）；新中转靠 socket 关闭即报
@@ -783,7 +898,9 @@
       _peerSeenAt = 0; _sigPeerSeenAt = 0;
       _notifyStatus();                                      // 本端紫点灭（connected=false）
       _D('显式离线（隐藏/最小化/不可见）→ 断开两房间，看门狗不自愈直到恢复');
-    }, 800);
+    };
+    if (opts && opts.immediate) run();
+    else _byeTimer = setTimeout(run, 800);
   }
 
   // 看门狗：每隔几秒兜底自愈**意外**掉线（网络抖动、中转踢连、退避被卡住…）。
@@ -850,8 +967,8 @@
     // 宿主（Quicker）隐藏/最小化/关闭窗口时主动告知——WebView2 被宿主隐藏时不一定上报页面可见性，
     //   故由「隐藏/最小化」按钮直接调 notifyHidden（→ 断开，对端即时熄灭）；窗口重新显示时：
     //   ① 前端 focus 事件兜底，② 宿主「显示窗口」动作里执行一行 window.realtime.notifyShown() 最可靠。两者都幂等。
-    notifyHidden: function () { try { _goOffline(); } catch (_) {} },
-    notifyShown: function () { try { _goOnline(); } catch (_) {} },
+    notifyHidden: function () { try { _hostHiddenAt = Date.now(); _goOffline({ immediate: true }); } catch (_) {} },
+    notifyShown: function () { try { _goOnline(true); } catch (_) {} },
     /** 即时同步指示灯用：on=具备并已启用；connected=信令已连（断开即灭，诚实反映真实连接）；
      *  active=账号内有别的设备在场（服务器实报人数≥2，旧中转退回心跳）→ 紫点常亮；
      *  syncing=刚发/收过正文或结构（呼吸窗口内）→ 紫点呼吸；

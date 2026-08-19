@@ -1,7 +1,7 @@
 /* 第二套图标：Twemoji 统一画风（除小枝动图外）。
  * - Quicker：权威在「我的文档\ZhiNote\twemoji」（清单+图+meta）；网页库只是加速
  * - 网页版：权威在 IndexedDB；重启浏览器一般不用重下
- * - 显示：本机优先 → CDN → 系统脸兜底（勿永久灰块）；blob 会话内不 revoke
+ * - 显示：本机优先 → CDN；没有图就占位，不露系统脸；blob 会话内不 revoke
  * 暴露 window.emojiUi
  */
 (function () {
@@ -812,7 +812,7 @@
     });
   }
 
-  /** 格子：Twemoji 图；失败则格子里显示系统脸（.eui-ph 放字符）。可视区 eager */
+  /** 格子：Twemoji 图；失败则占位，不露系统脸。可视区 eager */
   function cellHtml(u, title) {
     var src = displayUrl(u);
     var img = src
@@ -821,7 +821,7 @@
       : '';
     return '<button type="button" class="eui-cell' + (src ? '' : ' eui-miss') + '" data-e="' + esc(u) + '" title="' + esc(title || u) + '">'
       + img
-      + '<span class="eui-ph" aria-hidden="true">' + esc(u) + '</span>'
+      + '<span class="eui-ph" aria-hidden="true"></span>'
       + '</button>';
   }
 
@@ -1035,6 +1035,10 @@
     if (!_pop || _pop._euiShellBound) return;
     _pop._euiShellBound = 1;
     _pop.addEventListener('input', function (e) {
+      if (e.target && e.target.classList.contains('eui-custom')) {
+        paintCurrentIco();
+        return;
+      }
       if (!e.target || !e.target.classList.contains('eui-q')) return;
       var qEl = e.target;
       _q = qEl.value;
@@ -1117,6 +1121,7 @@
       var pickBar = '';
       if (_opts.mode === 'pick') {
         pickBar = '<div class="eui-pickbar">'
+          + '<span class="eui-current-ico" aria-hidden="true"></span>'
           + '<input type="text" class="eui-custom" maxlength="8" value="' + esc(_opts.currentIcon || '') + '" placeholder="自定义字符">'
           + '<button type="button" class="eui-btn" data-act="custom" title="确认自定义">✓</button>'
           + '<button type="button" class="eui-btn" data-act="reset" title="恢复默认">↺</button>'
@@ -1151,6 +1156,7 @@
       }
 
       startPackDownload();
+      paintCurrentIco();
     }
 
     // 立刻上屏；只暖当前屏+最近
@@ -1293,7 +1299,17 @@
   }
 
   // ===== 侧栏/图标：Twemoji 底图，文字透明（绝不露系统脸）=====
-  var ICON_SEL = '.tree-note-icon, .ws-icon, .ws-icon-btn, .ws-icon-pick-btn, .titlebar-app-icon, .mascot-picker-ico, .ctx-icon-emoji, .cmd-item-icon, .zn-twemoji-icon';
+  var ICON_SEL = '.tree-note-icon, .ws-icon, .ws-icon-btn, .ws-icon-pick-btn, .titlebar-app-icon, .mascot-picker-ico, .ctx-icon-emoji, .cmd-item-icon, .eui-current-ico, .zn-twemoji-icon';
+
+  function paintCurrentIco() {
+    if (!_pop) return;
+    var ico = _pop.querySelector('.eui-current-ico');
+    var custom = _pop.querySelector('.eui-custom');
+    if (!ico) return;
+    var v = custom ? custom.value.trim() : ((_opts && _opts.currentIcon) || '');
+    if (custom) custom.classList.toggle('is-emoji', looksLikeEmoji(v));
+    paintIcon(ico, v);
+  }
 
   function looksLikeEmoji(s) {
     if (!s || typeof s !== 'string') return false;
@@ -1313,7 +1329,7 @@
     u = u.trim();
     el.textContent = u;
     if (!looksLikeEmoji(u)) {
-      el.classList.remove('zn-twemoji-icon', 'is-native');
+      el.classList.remove('zn-twemoji-icon', 'is-native', 'is-ph');
       el.removeAttribute('data-emoji');
       try { el.style.removeProperty('background-image'); } catch (_) {}
       return;
@@ -1321,24 +1337,23 @@
     el.setAttribute('data-emoji', u);
     function showTwemoji(url) {
       el.classList.add('zn-twemoji-icon');
-      el.classList.remove('is-native');
+      el.classList.remove('is-native', 'is-ph');
       el.style.setProperty('background-image', 'url("' + url + '")', 'important');
     }
-    function showNative() {
-      // Twemoji 实在没有：露系统脸，总比永久灰块强
-      el.classList.remove('zn-twemoji-icon');
-      el.classList.add('is-native');
+    function showPlaceholder() {
+      el.classList.remove('zn-twemoji-icon', 'is-native');
+      el.classList.add('is-ph');
       try { el.style.removeProperty('background-image'); } catch (_) {}
     }
     var url = displayUrl(u);
     if (url) showTwemoji(url);
-    else showNative();
+    else showPlaceholder();
     ensureCached(u).then(function (ok) {
       if (!el.isConnected) return;
-      if (!ok) { showNative(); return; }
+      if (!ok) { showPlaceholder(); return; }
       var loc = localUrlSync(u) || displayUrl(u);
       if (loc) showTwemoji(loc);
-      else showNative();
+      else showPlaceholder();
     });
   }
 

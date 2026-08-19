@@ -3,6 +3,7 @@
 
   // ─── 配置 ────────────────────────────────────────────────────────────────────
   const FETCH_TIMEOUT_MS = 20_000;
+  const FETCH_PUT_TIMEOUT_MS = 45_000;
   const PUT_DEBOUNCE_MS = 2_000;
   const BLUR_PUT_COOLDOWN_MS = 5_000;
   const GET_COOLDOWN_MS = 5_000;
@@ -12,6 +13,8 @@
   // 与 _detectLocallyNewerNotes 的基准判断配合（墓碑过期后由基准兜底，绝不复活）。
   const DELETED_RETENTION_MS = 365 * 24 * 60 * 60_000;
   const BASE_DIR = 'ZhiNote';
+  // 搬家备份：升 v4 前把总目录/总账拷到旁边这份。图仍在 ZhiNote/images，不重复拷。程序不自动删。
+  const BAK_DIR = 'ZhiNote-bak';
 
   // AES-GCM
   const AES_SALT = new Uint8Array([109, 100, 110, 111, 116, 101, 50, 48, 50, 54, 115, 97, 108, 116, 107, 121]);
@@ -25,8 +28,23 @@
   // CAS（manifest 原子写）：记下最近一次读到的 manifest 的 ETag，写回时作 If-Match。
   // 服务器不返回 ETag（自建/不支持）→ 留空 → 自动退回普通写，行为与从前一致。
   let _lastManifestEtag = '';
+  // 最近一次真正读到的清单（304 时内存里可能还有），供「清单未变仍补传本机更新」用。
+  let _lastManifestObj = null;
+  let _lastCursorDeviceId = '';
   // 清单游标持久化：冷启动可「清单未变 → 早退」，避免无改动仍按篇狂下（20260807t1）
   const MANIFEST_CURSOR_KEY = 'zhinote-webdav-manifest-cursor';
+  // 同步健康记录（按账号）：上次同步成功、上次慢核对的时刻。
+  // 慢核对 = 每天一次、后台静默、只挑空闲时跑的完整核对（不走任何跳过近路），兜住快路万一算错。
+  // 久闲闸 = 连续 7 天没同步过的设备（天天用永远碰不到），先完整核对云端（先下后对），核对完成前绝不上传，防旧账灌回。
+  const HEALTH_KEY = 'zhinote-webdav-health';
+  const FULL_CHECK_INTERVAL_MS = 24 * 60 * 60_000;
+  const STALE_DEVICE_MS = 7 * 24 * 60 * 60_000;
+  let _lastSyncOkAt = 0;
+  let _lastSyncOkPersistAt = 0;
+  let _lastFullCheckAt = 0;
+  let _staleGate = false;
+  let _staleGetAt = 0;
+  let _fullCheckTimer = null;
   let _casFailStreak = 0;            // 连续被 412（抢先）次数
   let _casForceUnconditional = false; // 连续 412 达阈值 → 下一轮退化为普通写，避免弱校验服务器空转
   // 条件 GET 哨兵：webdavGet 带 If-None-Match 命中 304（内容未变）时返回它，调用方据此早退，
@@ -40,6 +58,7 @@
   let _pollTimer = null;
   let _isSilent = false;
   let _syncing = false;
+  let _uiSyncing = false; // 转圈=正在拉或正在传；静默轮询「清单未变」不转
   let _paused = false;
   let _pauseResumeTimer = null;
   let _backoffMs = 30_000;
@@ -47,6 +66,7 @@
   let _stopped = false;
   let _pendingPut = false;
   let _pendingGet = false;
+  let _pendingManifestImages = {};
   let _authFailCount = 0;
   const AUTH_FAIL_LIMIT = 3;
 
@@ -140,7 +160,10 @@
     // 每次都在半路被中止 → 无限瞬时重试。按 ≈50KB/s 的保守带宽追加，上限 120s。
     const bodyBytes = typeof options.body === 'string' ? options.body.length
       : (options.body && (options.body.byteLength || options.body.size)) || 0;
-    const timeoutMs = Math.min(120_000, FETCH_TIMEOUT_MS + Math.floor(bodyBytes / 50));
+    const method = String(options.method || 'GET').toUpperCase();
+    const baseMs = (method === 'PUT' || method === 'MKCOL' || method === 'DELETE')
+      ? FETCH_PUT_TIMEOUT_MS : FETCH_TIMEOUT_MS;
+    const timeoutMs = Math.min(120_000, baseMs + Math.floor(bodyBytes / 50));
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     // credentials:'omit' 关键：阻止浏览器在收到 401 时弹出原生"登录以访问此站点"对话框，
     // 让 401 直接作为响应交回脚本，由我们自己处理（我们已手动带 Authorization 头）。
@@ -192,7 +215,9 @@
     //   本轮放弃连接；配置就绪后由 applyConfig / 看门狗（6s 周期）自动重连，只慢几秒、不落错房。
     if (!_config) throw new Error('WebDAV 配置未加载，拒绝派生房间号');
     const acct = (_config.url || '') + '|' + (_config.user || '');
-    const data = new TextEncoder().encode('zhinote-room:' + acct + ':' + pass + ':' + (seed || ''));
+    // v5 换房间前缀：旧版即时走 zhinote-room: / v4，碰不到新版，避免网盘已停仍经中转灌旧结构。
+    // v5 换房间：旧版走 v4 前缀，碰不到新版。
+    const data = new TextEncoder().encode('zhinote-room-v5:' + acct + ':' + pass + ':' + (seed || ''));
     const digest = await crypto.subtle.digest('SHA-256', data);
     const u8 = new Uint8Array(digest);
     let s = '';
@@ -205,9 +230,14 @@
   function rtDecrypt(cipherB64) { return notesDecrypt(cipherB64); }
 
   function _buildUrl(path) {
+    return _buildUrlIn(BASE_DIR, path);
+  }
+
+  function _buildUrlIn(rootDir, path) {
     if (!_config) throw new Error('WebDAV 未配置');
     let base = _config.url.replace(/\/+$/, '');
-    const fullPath = `${BASE_DIR}/${path}`.replace(/\/+/g, '/');
+    const rel = (path || '').replace(/^\/+/, '');
+    const fullPath = (rel ? `${rootDir}/${rel}` : rootDir).replace(/\/+/g, '/');
     const real = `${base}/${fullPath}`;
     // 代理前缀模式（网页端跨域用）：请求发往 <proxy>/<完整目标URL>，由代理转发并补 CORS 头。
     // 代理只经手密文（笔记本体已 AES 加密）；桌面 Quicker 端无 CORS 限制，通常不配置。
@@ -337,29 +367,285 @@
   // 清单清零（已发生）。故 404 后延时再确认一次，仍为 null 才认定真的没有。返回 manifest 或 null。
   async function _recheckManifest() {
     await sleep(800);
-    return webdavGetJson('manifest.json', { allow404: true });
+    return webdavGetJson(MANIFEST_PATH, { allow404: true });
   }
 
   // 清单路径
   const MANIFEST_PATH = 'manifest.json';
-  // 完好备份：先写入并校验此处，再覆盖正式清单，避免 Koofr 覆盖写中途把正式文件截成 0 字节且无法恢复。
-  const MANIFEST_BAK_PATH = 'manifest.bak.json';
-  const MANIFEST_TMP_LEGACY = 'manifest.json.tmp'; // 仅清理更早版本残留
   // 结构总账外置：独立文件；清单保持瘦索引。总账仅在结构/设置脏时维护上传。
   const STRUCT_LEDGER_PATH = 'struct-ledger.json';
+  const STRUCT_TAIL_PATH = 'struct-tail.json';
+  const STRUCT_TAIL_MAX = 80 * 1024;
+  const STRUCT_SNAP_SV_KEY = 'zhinote-struct-snap-sv';
+  const CATALOG_CONFIRM_KEY = 'zhinote-catalog-confirm';       // 旧散账键，仅升级迁移时读
+  const SKIP_IDLE_GET_MS = 90_000;
+  const CATALOG_FLUSH_MS = 15_000;
+  const PENDING_NOTE_VERS_KEY = 'zhinote-pending-note-vers';   // 旧散账键，仅升级迁移时读
+  let _catalogFlushTimer = null;
   let _manifestWriting = false; // 本机正在写清单：读空视为中间态，禁止自动自愈
-  let _tmpLegacyCleaned = false;
+  // 旧垫子早已不写。再 DELETE 一次，盘上没有时浏览器会红 404。不再扫。
+  async function _dropLegacySidecars() {}
 
-  /** 读云端结构总账：优先独立文件，回退清单内嵌（旧云端）。 */
+  function _svOfLedger(led) {
+    const W = window.__wsdoc;
+    if (!W || !W.stateVector || !led) return '';
+    try { return W.stateVector(led); } catch (_) { return ''; }
+  }
+  let _structSnapSVMem = '';
+  function _saveStructSnapSV(sv) {
+    const tag = _accountTag();
+    if (!tag || !sv) return;
+    _structSnapSVMem = sv;
+    try { _ssSet('_webdavStructSnapSV', STRUCT_SNAP_SV_KEY, JSON.stringify({ account: tag, sv: sv })); } catch (_) {}
+  }
+  function _loadStructSnapSV() {
+    if (_structSnapSVMem) return _structSnapSVMem;
+    try {
+      const raw = _ssGet('_webdavStructSnapSV', STRUCT_SNAP_SV_KEY);
+      if (!raw) return '';
+      const o = JSON.parse(raw);
+      if (o && o.account === _accountTag() && typeof o.sv === 'string' && o.sv) {
+        _structSnapSVMem = o.sv;
+        return o.sv;
+      }
+    } catch (_) {}
+    return '';
+  }
+  // ─── 本机同步账本（一本账，20260818t15）─────────────────────────────────────
+  // 把四份散账收拢成一本，一处读写、一处对账号：
+  //   pendingVers    已传未交的按篇版本（正文已上云、名单稍后交）
+  //   catalogConfirm 名单「写下了、还没读回对」的回执
+  //   cursor         上次见到的云端名单版本 / 标记 / 写名单的设备
+  //   health         上次同步成功、上次慢核对的时刻
+  // 换账号自动换账本（_ledger 里对账号），绝不残留上个账号的账——散账时代四处各自对账号、
+  // 内存值不清，正是「换号残留 / 覆盖后旧账顶新云端」这类洞的温床。
+  const ACCT_LEDGER_KEY = 'zhinote-webdav-acct-ledger';
+  let _acct = null;
+  function _emptyAcct(tag) {
+    return { account: tag, pendingVers: {}, catalogConfirm: null,
+      cursor: { rev: 0, etag: '', deviceId: '' }, health: { okAt: 0, fullAt: 0 },
+      sweep: null };   // 云端旧格式清扫进度：null=还没扫 {pend:[{i,y}],at,done,removed,converted,skipped}
+  }
+  function _ledger() {
+    const tag = _accountTag();
+    if (_acct && _acct.account === tag) return _acct;
+    _acct = _emptyAcct(tag);
+    if (!tag) return _acct;                       // 配置未就绪：临时空账，不落盘
+    try {
+      const raw = _ssGet('_webdavAcctLedger', ACCT_LEDGER_KEY);
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (o && o.account === tag) {
+          if (o.pendingVers && typeof o.pendingVers === 'object') _acct.pendingVers = o.pendingVers;
+          if (o.catalogConfirm && typeof o.catalogConfirm === 'object') _acct.catalogConfirm = o.catalogConfirm;
+          Object.assign(_acct.cursor, (o.cursor && typeof o.cursor === 'object') ? o.cursor : {});
+          Object.assign(_acct.health, (o.health && typeof o.health === 'object') ? o.health : {});
+          if (o.sweep && typeof o.sweep === 'object') _acct.sweep = o.sweep;
+          return _acct;
+        }
+      }
+    } catch (_) {}
+    _migrateLegacyLedger(tag);
+    return _acct;
+  }
+  function _saveLedger() {
+    if (!_acct || !_acct.account) return;
+    try { _ssSet('_webdavAcctLedger', ACCT_LEDGER_KEY, JSON.stringify(_acct)); } catch (_) {}
+  }
+  /** 老包升级：第一次没有一本账时，从四份旧散账各自搬进来（都带账号核对，不搬别人的账）。旧键留着不删，便于退回旧包。 */
+  function _migrateLegacyLedger(tag) {
+    try {
+      const raw = _ssGet('_webdavPendingNoteVers', PENDING_NOTE_VERS_KEY);
+      if (raw) { const o = JSON.parse(raw); if (o && o.account === tag && o.map && typeof o.map === 'object') _acct.pendingVers = o.map; }
+    } catch (_) {}
+    try {
+      const raw = _ssGet('_webdavCatalogConfirm', CATALOG_CONFIRM_KEY);
+      if (raw) { const o = JSON.parse(raw); if (o && o.account === tag) _acct.catalogConfirm = { rev: o.rev, updatedAt: o.updatedAt, deviceId: o.deviceId }; }
+    } catch (_) {}
+    try {
+      const raw = _ssGet('_webdavManifestCursor', MANIFEST_CURSOR_KEY);
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (o && o.account === tag) {
+          _acct.cursor = {
+            rev: Number(o.updatedAt) || 0,
+            etag: (typeof o.etag === 'string' && o.etag) ? o.etag : '',
+            deviceId: (typeof o.deviceId === 'string' && o.deviceId) ? o.deviceId : '',
+          };
+        }
+      }
+    } catch (_) {}
+    try {
+      const raw = _ssGet('_webdavHealth', HEALTH_KEY);
+      if (raw) { const o = JSON.parse(raw); if (o && o.account === tag) _acct.health = { okAt: Number(o.okAt) || 0, fullAt: Number(o.fullAt) || 0 }; }
+    } catch (_) {}
+    _saveLedger();
+  }
+
+  function _savePendingCatalogConfirm(o) {
+    const led = _ledger();
+    led.catalogConfirm = o ? { rev: o.rev, updatedAt: o.updatedAt, deviceId: o.deviceId } : null;
+    _saveLedger();
+  }
+  function _loadPendingCatalogConfirm() {
+    return _ledger().catalogConfirm || null;
+  }
+  /** 打开/强制拉时核对上次「写下了」是否真在云上。没对上就标脏重写。 */
+  function _confirmOrRetryCatalog(manifest) {
+    const p = _loadPendingCatalogConfirm();
+    if (!p || !manifest) return;
+    const cloudRev = Number(_catalogRev(manifest) || 0);
+    const pendingRev = Number(p.rev || 0);
+    const same = cloudRev === pendingRev
+      && Number(manifest.updatedAt || 0) === Number(p.updatedAt || 0)
+      && String(manifest.deviceId || '') === String(p.deviceId || '');
+    if (same || cloudRev > pendingRev) {
+      _savePendingCatalogConfirm(null);
+      return;
+    }
+    console.warn('[webdav] 上次名单未落到云端，将重写', 'cloudRev=', cloudRev, 'pendingRev=', pendingRev);
+    _savePendingCatalogConfirm(null);
+    if (window.storage.markGlobalDirty) window.storage.markGlobalDirty();
+    try { schedulePut('catalog-confirm-miss'); } catch (_) {}
+  }
+  function _peerPresent() {
+    try {
+      const st = window.realtime && window.realtime.status && window.realtime.status();
+      return !!(st && st.active);
+    } catch (_) { return false; }
+  }
+  function _pendingVers() { return _ledger().pendingVers; }
+  function _rememberPendingVer(id, v) {
+    if (!id || !v) return;
+    _pendingVers()[id] = v;
+    _saveLedger();
+  }
+  /** 慢核对用：把「已传未交」的本机账和云端名单对一遍——
+   *  云端已记上 → 销账；云端已立删除标记 → 听删除、直接销账（绝不催交把删掉的篇写回）；还欠着 → 标脏补交名单。 */
+  function _repairPendingVers(manifest) {
+    if (!manifest || !manifest.notes) return { cleared: false, owed: false };
+    const pend = _pendingVers();
+    let cleared = false, owed = false;
+    for (const id in pend) {
+      if (manifest.deleted && manifest.deleted[id]) { delete pend[id]; cleared = true; continue; }
+      const pv = Number(pend[id] || 0);
+      const mv = _noteVer(manifest.notes[id]);
+      if (mv >= pv) { delete pend[id]; cleared = true; }
+      else owed = true;
+    }
+    if (cleared) _saveLedger();
+    if (owed) {
+      try { console.log('[sync-get] 慢核对：名单还欠着已传篇的版本，安排补交'); } catch (_) {}
+      if (window.storage.markIndexDirty) window.storage.markIndexDirty();
+      try { schedulePut('full-check-catalog-owed'); } catch (_) {}
+    }
+    return { cleared, owed };
+  }
+  function _applyPendingVers(manifest) {
+    if (!manifest) return;
+    if (!manifest.notes) manifest.notes = {};
+    const pend = _pendingVers();
+    let changed = false;
+    for (const id in pend) {
+      // 墓碑说了算：这篇已被记为删除（本机或别台在正文上云到交名单的空当里删的），
+      // 绝不因「已传未交」把它写回名单——那等于复活已删笔记。账直接销掉。
+      if (manifest.deleted && manifest.deleted[id]) { delete pend[id]; changed = true; continue; }
+      const pv = Number(pend[id] || 0);
+      if (pv > _noteVer(manifest.notes[id])) {
+        const prev = manifest.notes[id] || {};
+        manifest.notes[id] = Object.assign({}, prev, { v: pv });
+        delete manifest.notes[id].empty;
+      }
+    }
+    if (changed) _saveLedger();
+  }
+  function _clearPendingVers() {
+    _ledger().pendingVers = {};
+    _saveLedger();
+  }
+  function _scheduleDeferredCatalog() {
+    if (_catalogFlushTimer) clearTimeout(_catalogFlushTimer);
+    _catalogFlushTimer = setTimeout(() => {
+      _catalogFlushTimer = null;
+      if (window.storage && window.storage.isIndexDirty && window.storage.isIndexDirty()) {
+        try { flushIndex(); } catch (_) {}
+      }
+    }, CATALOG_FLUSH_MS);
+  }
+  /** 刚是自己写的、对面不在：空转不必再拉整份名单。 */
+  function _canSkipIdleGet() {
+    if (_staleGate) return false;
+    if (!_lastPutTime || (Date.now() - _lastPutTime) > SKIP_IDLE_GET_MS) return false;
+    if (!_lastWriterIsUs()) return false;
+    if (_peerPresent()) return false;
+    return true;
+  }
+  function _lastWriterIsUs() {
+    const id = (_lastManifestObj && _lastManifestObj.deviceId) || _lastCursorDeviceId || '';
+    return !!(id && String(id) === _ensureClientId());
+  }
+  /** 对面在、或上次名单不是自己写的：必须真读名单。自己写的且对面不在：带旧标记即可，不必整份重下。 */
+  function _shouldForceCatalogGet() {
+    if (_peerPresent()) return true;
+    if (_lastWriterIsUs()) return false;
+    return true;
+  }
+  /** 开门/唤醒/排队后的那一拉怎么拉——三档，一处决策（开门决策收拢点）：
+   *  ① 久闲超 7 天 → 完整核对（full）；② 对面在 / 上次名单不是自己写 → 真读名单；
+   *  ③ 自己写的且对面不在 → 带旧标记轻问（cond，名单没变只花一次 304）。 */
+  function _openGetOpts() {
+    if (_staleGate) return { force: true, silent: true, full: true };
+    if (_shouldForceCatalogGet()) return { force: true, silent: true };
+    return { force: true, silent: true, cond: true };
+  }
+
+  /** 名单没变时不会去读整本。绿了且本机没待交的目录改动，才补记「上次整本」进度针。
+   *  云端已有小段时，本机总账已经叠过，不能当整本针（否则下一小段会盖掉上一小段）。 */
+  async function _seedStructSnapSVFromLocal(manifest) {
+    if (_loadStructSnapSV()) return;
+    try {
+      if (window.storage.isGlobalDirty && window.storage.isGlobalDirty()) return;
+      const m = manifest || _lastManifestObj;
+      if (!m) return;
+      if (m.structTail || m.structTailUpd) return;
+      const led = window.storage._structLedger && window.storage._structLedger();
+      const sv = _svOfLedger(led);
+      if (sv) _saveStructSnapSV(sv);
+    } catch (_) {}
+  }
+
+  /** 读云端结构总账：整本优先，名单说有小段再叠上。旧云端回退清单内嵌。 */
   async function _loadCloudStructLedger(manifest) {
+    let snap = null;
     try {
       const obj = await webdavGetJson(STRUCT_LEDGER_PATH, { allow404: true });
-      if (obj && typeof obj.ledger === 'string' && obj.ledger) return obj.ledger;
+      if (obj && typeof obj.ledger === 'string' && obj.ledger) snap = obj.ledger;
     } catch (e) {
       if (!(e && e.transient)) console.warn('[webdav] 读结构总账文件失败（将回退清单内嵌）', e && e.message);
     }
-    return (manifest && typeof manifest.structLedger === 'string' && manifest.structLedger)
-      ? manifest.structLedger : null;
+    if (!snap && manifest && typeof manifest.structLedger === 'string' && manifest.structLedger) {
+      snap = manifest.structLedger;
+    }
+    if (snap) {
+      const sv = _svOfLedger(snap);
+      if (sv) _saveStructSnapSV(sv);
+    }
+    let led = snap;
+    let tailUpd = '';
+    if (led && manifest && typeof manifest.structTailUpd === 'string' && manifest.structTailUpd) {
+      tailUpd = manifest.structTailUpd;
+    } else if (led && manifest && manifest.structTail) {
+      try {
+        const tail = await webdavGetJson(STRUCT_TAIL_PATH, { allow404: true });
+        if (tail && typeof tail.upd === 'string' && tail.upd) tailUpd = tail.upd;
+      } catch (e) {
+        console.warn('[webdav] 读结构小段失败（只用整本）', e && e.message);
+      }
+    }
+    if (led && tailUpd && window.__wsdoc && window.__wsdoc.merge) {
+      try { led = window.__wsdoc.merge(led, tailUpd); } catch (_) {}
+    }
+    return led;
   }
 
   /** 总账写入独立文件，并从 manifest 去掉内嵌字段（清单瘦身）。失败则保留/写回内嵌，绝不丢总账。 */
@@ -371,6 +657,7 @@
    */
   async function _persistStructLedgerExternal(manifest, ledger, opts) {
     const migrateEmbed = !!(opts && opts.migrateEmbed);
+    const forceFull = !!(opts && opts.forceFull) || migrateEmbed;
     const led = (ledger != null && ledger !== '')
       ? ledger
       : (migrateEmbed && manifest && manifest.structLedger) || null;
@@ -378,7 +665,7 @@
       if (manifest && manifest.structLedger) delete manifest.structLedger;
       return false;
     }
-    try {
+    const writeFull = async function (why) {
       const body = JSON.stringify({
         v: 1,
         updatedAt: Date.now(),
@@ -386,8 +673,47 @@
         ledger: led,
       });
       await webdavPut(STRUCT_LEDGER_PATH, body, 'application/json; charset=utf-8');
-      if (manifest) delete manifest.structLedger;
+      if (manifest) {
+        delete manifest.structLedger;
+        delete manifest.structTailUpd;
+        manifest.structTail = 0;
+      }
+      const sv = _svOfLedger(led);
+      if (sv) _saveStructSnapSV(sv);
+      try { console.log('[sync-put-run] structure：传整本', why || ''); } catch (_) {}
       return true;
+    };
+    try {
+      if (!forceFull) {
+        const W = window.__wsdoc;
+        const sv = _loadStructSnapSV();
+        if (!sv) return await writeFull('还没有进度针');
+        if (W && W.diffFromSV) {
+          const upd = W.diffFromSV(led, sv);
+          if (upd) {
+            const tailBody = JSON.stringify({
+              v: 1,
+              updatedAt: Date.now(),
+              deviceId: _ensureClientId(),
+              upd: upd,
+            });
+            const tailBytes = _utf8Len(tailBody);
+            const fullBytes = _utf8Len(JSON.stringify({ v: 1, ledger: led }));
+            if (tailBytes < STRUCT_TAIL_MAX && tailBytes < Math.max(2048, fullBytes * 0.45)) {
+              await webdavPut(STRUCT_TAIL_PATH, tailBody, 'application/json; charset=utf-8');
+              if (manifest) {
+                delete manifest.structLedger;
+                delete manifest.structTailUpd;
+                manifest.structTail = 1;
+              }
+              try { console.log('[sync-put-run] structure：只传一小段', tailBytes, '/', fullBytes); } catch (_) {}
+              return true;
+            }
+            return await writeFull('小段太大 ' + tailBytes + '/' + fullBytes);
+          }
+        }
+      }
+      return await writeFull(forceFull ? '覆盖/建库' : '改走整本');
     } catch (e) {
       console.warn('[webdav] 结构总账外置写入失败，本次仍内嵌于清单', e && e.message);
       if (manifest) manifest.structLedger = led;
@@ -404,7 +730,6 @@
     const headers = Object.assign({
       'Authorization': _authHeader(),
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-cache',
     }, ifMatch ? { 'If-Match': ifMatch } : {});
     let putResp = await _fetchWithTimeout(_buildUrl(path), { method: 'PUT', headers, body });
     if (putResp.status === 404 || putResp.status === 409) {
@@ -417,6 +742,8 @@
     if (!putResp.ok && putResp.status !== 201 && putResp.status !== 204) {
       throw new WebDAVError('PUT', path, putResp.status, await putResp.text().catch(() => ''));
     }
+    const et = putResp.headers.get('ETag') || putResp.headers.get('etag') || '';
+    return (et && !et.startsWith('W/')) ? et : '';
   }
 
   /** 在已持有的请求槽内：读回并核对体积 + updatedAt/deviceId。 */
@@ -425,8 +752,6 @@
       method: 'GET',
       headers: {
         'Authorization': _authHeader(),
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache',
       },
     });
     if (getResp.status === 404) return { ok: false, detail: path + ' 读回 404' };
@@ -461,7 +786,6 @@
         'Authorization': _authHeader(),
         'Depth': '1',
         'Content-Type': 'application/xml; charset=utf-8',
-        'Cache-Control': 'no-cache',
       },
       body: '<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:getcontentlength/><d:getlastmodified/></d:prop></d:propfind>',
     });
@@ -477,13 +801,11 @@
   }
 
   /**
-   * 写清单（20260806t4）：
-   *  1) 先写入 manifest.bak.json 并读回确认（不碰正式文件）
-   *  2) 再覆盖 manifest.json，读回 + 列目录体积必须 >0 且≈写入
-   *  列目录为 0 = 失败（以前误跳过，导致假成功、网盘留 0B）。
-   *  合法空库清单也有 version 等字段，绝不会是 0 字节。
+   * 写清单：覆盖 manifest.json，读回 + 列目录体积必须 >0 且≈写入。
+   * 列目录为 0 = 失败。合法空库清单也有 version 等字段，绝不会是 0 字节。
    */
   async function _putManifestVerified(manifest, ifMatch) {
+    if ((manifest.dataFormatVersion || 1) >= 4) _slimManifestNotes(manifest);
     const body = JSON.stringify(manifest);
     const bodyBytes = _utf8Len(body);
     // 防清空：正常清单（哪怕 notes 为空）也远大于此；0/极小 = 逻辑错误，禁止上传
@@ -500,27 +822,19 @@
           const outcome = await enqueue(async () => {
             const waitMs = attempt === 0 ? (isKoofr ? 900 : 400) : 1200;
 
-            // ① 备份位：先落完好副本
-            await _putJsonRaw(MANIFEST_BAK_PATH, body, null);
-            await sleep(waitMs);
-            const bakOk = await _getVerifyManifestRaw(MANIFEST_BAK_PATH, body, bodyBytes, manifest);
-            if (!bakOk.ok) return { ok: false, detail: bakOk.detail };
-
-            // ② 正式清单：Koofr 始终无条件写；其它服务商仅首轮可带 If-Match
             const useMatch = !!(attempt === 0 && ifMatch && !isKoofr && !_casForceUnconditional);
             await _putJsonRaw(MANIFEST_PATH, body, useMatch ? ifMatch : null);
             await sleep(waitMs);
             const mainOk = await _getVerifyManifestRaw(MANIFEST_PATH, body, bodyBytes, manifest);
             if (!mainOk.ok) {
-              // 正式失败时尝试用备份再盖一次
               try {
                 await _putJsonRaw(MANIFEST_PATH, body, null);
                 await sleep(1000);
                 const retryOk = await _getVerifyManifestRaw(MANIFEST_PATH, body, bodyBytes, manifest);
-                if (!retryOk.ok) return { ok: false, detail: mainOk.detail + '；备份回盖仍失败: ' + retryOk.detail };
+                if (!retryOk.ok) return { ok: false, detail: mainOk.detail + '；重写仍失败: ' + retryOk.detail };
                 Object.assign(mainOk, retryOk);
               } catch (re) {
-                return { ok: false, detail: mainOk.detail + '；备份回盖异常' };
+                return { ok: false, detail: mainOk.detail + '；重写异常' };
               }
             }
 
@@ -553,12 +867,8 @@
             _lastManifestEtag = outcome.etag || '';
             _authFailCount = 0;
             console.log('[webdav] 清单云端已确认', outcome.textBytes, '字节',
-              outcome.cloudSize != null ? ('列目录=' + outcome.cloudSize) : '',
-              '（含备份 ' + MANIFEST_BAK_PATH + '）');
-            if (!_tmpLegacyCleaned) {
-              _tmpLegacyCleaned = true;
-              try { await webdavDelete(MANIFEST_TMP_LEGACY); } catch (_) {}
-            }
+              outcome.cloudSize != null ? ('列目录=' + outcome.cloudSize) : '');
+            await _dropLegacySidecars();
             return;
           }
           lastDetail = (outcome && outcome.detail) || '未知';
@@ -572,6 +882,46 @@
         await sleep(500);
       }
       throw new Error('云端清单（manifest.json）写入校验失败：' + lastDetail + '。本次上传未生效，已保留本地改动，稍后会自动重试');
+    } finally {
+      _manifestWriting = false;
+    }
+  }
+
+  /** 日常交目录：写正式文件即结束。读回对放到下次打开/强制拉。
+   *  首次同步/修复/覆盖云端仍走完整核对。 */
+  async function _putManifestCheap(manifest) {
+    if (manifest && typeof manifest.structTailUpd === 'string' && manifest.structTailUpd) {
+      try {
+        await webdavPut(STRUCT_TAIL_PATH, JSON.stringify({
+          v: 1, updatedAt: Date.now(), deviceId: _ensureClientId(), upd: manifest.structTailUpd,
+        }), 'application/json; charset=utf-8');
+        manifest.structTail = 1;
+        delete manifest.structTailUpd;
+      } catch (_) {}
+    }
+    if ((manifest.dataFormatVersion || 1) >= 4) _slimManifestNotes(manifest);
+    const body = JSON.stringify(manifest);
+    const bodyBytes = _utf8Len(body);
+    if (bodyBytes < 32) {
+      throw new Error('拒绝写入过小的清单（' + bodyBytes + ' 字节），以防清空云端');
+    }
+    _manifestWriting = true;
+    try {
+      const putEtag = await enqueue(async () => {
+        return await _putJsonRaw(MANIFEST_PATH, body, null);
+      });
+      _lastManifestEtag = putEtag || '';
+      _authFailCount = 0;
+      _lastManifestObj = manifest;
+      _lastGetTime = Date.now();
+      _savePendingCatalogConfirm({
+        rev: _catalogRev(manifest),
+        updatedAt: manifest.updatedAt,
+        deviceId: manifest.deviceId,
+      });
+      await _dropLegacySidecars();
+      _rememberManifestCursor(manifest);
+      try { console.log('[webdav] 名单已写', bodyBytes, '字节（核对留到下次打开）'); } catch (_) {}
     } finally {
       _manifestWriting = false;
     }
@@ -610,6 +960,66 @@
       err.parseFail = true;
       throw err;
     }
+  }
+
+  function _hydrateYbin(note) {
+    if (!note || !note.ydoc) return note;
+    try {
+      const Y = window.__ydoc;
+      if (Y && Y.ready && Y.ready()) {
+        const doc = Y.toDoc(note.ydoc);
+        if (doc && doc.type === 'doc') note.doc = doc;
+      }
+    } catch (_) {}
+    // C3（t21）：云端包不再带正文副本。账本在、正文却没能还原（引擎未就绪/异常）且包里无兜底 →
+    //   本轮按瞬时错误跳过这篇，绝不把「没正文的半份」落进本地盖掉正文；引擎就绪后自然补上。
+    if (!note.doc && !(note.content || '').trim()) {
+      const err = new Error('账本正文还原未就绪，本轮跳过');
+      err.transient = true;
+      throw err;
+    }
+    return note;
+  }
+  function _noteFileOrder(id) {
+    const h = _hintOf(id);
+    if (h && h.k === 'j') return ['j', 'y'];
+    return ['y', 'j'];
+  }
+  async function _getNoteCipherText(id) {
+    const kinds = _noteFileOrder(id);
+    for (let i = 0; i < kinds.length; i++) {
+      const path = kinds[i] === 'y' ? ('notes/' + id + '.ybin') : ('notes/' + id + '.json');
+      try {
+        const resp = await webdavGet(path, { allow404: true });
+        if (!resp) continue;
+        const text = (await resp.text()).trim();
+        if (!text || text.startsWith('<')) continue;
+        return text;
+      } catch (_) {}
+    }
+    return null;
+  }
+  async function _fetchNoteById(id, ver) {
+    const v = Number(ver) || 0;
+    if (_isGoneNote(id, v)) return null;
+    const tryKind = async (kind) => {
+      const path = kind === 'y' ? ('notes/' + id + '.ybin') : ('notes/' + id + '.json');
+      try {
+        const n = await webdavGetNote(path, { allow404: true });
+        return n ? _hydrateYbin(n) : null;
+      } catch (e) {
+        if (e instanceof RateLimitError) throw e;
+        if (e && (e.decryptFail || e.parseFail || e.transient)) throw e;
+        return null;
+      }
+    };
+    const order = _noteFileOrder(id);
+    for (let i = 0; i < order.length; i++) {
+      const n = await tryKind(order[i]);
+      if (n) { _setHint(id, order[i], v); return n; }
+    }
+    _setHint(id, 'x', v);
+    return null;
   }
 
   async function webdavGetBinary(path, options = {}) {
@@ -806,8 +1216,8 @@
           let name = e.href; try { name = decodeURIComponent(name); } catch (_) {}
           name = name.replace(/[#?].*$/, '');
           name = name.substring(name.lastIndexOf('/') + 1);
-          if (!/\.json$/i.test(name)) continue;
-          const id = name.replace(/\.json$/i, '');
+          if (!/\.(json|ybin)$/i.test(name)) continue;
+          const id = name.replace(/\.(json|ybin)$/i, '');
           if (id) seen.add(id);
         }
         noteCount = seen.size;
@@ -823,10 +1233,8 @@
         const ids = Object.keys(manifest.notes).filter(id => !(manifest.deleted && manifest.deleted[id]));
         for (const id of ids.slice(0, 2)) {
           try {
-            const resp = await webdavGet(`notes/${id}.json`, { allow404: true });
-            if (!resp) continue;
-            const text = (await resp.text()).trim();
-            if (!text || text.startsWith('<')) continue;   // 限流/拦截页：换一篇
+            const text = await _getNoteCipherText(id);
+            if (!text) continue;
             if (text.startsWith('{')) break;               // 明文存储（未加密）：无口令可言
             const pass = (config.testCryptoPass || '').trim();
             const keyP = pass ? _deriveAesKey('zhinote-user:' + pass) : _getAesKey();
@@ -866,10 +1274,8 @@
       let keyMatch = null;
       for (const id of ids.slice(0, 2)) {
         try {
-          const resp = await webdavGet(`notes/${id}.json`, { allow404: true });
-          if (!resp) continue;
-          const text = (await resp.text()).trim();
-          if (!text || text.startsWith('<')) continue;  // 限流/拦截页：换一篇
+          const text = await _getNoteCipherText(id);
+          if (!text) continue;
           if (text.startsWith('{')) break;              // 明文存储（未加密）：无口令可言
           const pass = (testPass || '').trim();
           const keyP = pass ? _deriveAesKey('zhinote-user:' + pass) : _getAesKey();
@@ -1006,6 +1412,56 @@
   function _invalidateSyncBaseCache() {
     _syncBase = null;
     _syncBaseLoadedFor = null;
+    _noteFileHint = null;
+    _noteFileHintFor = null;
+  }
+
+  // 记住每篇云端文件是账本还是旧文件、或两边都没有。避免每轮先问不存在的文件（浏览器会红 404）。
+  const NOTE_FILE_HINT_KEY = 'zhinote-note-file-hint';
+  let _noteFileHint = null;
+  let _noteFileHintFor = null;
+  let _noteFileHintDirty = false;
+  function _loadNoteFileHint() {
+    const tag = _accountTag();
+    if (!tag) return {};
+    if (_noteFileHint !== null && _noteFileHintFor === tag) return _noteFileHint;
+    _noteFileHint = {};
+    _noteFileHintFor = tag;
+    try {
+      const raw = _ssGet('_webdavNoteFileHint', NOTE_FILE_HINT_KEY);
+      if (raw) {
+        const o = JSON.parse(raw);
+        if (o && o.account === tag && o.map && typeof o.map === 'object') _noteFileHint = o.map;
+      }
+    } catch (_) {}
+    return _noteFileHint;
+  }
+  function _flushNoteFileHint() {
+    if (!_noteFileHintDirty) return;
+    _noteFileHintDirty = false;
+    const tag = _accountTag();
+    if (!tag) return;
+    try { _ssSet('_webdavNoteFileHint', NOTE_FILE_HINT_KEY, JSON.stringify({ account: tag, map: _noteFileHint || {} })); } catch (_) {}
+  }
+  function _hintOf(id) {
+    const h = _loadNoteFileHint()[id];
+    return h && typeof h === 'object' ? h : null;
+  }
+  function _setHint(id, k, v) {
+    _loadNoteFileHint();
+    if (!_accountTag()) return;
+    _noteFileHint[id] = { k: k, v: Number(v) || 0 };
+    _noteFileHintDirty = true;
+  }
+  function _clearHint(id) {
+    _loadNoteFileHint();
+    if (_noteFileHint[id]) { delete _noteFileHint[id]; _noteFileHintDirty = true; }
+  }
+  function _isGoneNote(id, ver) {
+    const h = _hintOf(id);
+    if (!h || h.k !== 'x') return false;
+    const v = Number(ver) || 0;
+    return !v || h.v === v;
   }
   function _loadSyncBase() {
     const tag = _accountTag();
@@ -1025,48 +1481,86 @@
     return _syncBase;
   }
   function _flushSyncBase() {
-    if (!_syncBaseDirty) return;
-    _syncBaseDirty = false;
-    const tag = _accountTag();
-    if (!tag) return;
-    try { _ssSet('_webdavSyncBase', SYNC_BASE_KEY, JSON.stringify({ account: tag, map: _syncBase || {} })); } catch (_) {}
+    if (_syncBaseDirty) {
+      _syncBaseDirty = false;
+      const tag = _accountTag();
+      if (tag) {
+        try { _ssSet('_webdavSyncBase', SYNC_BASE_KEY, JSON.stringify({ account: tag, map: _syncBase || {} })); } catch (_) {}
+      }
+    }
+    _flushNoteFileHint();
   }
   function _getBase(id) { return _loadSyncBase()[id] || null; }
-  function _setBase(id, hash, ts) {
+  function _setBase(id, hash, ver) {
     _loadSyncBase();
     if (!_accountTag()) return;
-    _syncBase[id] = { h: hash, t: _noteTs(ts) };
+    const v = Number(ver) || 0;
+    _syncBase[id] = { h: hash, v: v, t: v };
     _syncBaseDirty = true;
+  }
+  function _baseVer(base) {
+    if (!base) return 0;
+    if (typeof base.v === 'number' && isFinite(base.v)) return base.v;
+    return _noteTs(base.t);
   }
   function _delBase(id) { _loadSyncBase(); if (_syncBase[id]) { delete _syncBase[id]; _syncBaseDirty = true; } }
 
   function _loadPersistedManifestCursor() {
-    try {
-      const tag = _accountTag();
-      if (!tag) return;
-      const raw = _ssGet('_webdavManifestCursor', MANIFEST_CURSOR_KEY);
-      if (!raw) return;
-      const o = JSON.parse(raw);
-      if (!o || o.account !== tag) return;
-      const at = o.updatedAt;
-      if (at != null && at !== '' && Number(at) > 0) _lastKnownManifestUpdatedAt = at;
-      if (typeof o.etag === 'string' && o.etag) _lastManifestEtag = o.etag;
-    } catch (_) {}
+    // 从一本账取上次云端名单的落脚点。只存进独立变量，绝不用它拼「半份名单」塞给 _lastManifestObj——
+    // 缺 notes/deleted 的假名单流进 _detectLocallyNewerNotes 会把云端已删的篇当「云上没有」顶回去。
+    const c = _ledger().cursor || {};
+    _lastKnownManifestUpdatedAt = Number(c.rev) || 0;
+    _lastManifestEtag = (typeof c.etag === 'string') ? c.etag : '';
+    _lastCursorDeviceId = (typeof c.deviceId === 'string') ? c.deviceId : '';
+  }
+  function _loadHealth() {
+    const h = _ledger().health || {};
+    _lastSyncOkAt = Number(h.okAt) || 0;
+    _lastFullCheckAt = Number(h.fullAt) || 0;
+  }
+  function _persistHealth() {
+    const led = _ledger();
+    if (!led.account) return;
+    led.health = { okAt: _lastSyncOkAt, fullAt: _lastFullCheckAt };
+    _saveLedger();
+  }
+  function _markSyncOk() {
+    _lastSyncOkAt = Date.now();
+    if (_lastSyncOkAt - _lastSyncOkPersistAt > 60_000) {
+      _lastSyncOkPersistAt = _lastSyncOkAt;
+      _persistHealth();
+    }
+    // 同步顺利收尾后，避开主流程悄悄清一小口云端旧格式残留（清完后 done=1，此处零开销）
+    setTimeout(() => { _autoSweepTick(); }, 8000);
+  }
+  function _markFullCheckDone() {
+    _lastFullCheckAt = Date.now();
+    if (_staleGate) {
+      _staleGate = false;
+      try { console.log('[webdav] 久闲设备完整核对完成，恢复上传'); } catch (_) {}
+      if (_hasDirtyData()) { try { schedulePut('stale-gate-open'); } catch (_) {} }
+    }
+    _persistHealth();
   }
   function _persistManifestCursor() {
-    try {
-      const tag = _accountTag();
-      if (!tag || !Number(_lastKnownManifestUpdatedAt || 0)) return;
-      _ssSet('_webdavManifestCursor', MANIFEST_CURSOR_KEY, JSON.stringify({
-        account: tag,
-        updatedAt: _lastKnownManifestUpdatedAt,
-        etag: _lastManifestEtag || '',
-      }));
-    } catch (_) {}
+    const led = _ledger();
+    if (!led.account || !Number(_lastKnownManifestUpdatedAt || 0)) return;
+    const deviceId = (_lastManifestObj && _lastManifestObj.deviceId) || _lastCursorDeviceId || '';
+    if (deviceId) _lastCursorDeviceId = deviceId;
+    led.cursor = { rev: Number(_lastKnownManifestUpdatedAt) || 0, etag: _lastManifestEtag || '', deviceId: deviceId };
+    _saveLedger();
+  }
+  function _catalogRev(manifest) {
+    if (!manifest) return 0;
+    const r = Number(manifest.rev);
+    if (r > 0) return r;
+    return Number(manifest.updatedAt || 0);
   }
   function _rememberManifestCursor(manifest) {
-    if (!manifest || manifest.updatedAt == null) return;
-    _lastKnownManifestUpdatedAt = manifest.updatedAt;
+    if (!manifest) return;
+    const rev = _catalogRev(manifest);
+    if (!rev) return;
+    _lastKnownManifestUpdatedAt = rev;
     _persistManifestCursor();
   }
 
@@ -1141,10 +1635,8 @@
   // 关键修复：置顶(pinnedAt)/颜色/图标/移动(parentId,order)/换笔记本(workspaceId)/改名(title)
   // 这些「只改属性、不动正文」的变更，_noteHash 看不见，旧逻辑会因「正文指纹一致」误判
   // 「无变化」而丢弃本地脏标记 → 置顶传不上去（本次根因）。这里把元数据单独按时间 LWW 合并。
-  // 注意：**不含 frac、也不含 order**。排序唯一权威 = frac，且只由「结构总账」(Yjs 确定性合并) 同步：
-  //   - frac 放进按篇网盘通道(时间 LWW)会和总账两条仲裁互踩 → 反复重排+绿点狂转(t33/t34 教训)；
-  //   - order（第几名）是 frac 的确定性函数，两端各自算必然一致，按篇同步它纯属重复 + 每次重排让整组"脏"
-  //     → 操控端绿点狂传一堆没必要的 order(t36)。两者一律不走按篇通道。
+  // 注意：**不含 frac、也不含 order**。日常排序权威 = 结构总账。文件可以带 frac，但只给「对端还没有这篇」落座用；
+  //   已有笔记由 _webdavApplyNote 保留本地 frac，不走按篇时间 LWW（t33/t34：两套裁判会反复重排）。
   // 注意：**不含 title**（Stage B2 起标题也收归结构总账权威，不走按篇 LWW；正文指纹也已不含标题）。
   //   也不含 frac/order（见上）。这些字段在 storage._webdavApplyNote 里被「保留本地」，按篇通道一律不仲裁。
   const _META_FIELDS = ['pinnedAt', 'color', 'icon', 'parentId', 'workspaceId', 'expanded'];
@@ -1168,16 +1660,156 @@
   // 本客户端支持的最高数据格式版本。
   //   v2 = 笔记内容 JSON 化（note.doc）。
   //   v3 = 在 v2 基础上每篇带「合并账本」(note.ydoc)，真冲突自动合并而非冒副本。
-  //        v3 客户端能处理"缺账本"的旧笔记（退回 v2 冲突副本策略），故 v2→v3 平滑。
-  // 云端 manifest.dataFormatVersion 高于此值 → 说明有更新的客户端升级了云端格式，
-  // 本（旧）客户端必须停止同步并提示更新，绝不下载/上传，以免污染或丢失新格式数据。
-  const SUPPORTED_DATA_FORMAT = 3;
+  //   v4 = 收口搬家：总目录不再写标题/父子（只认结构总账）；升版前先备份到 ZhiNote-bak。
+  //   v5 = 最终收口：名单只记版本；正文以账本文件 notes/<id>.ybin 为准；不再用钟决定下不下。
+  // 云端 manifest.dataFormatVersion 高于此值 → 旧客户端停止同步并提示更新，绝不下载/上传。
+  const SUPPORTED_DATA_FORMAT = 5;
   function _localDataFormat() {
     try { return (window.storage.getDataFormatVersion && window.storage.getDataFormatVersion()) || 1; }
     catch (_) { return 1; }
   }
   function _remoteFormatTooNew(manifest) {
     return !!manifest && (manifest.dataFormatVersion || 1) > SUPPORTED_DATA_FORMAT;
+  }
+
+  function _noteVer(entry) {
+    if (entry == null) return 0;
+    if (typeof entry === 'number' && isFinite(entry)) return entry > 0 ? entry : 0;
+    if (typeof entry === 'object') {
+      if (typeof entry.v === 'number' && isFinite(entry.v) && entry.v > 0) return entry.v;
+      return _noteTs(entry.updatedAt) || 0;
+    }
+    return _noteTs(entry) || 0;
+  }
+  function _slimManifestNotes(manifest) {
+    if (!manifest || !manifest.notes) return;
+    for (const id in manifest.notes) {
+      const v = _noteVer(manifest.notes[id]) || 1;
+      const empty = !!(manifest.notes[id] && manifest.notes[id].empty);
+      manifest.notes[id] = empty ? { v: v, empty: 1 } : { v: v };
+    }
+  }
+
+  async function _mkcolRoot(rootDir) {
+    return enqueue(async () => {
+      const resp = await _fetchWithTimeout(_buildUrlIn(rootDir, ''), {
+        method: 'MKCOL',
+        headers: { 'Authorization': _authHeader() },
+      });
+      if (resp.status === 405 || resp.status === 301 || resp.status === 201 || resp.ok) return;
+    });
+  }
+
+  async function _putInRoot(rootDir, path, body) {
+    return enqueue(async () => {
+      const headers = {
+        'Authorization': _authHeader(),
+        'Content-Type': 'application/json; charset=utf-8',
+      };
+      let resp = await _fetchWithTimeout(_buildUrlIn(rootDir, path), { method: 'PUT', headers, body });
+      if (resp.status === 404 || resp.status === 409) {
+        await _fetchWithTimeout(_buildUrlIn(rootDir, ''), {
+          method: 'MKCOL',
+          headers: { 'Authorization': _authHeader() },
+        });
+        resp = await _fetchWithTimeout(_buildUrlIn(rootDir, path), { method: 'PUT', headers, body });
+      }
+      if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (!resp.ok && resp.status !== 201 && resp.status !== 204) {
+        throw new WebDAVError('PUT', rootDir + '/' + path, resp.status, await resp.text().catch(() => ''));
+      }
+    });
+  }
+
+  async function _getJsonInRoot(rootDir, path) {
+    return enqueue(async () => {
+      const resp = await _fetchWithTimeout(_buildUrlIn(rootDir, path), {
+        method: 'GET',
+        headers: { 'Authorization': _authHeader() },
+      });
+      if (resp.status === 404) return null;
+      if (resp.status === 503 || resp.status === 429) throw new RateLimitError();
+      if (!resp.ok) return null;
+      const text = await resp.text();
+      if (!text || !text.trim() || text.trim().charAt(0) === '<') return null;
+      try { return JSON.parse(text); } catch (_) { return null; }
+    });
+  }
+
+  async function _copyLiveToBak(relPath) {
+    const resp = await webdavGet(relPath, { allow404: true });
+    if (!resp || resp === NOT_MODIFIED) return false;
+    const text = await resp.text();
+    if (!text || !text.trim() || text.trim().charAt(0) === '<') return false;
+    await _putInRoot(BAK_DIR, relPath, text);
+    return true;
+  }
+
+  let _v4MigratePromise = null;
+  async function _ensureV3BackupAndV4Gate(manifest) {
+    if (!manifest || typeof manifest !== 'object') return manifest;
+    if ((manifest.dataFormatVersion || 1) >= 4) return manifest;
+    if (_v4MigratePromise) return _v4MigratePromise;
+    _v4MigratePromise = (async () => {
+      let marker = null;
+      try { marker = await _getJsonInRoot(BAK_DIR, 'backup.json'); } catch (_) { marker = null; }
+      if (!(marker && marker.ok)) {
+        await _mkcolRoot(BAK_DIR);
+        const copied = [];
+        const files = ['manifest.json', 'manifest.bak.json', 'struct-ledger.json'];
+        for (let i = 0; i < files.length; i++) {
+          try {
+            if (await _copyLiveToBak(files[i])) copied.push(files[i]);
+          } catch (e) {
+            console.warn('[webdav] 备份失败', files[i], e && e.message);
+          }
+        }
+        if (copied.indexOf('manifest.json') < 0) {
+          throw new Error('无法备份云端总目录到 ZhiNote-bak，已中止升级，以免无法退回');
+        }
+        const meta = {
+          ok: true,
+          v: 1,
+          fromFormat: manifest.dataFormatVersion || 1,
+          toFormat: 4,
+          at: Date.now(),
+          files: copied,
+          note: '旧库备份。图仍在 ZhiNote/images。两端都换新包并对齐后，可手动删除本文件夹。程序不会自动删。',
+        };
+        await _putInRoot(BAK_DIR, 'backup.json', JSON.stringify(meta));
+        try { console.log('[webdav] 已备份旧库到 ZhiNote-bak', copied.join(',')); } catch (_) {}
+      }
+      manifest.dataFormatVersion = 4;
+      manifest.updatedAt = Date.now();
+      manifest.deviceId = _ensureClientId();
+      _slimManifestNotes(manifest);
+      await _putManifestCheap(manifest);
+      _emit('cloud-sync', { type: 'webdav-v4-migrated' });
+      return manifest;
+    })().finally(() => { _v4MigratePromise = null; });
+    return _v4MigratePromise;
+  }
+
+  let _v5MigratePromise = null;
+  async function _ensureV5Index(manifest) {
+    if (!manifest || typeof manifest !== 'object') return manifest;
+    if ((manifest.dataFormatVersion || 1) >= 5) {
+      _slimManifestNotes(manifest);
+      return manifest;
+    }
+    if ((manifest.dataFormatVersion || 1) < 4) return manifest;
+    if (_v5MigratePromise) return _v5MigratePromise;
+    _v5MigratePromise = (async () => {
+      _slimManifestNotes(manifest);
+      manifest.dataFormatVersion = 5;
+      manifest.rev = (Number(manifest.rev) || 0) + 1;
+      manifest.updatedAt = Date.now();
+      manifest.deviceId = _ensureClientId();
+      await _putManifestCheap(manifest);
+      _emit('cloud-sync', { type: 'webdav-v5-migrated' });
+      return manifest;
+    })().finally(() => { _v5MigratePromise = null; });
+    return _v5MigratePromise;
   }
 
   // ─── 覆盖前留底（终极兜底）────────────────────────────────────────────────────
@@ -1275,18 +1907,30 @@
     };
     _applyProviderTuning(_config.provider);
     _ensureClientId();
-    // 换账号/重载后按新账号重载基准与清单游标（禁止沿用上一账号的空缓存）
+    // 换账号/重载后按新账号重载基准与一本账（禁止沿用上一账号的内存残值）
     _invalidateSyncBaseCache();
+    _acct = null;              // 一本账重取：_ledger() 会按新账号自动加载
+    _structSnapSVMem = '';
+    _lastManifestObj = null;
     _loadPersistedManifestCursor();
+    _loadHealth();
+    // 首次没有记录：从现在起算（不把老用户升级第一次误判成久闲）
+    if (!_lastSyncOkAt) { _lastSyncOkAt = Date.now(); _persistHealth(); }
+    _staleGate = (Date.now() - _lastSyncOkAt) > STALE_DEVICE_MS;
+    if (_staleGate) console.warn('[webdav] 本机超过 7 天没同步过：先完整核对云端，核对完成前不上传');
     // 重载配置（含改口令后）即解除"口令不一致"上传闸，让新口令重新接受 doGet 检验
     _decMismatch = false;
     _decFailRounds = 0;
     _skipBadNotes = {}; // 换口令/重载配置后僵尸名单作废，全部重试一遍
+    // 配置就绪即连（t20）：即时层启动时常因 _config 未就绪连不上、要干等 6s 看门狗兜底重试
+    //   （= 用户感知"打开后紫点亮得慢"）。此刻配置刚就绪 → 主动通知即时层立刻连（幂等，已连则零开销早退）。
+    try { window.realtime && window.realtime.applyConfig && window.realtime.applyConfig(); } catch (_) {}
     return true;
   }
 
   // ─── 事件发射 ────────────────────────────────────────────────────────────────
   function _emit(event, payload) {
+    if (payload && payload.type === 'webdav-sync-ok') _markSyncOk();
     if (window.storage && window.storage._emitCloudSync) {
       window.storage._emitCloudSync(payload);
     }
@@ -1295,28 +1939,51 @@
   // 清单/笔记时间戳统一成毫秒数字（兼容旧端写入的 ISO 字符串；字符串与数字直接比会恒假）。
   function _noteTs(v) {
     if (typeof v === 'number' && isFinite(v)) return v;
+    if (typeof v === 'string' && /^\d+$/.test(v)) {
+      const n = Number(v);
+      return isFinite(n) ? n : 0;
+    }
     const t = new Date(v || 0).getTime();
     return isFinite(t) ? t : 0;
   }
 
   // 是否应下载该篇（下载闸唯一谓词；保护条与 _applyRemoteChanges 共用）。
-  // 20260804t1：有指纹且云端相对指纹变了 → 一律下（脏也下，交给合并）；无指纹有本地 → 先下再立基准；禁止假立基准。
+  // 20260814t6：按「这篇有没有比本地新」下，不按「目录时间跟记号不一致就整库下」。
+  // 没打开的笔记只要云端这篇时间更新，一样会下——不是只同步当前篇。
+  function _isEmptyBody(note) {
+    if (!note) return true;
+    try {
+      if (note.doc && note.doc.content) {
+        const c = note.doc.content;
+        if (!c.length) return true;
+        if (c.length === 1 && c[0] && c[0].type === 'paragraph' && !(c[0].content && c[0].content.length)) return true;
+        return false;
+      }
+    } catch (_) {}
+    return !(note.content || '').trim();
+  }
   function _shouldDownloadNote(id, manifest, data) {
     if (!manifest || !manifest.notes || !manifest.notes[id]) return false;
     if (manifest.deleted && manifest.deleted[id]) return false;
-    // 本机删除权威：已删/回收站不下砸（防与即时同步删除打架）
     if (window.storage.isNoteDeleted && window.storage.isNoteDeleted(id)) return false;
-    const remoteRaw = manifest.notes[id].updatedAt || 0;
-    const remoteTs = _noteTs(remoteRaw);
-    if (_isKnownBadNote(id, remoteRaw) || _isKnownBadNote(id, remoteTs)) return false;
+    const remoteV = _noteVer(manifest.notes[id]);
+    if (_isKnownBadNote(id, remoteV)) return false;
     const localNote = data.notes && data.notes[id];
     const trash = data.trash || {};
-    if (!localNote) return !trash[id]; // 云端有、本地没有（也不在回收站）→ 下载
-    const localTs = _noteTs(localNote.updatedAt);
+    if (manifest.notes[id].empty && !localNote) return false;
+    if (!localNote) return !trash[id];
+    const pendingV = Number(_pendingVers()[id] || 0);
+    if (pendingV && pendingV >= remoteV) return false;
     const base = _getBase(id);
-    if (!base) return true; // 无基准：必须先见云端正文，禁止用 remoteTs 假立基准
-    if (remoteTs !== _noteTs(base.t)) return true; // 云端相对上次同步变过 → 一律下载（含本机脏）
-    if (remoteTs > localTs + 1000) return true; // 墙钟仍作补充（指纹偶发未更新时）
+    const localV = _baseVer(base);
+    if (base && localV > remoteV && _noteHash(localNote) === base.h) return false;
+    if (_isEmptyBody(localNote)) {
+      if (!base) return true;
+      if (remoteV !== localV) return true;
+      if (_noteHash(localNote) !== base.h) return true;
+    }
+    if (base && localV === remoteV && _noteHash(localNote) === base.h) return false;
+    if (remoteV !== localV) return true;
     return false;
   }
 
@@ -1333,20 +2000,14 @@
     }
     return ids;
   }
-  /** 是否值得弹只读保护条（谨慎收口，宁可不弹也不误挡打字）：
+  /** 是否值得弹只读保护条（宁可不弹也不误挡打字）：
    *  - 采纳/权威对齐：仍弹
-   *  - 当前打开的笔记在待下载列表：仍弹（防正编辑时被远端覆盖感）
-   *  - 一次待下 ≥5 篇：仍弹（批量合并体感重）
-   *  - 其它小改（别的笔记打几个字）：不弹，后台静默合并即可 */
+   *  - 一次待下 ≥5 篇：仍弹
+   *  - 小改（含当前篇）：不弹，后台静默合并 */
   function _shouldShowSyncProtection(manifest, opts) {
     const adoptMode = !!(opts && opts.adoptMode);
     if (adoptMode) return true;
-    const ids = _listNotesToDownload(manifest);
-    if (!ids.length) return false;
-    if (ids.length >= 5) return true;
-    let curId = null;
-    try { curId = window.editor && window.editor.currentId && window.editor.currentId(); } catch (_) {}
-    return !!(curId && ids.indexOf(curId) >= 0);
+    return _listNotesToDownload(manifest).length >= 5;
   }
 
   // ─── 瞬时错误熔断 ─────────────────────────────────────────────────────────────
@@ -1439,9 +2100,11 @@
 
   function _propfindNameId(href) {
     const name = String(href || '').replace(/\/+$/, '').split('/').pop() || '';
-    if (!name || !/\.json$/i.test(name)) return null;
+    // v5 后正文文件是 <id>.ybin，.json 是搬家前残留与回收站文件——两种都得认。
+    //   曾只认 .json：全 .ybin 的云端会被"修复清单"数成 0 篇，云端独有笔记被挤出重建清单（t22 修）。
+    if (!name || !/\.(json|ybin)$/i.test(name)) return null;
     if (name === 'manifest.json' || name === 'manifest.json.tmp') return null;
-    return name.replace(/\.json$/i, '');
+    return name.replace(/\.(json|ybin)$/i, '');
   }
 
   /**
@@ -1476,13 +2139,14 @@
       for (const ent of noteEntries) {
         const id = _propfindNameId(ent.href);
         if (!id) continue;
-        cloudNotes[id] = _noteTs(ent.mtime);
+        // 同一 id 可能 .ybin 与残留 .json 并存 → 取较新的 mtime
+        cloudNotes[id] = Math.max(cloudNotes[id] || 0, _noteTs(ent.mtime));
       }
       const cloudTrash = {};
       for (const ent of trashEntries) {
         const id = _propfindNameId(ent.href);
         if (!id) continue;
-        cloudTrash[id] = _noteTs(ent.mtime);
+        cloudTrash[id] = Math.max(cloudTrash[id] || 0, _noteTs(ent.mtime));
       }
 
       const localNoteIds = Object.keys(data.notes || {});
@@ -1529,7 +2193,7 @@
       try {
         if (window.storage._webdavGetStructLedger) {
           const led = window.storage._webdavGetStructLedger();
-          if (led) await _persistStructLedgerExternal(manifest, led);
+          if (led) await _persistStructLedgerExternal(manifest, led, { forceFull: true });
         }
       } catch (_) {}
       // 图片：只记本机已知 hash→ext，不重传
@@ -1595,7 +2259,7 @@
 
   /**
    * 正常同步读清单入口：可读则原样返回（含 404→null、304→哨兵）。
-   * 正式清单空/坏时：先试 manifest.bak.json（完好备份），再限频自愈。
+   * 正式清单空/坏时限频自愈。
    */
   async function _loadManifestForSync(options) {
     try {
@@ -1617,14 +2281,6 @@
           lastErr = e2;
         }
       }
-      // 正式文件坏了：用备份顶上（本轮后续 put 成功时会写回正式清单）
-      try {
-        const bak = await webdavGetJson(MANIFEST_BAK_PATH, { allow404: true });
-        if (bak && typeof bak === 'object' && bak.version) {
-          console.warn('[webdav] 正式清单损坏，已改用备份 manifest.bak.json');
-          return bak;
-        }
-      } catch (_) {}
       console.warn('[webdav] 清单损坏路径：连续确认仍失败，尝试限频自愈 —', lastErr.message);
       const heal = await _tryAutoHealCorruptManifest();
       if (!heal.ok) throw lastErr;
@@ -1635,14 +2291,25 @@
   // ─── GET（下载检查）────────────────────────────────────────────────────────────
   // strict：手动同步专用——错误除了走常规处理（重试/熔断/提示）外还会原样上抛，
   // 让"立即同步"按钮如实显示失败，而不是把错误内部消化后假装"同步完成"。
-  async function doGet({ force = false, silent = false, adopt = false, strict = false } = {}) {
+  // full：慢核对/久闲核对——不走任何跳过近路（不带旧标记、名单未变也补拉补对、销「已传未交」的账）。
+  // cond：force 跳过冷却/暂停，但仍带旧标记问「有没有变」（上次名单是自己写的时省整份下载）。
+  async function doGet({ force = false, silent = false, adopt = false, strict = false, full = false, cond = false } = {}) {
     if (!_config || _stopped) {
       if (strict) throw new Error('同步未配置或未启动');
       return;
     }
-    if (_syncing) { _pendingGet = true; return; }
+    // 正在传时不打断，拉排到传完再做（新开一轮仍先拉后传）。
+    if (_syncing) {
+      _pendingGet = true;
+      return;
+    }
     if (_paused && !force) return;
     if (!force && (Date.now() - _lastGetTime < GET_COOLDOWN_MS)) return;
+    if (!force && !adopt && !strict && silent && _canSkipIdleGet()) {
+      try { console.log('[sync-get] 刚写过且对面不在，跳过空转'); } catch (_) {}
+      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-unchanged', silent });
+      return;
+    }
     if (!navigator.onLine) {
       if (strict) throw new Error('当前离线，无法同步');
       return;
@@ -1659,11 +2326,15 @@
     }
 
     _syncing = true;
+    _uiSyncing = !silent;
+    const _tGet = Date.now();
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'get', silent });
     try {
-      // 条件 GET：有 etag 且非采纳时带 If-None-Match（含冷启动 force——force 只跳过冷却/暂停，不该废掉「没变」快路）。
-      // 无变化时服务器回 304，省下整份 manifest 与后续按篇核对。无 etag 或服务器不支持则照常全量。
-      const condEtag = (!adopt && _lastManifestEtag) ? _lastManifestEtag : '';
+      // 条件 GET：后台轮询、或「上次名单是自己写的」的唤醒拉（cond）才带 If-None-Match。
+      // 采纳/慢核对/立即同步必须读到真目录——代理回假 304 会把「另一端刚写的小改」当成没变；
+      // 慢核对每天一次不带标记整份读，就是给这类假 304 兜底。
+      const allowCond = !adopt && !strict && !full && (cond || !force);
+      const condEtag = (allowCond && _lastManifestEtag) ? _lastManifestEtag : '';
       // 正常路径读清单（损坏时才 internally 自愈，见 _loadManifestForSync）
       let manifest = await _loadManifestForSync({ allow404: true, ifNoneMatch: condEtag });
       _lastGetTime = Date.now();
@@ -1671,6 +2342,11 @@
 
       if (manifest === NOT_MODIFIED) {
         _persistManifestCursor();
+        await _seedStructSnapSVFromLocal(_lastManifestObj);
+        _healUnsyncedLocalNotes(_lastManifestObj);
+        if (strict && !adopt) {
+          try { await _reconcileOpenNote(); } catch (_) {}
+        }
         _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-unchanged', silent });
         return;
       }
@@ -1683,6 +2359,7 @@
         const data = window.storage.getAll() || {};
         const hasLocalNotes = data.notes && Object.keys(data.notes).length > 0;
         if (hasLocalNotes || _hasDirtyData()) await _firstSync();
+        if (full) _markFullCheckDone();
         _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-empty', silent });
         return;
       }
@@ -1705,16 +2382,41 @@
         _emit('cloud-sync', { type: 'webdav-version-block', remoteFmt: manifest.dataFormatVersion, supported: SUPPORTED_DATA_FORMAT });
         return;
       }
+      manifest = await _ensureV3BackupAndV4Gate(manifest);
+      manifest = await _ensureV5Index(manifest);
 
       // adopt：用户在「切换服务商」里选了"下载云端（覆盖本地）"，必须强制下载并采纳，
       // 不能因"manifest 未变"早退，也不依赖 epoch 比较。
       // 游标已持久化：冷启动也能早退（禁止因内存归零而整库按篇重下）。
       if (!adopt && Number(_lastKnownManifestUpdatedAt || 0) > 0
-          && Number(manifest.updatedAt || 0) === Number(_lastKnownManifestUpdatedAt)) {
+          && _catalogRev(manifest) === Number(_lastKnownManifestUpdatedAt)) {
+        _lastManifestObj = manifest;
         _persistManifestCursor();
+        _confirmOrRetryCatalog(manifest);
+        await _seedStructSnapSVFromLocal(manifest);
         try {
-          console.log('[sync-get] 清单未变，跳过按篇核对', 'updatedAt=', _lastKnownManifestUpdatedAt);
+          console.log('[sync-get] 名单版本未变，跳过按篇下载；仍检查本机是否待上传与空篇', 'rev=', _lastKnownManifestUpdatedAt);
         } catch (_) {}
+        _healUnsyncedLocalNotes(manifest);
+        if (full) {
+          // 慢核对：名单未变也把该对的都对一遍（销已传未交的账、补拉版本对不上的篇、对当前篇）。
+          // 真修了笔记才提示（webdav-full-check-fixed → toast），什么都没发现保持无声。
+          const dl0 = _lastDownloadedIds ? _lastDownloadedIds.size : 0;
+          _repairPendingVers(manifest);
+          try { await _pullVersionMismatchedNotes(manifest); } catch (_) {}
+          const fixedNotes = Math.max(0, (_lastDownloadedIds ? _lastDownloadedIds.size : 0) - dl0);
+          if (silent && fixedNotes > 0) {
+            _emit('cloud-sync', { type: 'webdav-full-check-fixed', notes: fixedNotes });
+          }
+        } else if (_lastWriterIsUs() || String(manifest.deviceId || '') === _ensureClientId()) {
+          try { console.log('[sync-get] 名单仍是自己写的，不补拉'); } catch (_) {}
+        } else {
+          try { await _pullVersionMismatchedNotes(manifest); } catch (_) {}
+        }
+        if ((strict || full) && !adopt) {
+          try { await _reconcileOpenNote(); } catch (_) {}
+        }
+        if (full) _markFullCheckDone();
         _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-unchanged', silent });
         return;
       }
@@ -1737,14 +2439,23 @@
       }
 
       await _applyRemoteChanges(manifest, { adoptMode });
+      if (force && !adopt) {
+        try { await _reconcileOpenNote(); } catch (_) {}
+      }
+      _lastManifestObj = manifest;
       // 有笔记因解密失败被跳过时不记录游标：下轮"manifest 未变"不会早退，被跳过的笔记会重试
       if (!_skippedDecryptCount) _rememberManifestCursor(manifest);
+      _confirmOrRetryCatalog(manifest);
+      await _seedStructSnapSVFromLocal(manifest);
       _backoffMs = 30_000;
       _setAdoptedEpoch(remoteEpoch); // 应用成功后对齐世代
+      // 采纳云端后旧账作废：绝不拿采纳前的「已传未交 / 名单回执」去顶新的权威云端
+      if (adoptMode) { _clearPendingVers(); _savePendingCatalogConfirm(null); }
 
       // Bug A: 扫描本地比远端新的笔记，标记为 dirty（处理重启后丢失 dirtyIds 的场景）。
       // 采纳模式下绝不上传本地多余笔记（它们已被留底移除），否则会把"被权威淘汰的内容"再涌回云端。
       if (!adoptMode) _detectLocallyNewerNotes(manifest);
+      if (full) { _repairPendingVers(manifest); _markFullCheckDone(); }
 
       _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-downloaded', downloadedNoteIds: _lastDownloadedIds });
 
@@ -1761,6 +2472,13 @@
       }
       if (strict) throw e; // 手动同步：如实上抛，让调用方显示真实结果
     } finally {
+      const _msGet = Date.now() - _tGet;
+      try {
+        if (window.__MD_DEBUG__ || !silent || _msGet >= 2000) {
+          console.log('[sync-get] 结束', _msGet + 'ms', silent ? '(后台)' : '');
+        }
+      } catch (_) {}
+      _uiSyncing = false;
       _syncing = false;
       _drainPending();
     }
@@ -1796,7 +2514,7 @@
       !excludeIds.has(id) && !(manifest.deleted && manifest.deleted[id]));
     for (const id of ids.slice(0, 2)) {
       try {
-        const n = await webdavGetNote(`notes/${id}.json`, { allow404: true });
+        const n = await _fetchNoteById(id);
         if (n) return true;
       } catch (e) {
         if (e instanceof RateLimitError) throw e;
@@ -1819,6 +2537,8 @@
     // 第一遍：算出需要下载的 id（谓词见 _shouldDownloadNote；禁止无基准假立指纹）。
     const toDownload = [];
     for (const id in manifest.notes) {
+      const ver = _noteVer(manifest.notes[id]);
+      if (_isGoneNote(id, ver)) continue;
       if (_shouldDownloadNote(id, manifest, data)) toDownload.push(id);
     }
     try {
@@ -1826,15 +2546,21 @@
       const baseN = baseMap ? Object.keys(baseMap).length : 0;
       if (toDownload.length > 0) {
         console.log('[sync-get] 需下载笔记', toDownload.length, '篇；本机基准', baseN, '条',
-          baseN === 0 ? '（基准为空→会几乎全量下，属异常）' : '');
+          baseN === 0 ? '（基准空：只下本地没有的或云端明显更新的）' : '');
       }
     } catch (_) {}
+
+    const ledgerP = _loadCloudStructLedger(manifest);
 
     // 并发预取需要下载的笔记正文（并发上限由请求池控制）。下载是 IO，串行往返才是慢的根因。
     const _fetched = new Map();
     if (toDownload.length) {
+      if (!_uiSyncing) {
+        _uiSyncing = true;
+        _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'get' });
+      }
       const { errors } = await _runPool(toDownload, async (id) => {
-        const note = await webdavGetNote(`notes/${id}.json`, { allow404: true });
+        const note = await _fetchNoteById(id, _noteVer(manifest.notes && manifest.notes[id]));
         if (note) _fetched.set(id, note);
       });
       const rl = errors.find(e => e.error instanceof RateLimitError);
@@ -1872,7 +2598,7 @@
             const ln = data.notes[id];
             if (!ln) return false;
             const lts = _noteTs(ln.updatedAt);
-            const rts = _noteTs(manifest.notes[id] && manifest.notes[id].updatedAt);
+            const rts = _noteVer(manifest.notes[id]);
             return lts >= rts;
           });
           if (healIds.length && window.storage.markNotesDirtyByIds) {
@@ -1885,7 +2611,7 @@
           let stillRetry = 0;
           const nowPermanent = [];
           for (const id of restIds) {
-            const rts = (manifest.notes[id] && manifest.notes[id].updatedAt) || 0;
+            const rts = _noteVer(manifest.notes[id]);
             const n = _markBadNote(id, rts);
             if (n === 2) nowPermanent.push(id);
             if (n < 2) stillRetry++;
@@ -1928,85 +2654,53 @@
 
     // 第二遍：顺序应用（冲突/留底逻辑保持不变，仅 remoteNote 改取自预取结果）。
     for (const id of toDownload) {
-      const remoteTs = _noteTs(manifest.notes[id].updatedAt);
-      const localNote = data.notes[id];
-      const base = _getBase(id);
-      {
-        const remoteNote = _fetched.get(id);
-        if (!remoteNote) { console.warn('[webdav] 下载笔记返回 null:', id); continue; }
-        const dirtyNow = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
-        const remoteHash = _noteHash(remoteNote);
-        // 本地相对"上次同步基准"是否改过：有基准就按指纹比，没基准退回 dirty 标记
-        const localDiverged = localNote
-          ? (base ? (_noteHash(localNote) !== base.h) : dirtyNow.includes(id))
-          : false;
-        // 本地与远端内容其实一致 → 不算冲突，直接采纳，不产生副本
-        const sameContent = localNote ? (_noteHash(localNote) === remoteHash) : false;
-
-        if (localDiverged && !sameContent) {
-          // 真冲突：本地相对基准有改动，且与远端内容不同 → 两份都不丢。
-          // 【v3 优先】两端都有账本 → 自动合并成一份，不再冒副本；融合结果标脏待上传让云端收敛。
-          const merged = _tryLedgerMerge(localNote, remoteNote);
-          if (merged) {
-            _backupBeforeOverwrite(id, localNote, 'merge-download'); // 仍留底，极端情况下可找回合并前本地版
-            window.storage._webdavApplyNote(id, merged);
-            if (merged.parentId == null && !data.rootOrder.includes(id)) data.rootOrder.push(id);
-            if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]);
-            _setBase(id, remoteHash, remoteTs); // 基准对齐"云端现有版本"：下次上传融合版前不会误判冲突
-            _lastDownloadedIds.add(id);
-            hasDownloads = true;
-            _mergedAnyThisGet = true;
-            continue;
-          }
-          // 【兜底·静默】无账本、无法自动合并（极罕见）：静默按时间保留较新的一份，
-          //   较旧的一份进「同步留底」（可找回、零丢失），**不再冒可见的"本地冲突副本"、不弹提示**。
-          const res = _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data);
-          if (res.localWins) {
-            if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]); // 本地较新 → 让后续上传把它推上云
-          } else if (window.storage.removeDirtyNoteIds) {
-            window.storage.removeDirtyNoteIds([id]);
-          }
-          _lastDownloadedIds.add(id);
-          hasDownloads = true;
-          continue;
-        }
-        // 干净下载（或内容本就一致，无需建副本）。
-        // 兜底：内容确实不同就先留底，哪怕"判为干净"是误判，旧内容也能找回。
-        if (localNote && !sameContent) _backupBeforeOverwrite(id, localNote, 'clean-download');
-        window.storage._webdavApplyNote(id, remoteNote);
-        if (remoteNote.parentId == null && !data.rootOrder.includes(id)) data.rootOrder.push(id);
-        if (sameContent && window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
-        _setBase(id, remoteHash, remoteTs);
+      const remoteTs = _noteVer(manifest.notes[id]);
+      const remoteNote = _fetched.get(id);
+      if (!remoteNote) continue;
+      const r = _applyFetchedNote(id, remoteNote, remoteTs, data, 'download');
+      if (r && r.touched) {
         _lastDownloadedIds.add(id);
         hasDownloads = true;
       }
+      if (r && r.merged) _mergedAnyThisGet = true;
     }
 
-    // 处理远端删除（带时间戳保护，也实时检查 dirty）
+    // 远端墓碑是正向删除证据：听删除。本机待传、本机时间较新，都不得顶掉。
+    // 改过的字先留底（同步留底里可找回）。名单上找不到文件 ≠ 墓碑，绝不走这里。
     for (const id in manifest.deleted) {
-      if (data.notes[id]) {
-        const currentDirty = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
-        if (currentDirty.includes(id)) continue;
-        const deleteTs = _tombTs(manifest.deleted[id]);
-        const localTs = new Date(data.notes[id].updatedAt || 0).getTime();
-        if (deleteTs > localTs) {
-          // 兜底：远端墓碑删除本地笔记前先留底，防止误删丢内容。
-          _backupBeforeOverwrite(id, data.notes[id], 'remote-delete');
-          window.storage._webdavRemoveNote(id);
-          _delBase(id);
-          hasDownloads = true;
-        }
-      }
+      if (!data.notes[id]) continue;
+      _backupBeforeOverwrite(id, data.notes[id], 'remote-delete');
+      window.storage._webdavRemoveNote(id);
+      _delBase(id);
+      if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+      hasDownloads = true;
     }
 
-    // 应用全局状态（若本地无 globalDirty）
+    // 结构总账：有总账则本子/标题/位置只听总账，名单不再先排一遍（一棵树·网盘第一刀）。
+    // 无总账才回退名单上的本子/模板。设置、回收站顺序、名单墓碑仍可从名单补。
+    let cloudLed = null;
+    let ledgerMissing = [];
+    try {
+      cloudLed = await ledgerP;
+      if (cloudLed) {
+        let ledRes = null;
+        if (adoptMode && window.storage._webdavReplaceStructLedger) {
+          ledRes = window.storage._webdavReplaceStructLedger(cloudLed);
+        } else if (window.storage._webdavApplyStructLedger) {
+          ledRes = window.storage._webdavApplyStructLedger(cloudLed, { skipMaintain: true, skipOrphan: true });
+        }
+        if (ledRes && Array.isArray(ledRes.missing)) ledgerMissing = ledRes.missing;
+      }
+    } catch (e) { console.warn('[webdav] 结构总账下载并入失败（忽略，不影响主同步）', e); }
+
     if (!globalDirty) {
       const localData = window.storage.getAll();
       let globalChanged = false;
-      if (manifest.rootOrder && JSON.stringify(manifest.rootOrder) !== JSON.stringify(localData.rootOrder)) globalChanged = true;
-      if (manifest.workspaces && JSON.stringify(manifest.workspaces) !== JSON.stringify(localData.workspaces)) globalChanged = true;
-      if (manifest.templates && JSON.stringify(manifest.templates) !== JSON.stringify(localData.templates)) globalChanged = true;
-      // 远端有本地未知的笔记本/模板墓碑 → 需要应用（把已删除项剔除）
+      if (!cloudLed) {
+        if (manifest.rootOrder && JSON.stringify(manifest.rootOrder) !== JSON.stringify(localData.rootOrder)) globalChanged = true;
+        if (manifest.workspaces && JSON.stringify(manifest.workspaces) !== JSON.stringify(localData.workspaces)) globalChanged = true;
+        if (manifest.templates && JSON.stringify(manifest.templates) !== JSON.stringify(localData.templates)) globalChanged = true;
+      }
       if (manifest.wsDeleted) {
         const localTomb = localData.wsTombstones || {};
         for (const wid in manifest.wsDeleted) { if (!localTomb[wid]) { globalChanged = true; break; } }
@@ -2016,31 +2710,63 @@
         for (const tid in manifest.tplDeleted) { if (!localTtomb[tid]) { globalChanged = true; break; } }
       }
       if (globalChanged) {
-        window.storage._webdavApplyGlobal({
-          rootOrder: manifest.rootOrder,
+        const g = {
           trashOrder: manifest.trashOrder,
-          workspaces: manifest.workspaces,
-          templates: manifest.templates,
           wsDeleted: manifest.wsDeleted,
           tplDeleted: manifest.tplDeleted,
           settings: manifest.settings,
-        });
+        };
+        if (!cloudLed) {
+          g.rootOrder = manifest.rootOrder;
+          g.workspaces = manifest.workspaces;
+          g.templates = manifest.templates;
+        }
+        window.storage._webdavApplyGlobal(g);
         hasDownloads = true;
       }
     }
 
-    // 结构总账（方案2 wire-sync）：优先独立文件，回退清单内嵌。失败忽略，绝不影响主同步。
-    try {
-      const cloudLed = await _loadCloudStructLedger(manifest);
-      if (cloudLed) {
-        if (adoptMode && window.storage._webdavReplaceStructLedger) {
-          // 采纳权威世代：直接以云端总账为准（丢弃本地可能陈旧的总账与删除标记）。
-          window.storage._webdavReplaceStructLedger(cloudLed);
-        } else if (window.storage._webdavApplyStructLedger) {
-          window.storage._webdavApplyStructLedger(cloudLed);
-        }
+    const extraIds = [];
+    const extraSeen = new Set(toDownload);
+    for (let i = 0; i < ledgerMissing.length; i++) {
+      const id = ledgerMissing[i];
+      if (!id || extraSeen.has(id)) continue;
+      if (data.notes[id] || (data.trash && data.trash[id])) continue;
+      if (window.storage.isNoteDeleted && window.storage.isNoteDeleted(id)) continue;
+      if (!(manifest.notes && manifest.notes[id])) continue;
+      const extraTs = _noteVer(manifest.notes[id]);
+      if (_isKnownBadNote(id, extraTs)) continue;
+      if (_isGoneNote(id, extraTs)) continue;
+      extraIds.push(id);
+      extraSeen.add(id);
+    }
+    if (extraIds.length) {
+      if (!_uiSyncing) {
+        _uiSyncing = true;
+        _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'get' });
       }
-    } catch (e) { console.warn('[webdav] 结构总账下载并入失败（忽略，不影响主同步）', e); }
+      try { console.log('[sync-get] 目录有、清单未下', extraIds.length, '篇，补拉正文'); } catch (_) {}
+      const { errors } = await _runPool(extraIds, async (id) => {
+        const note = await _fetchNoteById(id, _noteVer(manifest.notes && manifest.notes[id]));
+        if (note) _fetched.set(id, note);
+      });
+      const extraRl = errors.find(e => e.error instanceof RateLimitError);
+      if (extraRl) throw extraRl.error;
+      for (const id of extraIds) {
+        const remoteNote = _fetched.get(id);
+        if (!remoteNote) continue;
+        const remoteTs = _noteVer(manifest.notes && manifest.notes[id]) || _noteTs(remoteNote.updatedAt);
+        const r = _applyFetchedNote(id, remoteNote, remoteTs, data, 'download');
+        if (r && r.touched) {
+          _lastDownloadedIds.add(id);
+          hasDownloads = true;
+        }
+        if (r && r.merged) _mergedAnyThisGet = true;
+      }
+      if (cloudLed && window.storage._webdavApplyStructLedger) {
+        try { window.storage._webdavApplyStructLedger(cloudLed, { skipMaintain: true, skipOrphan: true }); } catch (_) {}
+      }
+    }
 
     // 标记待下载图片（图片仓库已外置：经 storage.getImageMap 取内存缓存，等后端载入完成再比对，
     // 否则启动早期缓存为空会把"本地其实有"的图片全部误判为待下载）
@@ -2054,10 +2780,8 @@
       }
     }
 
-    // 关键修复：无论本地是否 globalDirty，都先把远端「笔记本 / 模板」并入本地。
-    // 否则 globalDirty 时整体全局应用被跳过，但远端笔记仍会下载，
-    // 其 workspaceId 在本地不存在 → 下面的 reconcileStructure 会把它们全部塞进当前笔记本，
-    // 造成"云端数据没正确归位、全挤在一个本子里"，且该错误归位还会被回传污染其它设备。
+    // 有总账后：本子名字/顺序已由总账定。这里只补「名单上有、总账还没写上」的本子，
+    // 免得刚下的篇找不到本子被塞进当前本。本地优先，不拿名单盖总账。
     if (window.storage._webdavMergeWorkspaces) {
       if (window.storage._webdavMergeWorkspaces(manifest.workspaces, manifest.wsDeleted, manifest.templates, manifest.tplDeleted)) {
         hasDownloads = true;
@@ -2082,7 +2806,7 @@
 
     // 兜底自愈：每次应用远端后，确保没有笔记掉出 rootOrder / 挂在不存在的笔记本上。
     // （_webdavApplyGlobal 内部已会自愈一次；这里覆盖"本地有 globalDirty 而跳过全局应用"的路径。）
-    if (window.storage.reconcileStructure && window.storage.reconcileStructure()) {
+    if (window.storage.reconcileStructure && window.storage.reconcileStructure({ skipDirty: true })) {
       hasDownloads = true;
     }
 
@@ -2095,6 +2819,114 @@
     }
     // v3 账本合并产生了"待上传的融合版" → 排一次上传，让云端尽快收敛到合并结果（debounce，安全可重入）。
     if (_mergedAnyThisGet) schedulePut('ydoc-merged');
+  }
+
+  /** 把已取回的云端一篇落到本地（下载 / 手动对当前篇共用）。
+   *  返回 { changed, touched }：changed=正文可见变化；touched=对齐过基准（含内容本就相同）。 */
+  function _applyFetchedNote(id, remoteNote, remoteTs, data, src) {
+    if (!remoteNote || !data) return { changed: false, touched: false };
+    const localNote = data.notes && data.notes[id];
+    const base = _getBase(id);
+    const dirtyNow = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
+    const remoteHash = _noteHash(remoteNote);
+    const localDiverged = localNote
+      ? (base ? (_noteHash(localNote) !== base.h) : dirtyNow.indexOf(id) >= 0)
+      : false;
+    const sameContent = localNote ? (_noteHash(localNote) === remoteHash) : false;
+    const mergeReason = src === 'reconcile' ? 'merge-reconcile' : 'merge-download';
+    const cleanReason = src === 'reconcile' ? 'clean-reconcile' : 'clean-download';
+    if (localDiverged && !sameContent) {
+      const merged = _tryLedgerMerge(localNote, remoteNote);
+      if (merged) {
+        _backupBeforeOverwrite(id, localNote, mergeReason);
+        window.storage._webdavApplyNote(id, merged);
+        if (merged.parentId == null && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
+        if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]);
+        const appliedM = data.notes && data.notes[id];
+        _setBase(id, appliedM ? _noteHash(appliedM) : remoteHash, remoteTs);
+        return { changed: true, touched: true, merged: true };
+      }
+      const res = _resolveUnmergeableSilently(id, localNote, remoteNote, remoteHash, remoteTs, data);
+      if (res.localWins) {
+        if (window.storage.markNotesDirtyByIds) window.storage.markNotesDirtyByIds([id]);
+      } else if (window.storage.removeDirtyNoteIds) {
+        window.storage.removeDirtyNoteIds([id]);
+      }
+      return { changed: true, touched: true };
+    }
+    if (localNote && !sameContent) _backupBeforeOverwrite(id, localNote, cleanReason);
+    window.storage._webdavApplyNote(id, remoteNote);
+    if (remoteNote.parentId == null && data.rootOrder && !data.rootOrder.includes(id)) data.rootOrder.push(id);
+    if (sameContent && window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+    const applied = data.notes && data.notes[id];
+    _setBase(id, applied ? _noteHash(applied) : remoteHash, remoteTs);
+    return { changed: !sameContent, touched: true };
+  }
+
+  /** 手动同步：无视清单早退，把当前打开的这篇和云端文件对一次（只多 1 次按篇请求）。 */
+  async function _reconcileOpenNote() {
+    let id = null;
+    try { id = window.editor && window.editor.currentId && window.editor.currentId(); } catch (_) {}
+    if (!id) return false;
+    const data = window.storage.getAll();
+    if (!data) return false;
+    if (window.storage.isNoteDeleted && window.storage.isNoteDeleted(id)) return false;
+    let manifest = _lastManifestObj;
+    if (!manifest || !manifest.notes) {
+      try { manifest = await _loadManifestForSync({ allow404: true }); } catch (_) { return false; }
+      if (manifest && manifest.version) _lastManifestObj = manifest;
+    }
+    if (!manifest || !manifest.notes || !manifest.notes[id]) return false;
+    if (manifest.deleted && manifest.deleted[id]) return false;
+    let remoteNote = null;
+    try { remoteNote = await _fetchNoteById(id); }
+    catch (e) {
+      if (e instanceof RateLimitError) throw e;
+      return false;
+    }
+    if (!remoteNote) return false;
+    const remoteTs = _noteVer(manifest.notes[id]) || _noteTs(remoteNote.updatedAt);
+    const r = _applyFetchedNote(id, remoteNote, remoteTs, data, 'reconcile');
+    if (!r || !r.touched) return false;
+    if (r.changed) {
+      if (window.storage.reconcileStructure) window.storage.reconcileStructure({ skipDirty: true });
+      window.storage.save({ immediate: true });
+      _flushSyncBase();
+      const ids = new Set([id]);
+      _lastDownloadedIds = ids;
+      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-downloaded', downloadedNoteIds: ids });
+      if (r.merged) schedulePut('ydoc-merged');
+    } else {
+      _flushSyncBase();
+    }
+    return !!r.changed;
+  }
+
+  async function _pullVersionMismatchedNotes(manifest) {
+    if (!manifest || !manifest.notes) return;
+    const data = window.storage.getAll();
+    if (!data) return;
+    const ids = [];
+    for (const id in manifest.notes) {
+      if (_shouldDownloadNote(id, manifest, data)) ids.push(id);
+    }
+    if (!ids.length) return;
+    try { console.log('[sync-get] 名单未变仍补拉', ids.length, '篇（空篇或版本对不上）'); } catch (_) {}
+    const { errors } = await _runPool(ids, async (id) => {
+      const note = await _fetchNoteById(id);
+      if (!note) return;
+      const remoteV = _noteVer(manifest.notes[id]);
+      const r = _applyFetchedNote(id, note, remoteV, data, 'download');
+      if (r && r.touched) _lastDownloadedIds.add(id);
+    });
+    const rl = errors.find(e => e.error instanceof RateLimitError);
+    if (rl) throw rl.error;
+    if (_lastDownloadedIds && _lastDownloadedIds.size) {
+      if (window.storage.reconcileStructure) window.storage.reconcileStructure({ skipDirty: true });
+      window.storage.save({ immediate: true });
+      _flushSyncBase();
+      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'get-downloaded', downloadedNoteIds: _lastDownloadedIds });
+    }
   }
 
   /** v3 账本自动合并：两端都带 ydoc 账本时，融合两份账本得到合并正文，替代"冒冲突副本"。
@@ -2166,12 +2998,12 @@
       const remoteEntry = manifest.notes[id];
       if (!remoteEntry) continue;               // 远端没有 → 本地新笔记，正常上传
       const base = _getBase(id);
-      const remoteTs = _noteTs(remoteEntry.updatedAt);
-      // 有基准且云端相对基准未变 → 本地权威，安全上传
-      if (base && remoteTs === _noteTs(base.t)) continue;
+      const remoteV = _noteVer(remoteEntry);
+      if (base && _baseVer(base) === remoteV && _noteHash(localNote) === base.h) continue;
+      if (base && _baseVer(base) === remoteV && String(manifest.deviceId || '') === _ensureClientId()) continue;
       // 无基准，或云端相对基准已变：必须先取回远端正文，禁止保守放行裸盖（20260804t1）
       let remoteNote = null;
-      try { remoteNote = await webdavGetNote(`notes/${id}.json`, { allow404: true }); }
+      try { remoteNote = await _fetchNoteById(id); }
       catch (e) { if (e instanceof RateLimitError) throw e; }
       if (!remoteNote) {
         dirtyIds.delete(id);
@@ -2180,9 +3012,10 @@
         continue;
       }
       const remoteHash = _noteHash(remoteNote);
+      const remoteTs = remoteV;
       if (_noteHash(localNote) === remoteHash) {
         if (_metaSig(localNote) === _metaSig(remoteNote)) {
-          // 正文 + 元数据都一致（仅 manifest 时间戳不同）→ 不算冲突：对齐基准、清脏、不重复上传。
+          // 正文 + 元数据都一致（仅名单版本不同）→ 不算冲突：对齐基准、清脏、不重复上传。
           _setBase(id, remoteHash, remoteTs);
           if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
           dirtyIds.delete(id);
@@ -2237,14 +3070,43 @@
     }
   }
 
-  /** Bug A: 重启后 dirtyIds 丢失 —— GET 成功后扫描本地比远端新的笔记，标记为 dirty */
-  function _detectLocallyNewerNotes(manifest) {
+  /** 清单未变早退时仍补传本机已改正文（不下载、不改游标）。
+   *  有清单走完整「本地比云端新」扫描；仅 304、手里没有清单时，只比同步基准指纹。 */
+  function _healUnsyncedLocalNotes(manifest) {
+    if (manifest && typeof manifest === 'object') {
+      _detectLocallyNewerNotes(manifest);
+      return;
+    }
     if (!window.storage || !window.storage.markNotesDirtyByIds) return;
     const data = window.storage.getAll();
+    if (!data || !data.notes) return;
     const base = _loadSyncBase();
     const dirtySet = new Set(window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : []);
     const needUpload = [];
     for (const id in data.notes) {
+      if (dirtySet.has(id)) continue;
+      const b = base[id];
+      // 无基准不在此路径放行（避免基准未加载时整库误传）；有基准且正文相对基准变过 → 补传
+      if (b && _noteHash(data.notes[id]) !== b.h) needUpload.push(id);
+    }
+    if (needUpload.length > 0) {
+      window.storage.markNotesDirtyByIds(needUpload);
+      schedulePut('heal-unchanged:' + needUpload.length);
+    }
+  }
+
+  /** Bug A: 重启后 dirtyIds 丢失 —— GET 成功后扫描本地比远端新的笔记，标记为 dirty */
+  function _detectLocallyNewerNotes(manifest) {
+    if (!window.storage || !window.storage.markNotesDirtyByIds) return;
+    // 硬闸：必须是带 notes 的真名单。缺 notes/deleted 的半份名单会把「云端已删」误判成「云上没有」→ 复活上传。
+    if (!manifest || !manifest.notes) return;
+    const data = window.storage.getAll();
+    const base = _loadSyncBase();
+    const dirtySet = new Set(window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : []);
+    const needUpload = [];
+    const pend = _pendingVers();
+    for (const id in data.notes) {
+      if (pend[id]) continue;
       if (manifest.deleted && manifest.deleted[id]) continue; // 已被远端删除（墓碑）→ 不要重新上传复活
       const remoteEntry = manifest.notes && manifest.notes[id];
       if (!remoteEntry) {
@@ -2257,27 +3119,33 @@
         if (base[id] && !dirtySet.has(id)) continue;
         needUpload.push(id);
       } else {
-        const localTs = _noteTs(data.notes[id].updatedAt);
-        const remoteTs = _noteTs(remoteEntry.updatedAt);
-        if (localTs > remoteTs + 1000) {
-          // 【双保险·上传侧】仅当本地内容相对基准**确实变过**才当"本地更新"重传。
-          //   内容==基准、只是 updatedAt 被顶新（幻影保存/改元数据/时钟偏差）→ 绝不上传，
-          //   免得"停在旧状态、内容没真改"的设备把较新的云端版本覆盖掉（B 顶掉 A）。
-          //   无基准时（极少见）维持原行为放行，避免回归"重启丢脏后真编辑漏传"。
-          const b = base[id];
-          if (!b || _noteHash(data.notes[id]) !== b.h) needUpload.push(id);
-        }
+        const b = base[id];
+        if (b && _noteHash(data.notes[id]) !== b.h) needUpload.push(id);
       }
     }
     if (needUpload.length > 0) {
       window.storage.markNotesDirtyByIds(needUpload);
+      let needStruct = false;
+      for (let i = 0; i < needUpload.length; i++) {
+        const id = needUpload[i];
+        const note = data.notes[id];
+        const remoteEntry = manifest.notes && manifest.notes[id];
+        if (!note) { needStruct = true; break; }
+        if (!remoteEntry) { needStruct = true; break; }
+        if ((manifest.dataFormatVersion || 1) < 4) {
+          const lp = note.parentId == null ? null : note.parentId;
+          const rp = remoteEntry.parentId == null ? null : remoteEntry.parentId;
+          if (lp !== rp || (note.title || '') !== (remoteEntry.title || '')) { needStruct = true; break; }
+        }
+      }
+      if (needStruct && window.storage.markGlobalDirty) window.storage.markGlobalDirty();
       schedulePut('detect-locally-newer:' + needUpload.length);
     }
   }
 
   // ─── PUT（上传变更）────────────────────────────────────────────────────────────
   // strict 含义同 doGet：手动同步时错误原样上抛
-  async function doPut({ force = false, strict = false, freshLedger = false, _schedReason = '' } = {}) {
+  async function doPut({ force = false, strict = false, freshLedger = false, flushIndex = false, _schedReason = '' } = {}) {
     if (!_config || _stopped) return;
     // 口令不一致闸：确认与云端口令不符后绝不上传笔记正文——否则会把本设备这把钥匙的密文
     // 写上云端，造成新旧混钥，所有设备从此反复误报"口令不一致"且无法自愈（曾发生）。
@@ -2286,6 +3154,17 @@
       console.warn('[webdav] 加密口令与云端不一致，暂停上传（待口令核对一致后自动恢复）');
       _emit('cloud-sync', { type: 'webdav-sync-error', error: '加密口令与云端不一致，已暂停上传' });
       if (strict) throw new Error('加密口令与云端数据不一致，已暂停上传：请到 设置 → 同步 核对口令');
+      return;
+    }
+    // 久闲设备闸：连续 7 天没同步过的设备，先完整核对云端（先下后对），核对完成前绝不上传——
+    // 防它把旧内容/旧结构灌回云端（「久闲设备新旧掺杂」的挂账债）。改动留在本地脏集合里不丢。
+    if (_staleGate) {
+      _pendingPut = true;
+      if (Date.now() - _staleGetAt > 30_000) {
+        _staleGetAt = Date.now();
+        console.warn('[webdav] 本机太久没同步，先完整核对云端再上传（改动已留在本机，核对完自动补传）');
+        if (!_syncing) doGet({ force: true, silent: true, full: true });
+      }
       return;
     }
     if (_syncing) { _pendingPut = true; return; }
@@ -2300,26 +3179,36 @@
     }
 
     _syncing = true;
+    _uiSyncing = true;
+    const _tPut = Date.now();
     _emit('cloud-sync', { type: 'webdav-sync-start', detail: 'put' });
     try {
       const data = window.storage.getAll();
       let dirtyIds = new Set(window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : []);
-      const globalDirty = window.storage.isGlobalDirty ? window.storage.isGlobalDirty() : false;
+      let globalDirty = window.storage.isGlobalDirty ? window.storage.isGlobalDirty() : false;
+      let indexDirty = !!(window.storage.isIndexDirty && window.storage.isIndexDirty());
       try {
         console.log('[sync-put-run]', _schedReason || (force ? 'force' : '?'),
-          'globalDirty=', globalDirty, 'dirtyNotes=', dirtyIds.size);
+          'globalDirty=', globalDirty, 'indexDirty=', indexDirty, 'dirtyNotes=', dirtyIds.size);
       } catch (_) {}
 
-      if (dirtyIds.size === 0 && !globalDirty) {
+      if (dirtyIds.size === 0 && !globalDirty && !indexDirty) {
         _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-nothing' });
         return;
       }
+      const startedWithNotes = dirtyIds.size > 0;
 
-      // 先取云端 manifest：既用于「上传前单篇冲突防护」(Fix A)，也作为后续 read-modify-write 的基底。
-      // 损坏时走 _loadManifestForSync 的隔离自愈，不与正常合并逻辑混用。
-      let manifest = await _loadManifestForSync({ allow404: true });
-      _transientFailStreak = 0; // 读到了（含 404）：清空熔断计数
-      // 404 二次确认：manifest 是总账本，假 404 误判成"清单丢失"会把云端清空（曾发生）
+      // 刚拉过的总目录直接用，打字不必每次再读一遍。超过 8 秒或覆盖云端才重读。
+      let manifest = null;
+      const canReuse = !freshLedger && _lastManifestObj && _lastManifestObj.version
+        && (Date.now() - _lastGetTime) < 8000;
+      if (canReuse) {
+        manifest = _lastManifestObj;
+        try { console.log('[sync-put-run] 复用刚拉过的总目录'); } catch (_) {}
+      } else {
+        manifest = await _loadManifestForSync({ allow404: true });
+        _transientFailStreak = 0;
+      }
       if (!manifest) manifest = await _recheckManifest();
       if (!manifest) {
         // 云端 manifest 确实不存在（被删除 / 还未建立）：仅在本地确有内容时才重建，
@@ -2343,38 +3232,108 @@
         _emit('cloud-sync', { type: 'webdav-version-block', remoteFmt: manifest.dataFormatVersion, supported: SUPPORTED_DATA_FORMAT });
         return;
       }
+      manifest = await _ensureV3BackupAndV4Gate(manifest);
+      manifest = await _ensureV5Index(manifest);
 
-      // Fix A：上传前的单篇冲突防护（覆盖远端前必须留底）。会把"远端已被别的设备改过"的脏笔记
-      // 从本次上传中剔除（留底+冲突副本+采纳远端），避免裸覆盖云端较新版本而丢数据。
-      await _guardUploadConflicts(dirtyIds, data, manifest);
-      // 防护可能新增了冲突副本(脏)、移除了被采纳的 id → 重算本次实际待上传集合。
-      // 再剔除「取不到云端、本轮暂缓」的 id（脏标记仍留在 storage，下轮再试）。
-      dirtyIds = new Set(window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : []);
-      for (const id of _deferUploadIds) dirtyIds.delete(id);
-      if (dirtyIds.size === 0 && !globalDirty) {
-        _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-resolved-conflicts' });
-        return;
+      // 重开后脏记号可能只剩按篇：清单里还没有这篇 = 新建，必须走目录账。
+      // v4 起标题/位置只认总账，不再用清单字段判断改名/移动。
+      if (!globalDirty && dirtyIds.size > 0) {
+        for (const id of dirtyIds) {
+          const note = data.notes[id];
+          if (!note) { globalDirty = true; break; }
+          const m = manifest.notes && manifest.notes[id];
+          if (!m) { globalDirty = true; break; }
+        }
       }
 
-      // 上传脏笔记（并发，受请求池限速）
-      if (dirtyIds.size > 0) {
-        const { errors } = await _runPool(dirtyIds, async (id) => {
+      // 一篇一篇过关：先只核对本篇，再传本篇。成功立刻清这篇脏、记下「目录还没交卷」。
+      // 失败不连坐已传成功的篇。上传前防盖只读正在传的这篇，不先扫完全部脏篇。
+      const uploadedIds = new Set();
+      const failedIds = [];
+      let skippedNotes = 0;
+      for (const id of Array.from(dirtyIds)) {
+        if (_stopped) break;
+        const one = new Set([id]);
+        try {
+          await _guardUploadConflicts(one, data, manifest);
+        } catch (e) {
+          if (e instanceof RateLimitError) throw e;
+          failedIds.push(id);
+          console.warn('[webdav] 上传前核对失败，本篇稍后重试:', id, e && e.message);
+          continue;
+        }
+        if (!one.has(id) || _deferUploadIds.has(id)) {
+          skippedNotes++;
+          continue;
+        }
+        try {
           const note = data.notes[id];
-          if (!note) {
-            if (data.trash && data.trash[id]) {
+          if (note) {
+            // 日常上传不得擦墓碑、不得把已删篇再传上去。「覆盖云端」除外（本机就是权威）。
+            if (!freshLedger && manifest.deleted && manifest.deleted[id]) {
+              _backupBeforeOverwrite(id, note, 'remote-delete');
+              window.storage._webdavRemoveNote(id);
+              _delBase(id);
+              if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+              try { window.storage.save({ immediate: true }); } catch (_) {}
+              skippedNotes++;
+              continue;
+            }
+            const nextV = _noteVer(manifest.notes && manifest.notes[id]) + 1;
+            const isNew = !(manifest.notes && manifest.notes[id]) || !_getBase(id);
+            if (!freshLedger && _isEmptyBody(note) && isNew) {
+              uploadedIds.add(id);
+              if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+              if (window.storage.markIndexDirty) window.storage.markIndexDirty(id);
+              indexDirty = true;
+              if (!manifest.notes) manifest.notes = {};
+              manifest.notes[id] = { v: nextV, empty: 1 };
+              _rememberPendingVer(id, nextV);
+              _setBase(id, _noteHash(note), nextV);
+              try { console.log('[sync-put-run] notes：空篇不传正文', id); } catch (_) {}
+            } else {
+              const body = await _prepareYbin(note);
+              await webdavPut(`notes/${id}.ybin`, body);
+              _setHint(id, 'y', nextV);
+              uploadedIds.add(id);
+              if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+              if (window.storage.markIndexDirty) window.storage.markIndexDirty(id);
+              indexDirty = true;
+              if (!manifest.notes) manifest.notes = {};
+              manifest.notes[id] = { v: nextV };
+              _rememberPendingVer(id, nextV);
+              _setBase(id, _noteHash(note), nextV);
+            }
+          } else if (data.trash && data.trash[id]) {
+            if (freshLedger) {
               const body = await _prepareNoteBody(data.trash[id]);
               await webdavPut(`trash/${id}.json`, body);
+            } else {
+              try { console.log('[sync-put-run] notes：回收站不传整篇', id); } catch (_) {}
             }
-            return;
+            uploadedIds.add(id);
+            if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+            if (window.storage.markIndexDirty) window.storage.markIndexDirty(id);
+            indexDirty = true;
+            _delBase(id);
+          } else {
+            uploadedIds.add(id);
+            if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+            if (window.storage.markIndexDirty) window.storage.markIndexDirty(id);
+            indexDirty = true;
+            _delBase(id);
           }
-          const body = await _prepareNoteBody(note);
-          await webdavPut(`notes/${id}.json`, body);
-        });
-        // 上传失败必须上抛：否则会误更新 manifest/基准，导致"看似成功实则没传上去"。
-        const rl = errors.find(e => e.error instanceof RateLimitError);
-        if (rl) throw rl.error;
-        if (errors.length) throw errors[0].error;
+        } catch (e) {
+          if (e instanceof RateLimitError) throw e;
+          failedIds.push(id);
+          console.warn('[webdav] 单篇上传失败，已过关的不重传:', id, e && e.message);
+        }
       }
+      _flushSyncBase();
+      try {
+        console.log('[sync-put-run] notes：逐篇过关 成功=', uploadedIds.size,
+          '失败=', failedIds.length, '跳过=', skippedNotes);
+      } catch (_) {}
 
       // 上传新图片（外置后从内存缓存取；等后端载入完成，避免漏传）
       if (window.storage.imagesReady) await window.storage.imagesReady();
@@ -2383,6 +3342,7 @@
       const _manifestBaseTs = manifest.updatedAt || 0;
       const remoteImages = manifest.images || {};
       manifest.images = manifest.images || {};
+      let imagesUploaded = false;
       {
         const imgHashes = Object.keys(localImages).filter(h => !remoteImages[h]);
         const { errors } = await _runPool(imgHashes, async (hash) => {
@@ -2391,6 +3351,8 @@
           if (binary.length > 0) {
             await webdavPut(`images/${hash}`, binary, _extToMime(ext));
             manifest.images[hash] = ext;
+            _pendingManifestImages[hash] = ext;
+            imagesUploaded = true;
           }
         });
         const rl = errors.find(e => e.error instanceof RateLimitError);
@@ -2398,14 +3360,36 @@
         if (errors.length) throw errors[0].error;
       }
 
-      // 更新 manifest 索引（本轮脏笔记）
-      for (const id of dirtyIds) {
+      indexDirty = indexDirty || !!(window.storage.isIndexDirty && window.storage.isIndexDirty());
+      if (window.storage.getIndexPendingIds) {
+        for (const id of window.storage.getIndexPendingIds()) uploadedIds.add(id);
+      }
+
+      for (const h in _pendingManifestImages) {
+        manifest.images = manifest.images || {};
+        manifest.images[h] = _pendingManifestImages[h];
+      }
+      const needManifest = uploadedIds.size > 0 || globalDirty || indexDirty || imagesUploaded || Object.keys(_pendingManifestImages).length > 0;
+      if (!needManifest) {
+        if (failedIds.length) {
+          _pendingPut = true;
+          setTimeout(() => schedulePut('put-partial-retry'), 2000);
+          _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-partial' });
+        } else {
+          _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-resolved-conflicts' });
+        }
+        return;
+      }
+
+      // 更新清单：只登记本轮已过关的篇。失败的篇不写进目录，以免对端以为有文件。
+      for (const id of uploadedIds) {
         const note = data.notes[id];
         if (note) {
-          manifest.notes[id] = { updatedAt: new Date(note.updatedAt || 0).getTime(), title: note.title || '', parentId: note.parentId == null ? null : note.parentId };
-          // 这篇此刻是"活的"（被显式编辑/导入而标脏）→ 清掉它残留的删除墓碑，
-          // 让"找回/导入"权威生效并同步到其它设备，避免被旧墓碑再次抹掉。
-          if (manifest.deleted && manifest.deleted[id]) delete manifest.deleted[id];
+          if (!manifest.notes[id] || !_noteVer(manifest.notes[id])) {
+            manifest.notes[id] = { v: 1 };
+          }
+          // 只有「覆盖云端」才允许本机活篇擦掉云端墓碑；日常上传绝不复活。
+          if (freshLedger && manifest.deleted && manifest.deleted[id]) delete manifest.deleted[id];
         } else if (data.trash && data.trash[id]) {
           manifest.trash = manifest.trash || {};
           manifest.trash[id] = { updatedAt: new Date(data.trash[id].updatedAt || data.trash[id].deletedAt || 0).getTime() };
@@ -2422,7 +3406,15 @@
           if (manifest.trash) delete manifest.trash[id];
           manifest.deleted = manifest.deleted || {};
           manifest.deleted[id] = Date.now();
-          if (hadNote) { try { await webdavDelete(`notes/${id}.json`); } catch (_) {} }
+          if (hadNote) {
+            const h = _hintOf(id);
+            if (h && h.k === 'j') {
+              try { await webdavDelete(`notes/${id}.json`); } catch (_) {}
+            } else {
+              try { await webdavDelete(`notes/${id}.ybin`); } catch (_) {}
+            }
+            _clearHint(id);
+          }
           if (hadTrash) { try { await webdavDelete(`trash/${id}.json`); } catch (_) {} }
         }
       }
@@ -2456,14 +3448,7 @@
           manifest.settings
         );
 
-        // 结构脏时才全量刷新标题（云端管理扫描用）；纯打字路径不跑，减少无谓改写。
-        for (const id in manifest.notes) {
-          const ln = data.notes[id];
-          if (ln) {
-            manifest.notes[id].title = ln.title || '';
-            manifest.notes[id].parentId = ln.parentId == null ? null : ln.parentId;
-          }
-        }
+        // v4：标题/父子只认结构总账，清单不再写这两项。
 
         // 结构总账：合并后写入独立文件，清单不再内嵌大块（20260806t1）。
         let ledgerOut = null;
@@ -2471,6 +3456,14 @@
           if (window.storage._webdavGetStructLedger) {
             if (freshLedger) {
               ledgerOut = window.storage._webdavGetStructLedger();
+            } else if (String(manifest.deviceId || '') === _ensureClientId()) {
+              // 总目录还是自己写的：不必先读云端总账，直接传本地这一本（删/建/改名提速）。
+              ledgerOut = window.storage._webdavGetStructLedger();
+              if (!ledgerOut && window.storage._webdavMarkStructLedgerRooted) {
+                window.storage._webdavMarkStructLedgerRooted();
+                ledgerOut = window.storage._webdavGetStructLedger();
+              }
+              try { console.log('[sync-put-run] structure：跳过读云端总账（仍是本机目录）'); } catch (_) {}
             } else {
               const cloudLedger = await _loadCloudStructLedger(manifest);
               if (cloudLedger && window.storage._webdavApplyStructLedger) {
@@ -2482,26 +3475,48 @@
             }
           }
         } catch (e) { console.warn('[webdav] 结构总账上传处理失败（忽略，不影响主同步）', e); }
-        await _persistStructLedgerExternal(manifest, ledgerOut);
+        await _persistStructLedgerExternal(manifest, ledgerOut, { forceFull: !!freshLedger });
         _purgeOldDeleted(manifest);
-        try { console.log('[sync-put-run] structure：写瘦清单+结构总账'); } catch (_) {}
+        try { console.log('[sync-put-run] structure：写瘦清单+结构（整本或一小段）'); } catch (_) {}
       } else {
         // 纯正文/图片：只剥内嵌总账字段，绝不 PUT struct-ledger.json
         await _persistStructLedgerExternal(manifest, null);
+        const deferCatalog = !freshLedger && !flushIndex && !imagesUploaded && uploadedIds.size > 0;
+        if (deferCatalog) {
+          _lastManifestObj = manifest;
+          _lastPutTime = Date.now();
+          for (const id of uploadedIds) {
+            const note = data.notes[id];
+            if (note && manifest.notes[id]) _setBase(id, _noteHash(note), _noteVer(manifest.notes[id]));
+            else _delBase(id);
+          }
+          _flushSyncBase();
+          if (window.storage.save) window.storage.save({ immediate: true });
+          _scheduleDeferredCatalog();
+          if (failedIds.length) {
+            _pendingPut = true;
+            setTimeout(() => schedulePut('put-partial-retry'), 2000);
+          }
+          try { console.log('[sync-put-run] content：只传正文（名单稍后交）', 'uploaded=', uploadedIds.size); } catch (_) {}
+          _emit('cloud-sync', { type: 'webdav-sync-ok', detail: failedIds.length ? 'put-partial' : 'put-content', uploaded: uploadedIds.size });
+          return;
+        }
         try { console.log('[sync-put-run] content：写瘦清单（不重写结构总账）'); } catch (_) {}
       }
 
-      // 条件写：写回前再确认云端 manifest 没被别的设备抢先改过（乐观并发控制）。
-      // 若已变化 → 放弃本次写（不清 dirty、不立基准），稍后基于新 manifest 重新合并重试，
-      // 避免用我们手里的旧 manifest 覆盖掉对方刚写入的更新而丢数据。
-      const _freshManifest = await webdavGetJson('manifest.json', { allow404: true });
-      if (_freshManifest && Number(_freshManifest.updatedAt || 0) !== Number(_manifestBaseTs || 0)) {
-        _pendingPut = true;
-        setTimeout(() => schedulePut('put-deferred-concurrent'), 1500);
-        _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-deferred-concurrent' });
-        return;
+      if (!freshLedger) {
+        // 日常交目录不再先读一遍防抢先：写完立刻读回对；覆盖云端仍走完整核对。
+      } else {
+        const _freshManifest = await webdavGetJson('manifest.json', { allow404: true });
+        if (_freshManifest && Number(_freshManifest.updatedAt || 0) !== Number(_manifestBaseTs || 0)) {
+          _pendingPut = true;
+          setTimeout(() => schedulePut('put-deferred-concurrent'), 1500);
+          _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put-deferred-concurrent' });
+          return;
+        }
       }
 
+      manifest.rev = (Number(manifest.rev) || 0) + 1;
       if (!manifest.epoch) manifest.epoch = 1;
       // 数据格式版本：本机为 v2(JSON)。若云端还停在旧格式(<本机) → 本机是首个推送 JSON 全集的设备：
       // 提升 manifest.dataFormatVersion 并 epoch++，使其它设备进入「采纳模式」对齐到 JSON 全集
@@ -2518,40 +3533,53 @@
       manifest.updatedAt = Date.now();
       manifest.deviceId = _ensureClientId();
       if (!manifest.version) manifest.version = 2;
+      _applyPendingVers(manifest);
 
-      await _putManifestVerified(manifest, manifestEtag);
-      _casFailStreak = 0; _casForceUnconditional = false; // 原子写成功：复位被抢先计数
+      if (freshLedger) {
+        await _putManifestVerified(manifest, manifestEtag);
+      } else {
+        try {
+          await _putManifestCheap(manifest);
+        } catch (cheapErr) {
+          console.warn('[webdav] 便宜核对失败，改走完整核对', cheapErr && cheapErr.message);
+          await _putManifestVerified(manifest, '');
+        }
+      }
+      _casFailStreak = 0; _casForceUnconditional = false;
       _rememberManifestCursor(manifest);
       _lastPutTime = Date.now();
       try {
-        console.log('[sync-put-ok] 清单已确认落盘', 'globalDirty=', globalDirty, 'dirtyNotes=', dirtyIds.size);
+        console.log('[sync-put-ok] 清单已写入', freshLedger ? '完整核对' : '日常不立刻对',
+          'globalDirty=', globalDirty, 'uploaded=', uploadedIds.size, 'failed=', failedIds.length);
       } catch (_) {}
 
-      // 立基准：本机这些笔记刚成功上云，记下它们的内容指纹 + 写入的远端时间戳
-      for (const id of dirtyIds) {
+      for (const id of uploadedIds) {
         const note = data.notes[id];
-        if (note && manifest.notes[id]) _setBase(id, _noteHash(note), manifest.notes[id].updatedAt || 0);
-        else _delBase(id); // 已删除/入回收站 → 清掉基准
+        if (note && manifest.notes[id]) _setBase(id, _noteHash(note), _noteVer(manifest.notes[id]));
+        else _delBase(id);
       }
       _flushSyncBase();
 
-      // 只清除已上传的 dirtyIds
-      if (window.storage.removeDirtyNoteIds) {
-        window.storage.removeDirtyNoteIds(dirtyIds);
-      } else if (window.storage.clearDirtyNoteIds) {
-        window.storage.clearDirtyNoteIds();
-      }
+      _pendingManifestImages = {};
       if (globalDirty && window.storage.clearGlobalDirty) window.storage.clearGlobalDirty();
+      if (window.storage.clearIndexDirty) window.storage.clearIndexDirty();
+      _clearPendingVers();
+      if (_catalogFlushTimer) { clearTimeout(_catalogFlushTimer); _catalogFlushTimer = null; }
+      if (window.storage.save) window.storage.save({ immediate: true });
+
+      if (failedIds.length) {
+        _pendingPut = true;
+        setTimeout(() => schedulePut('put-partial-retry'), 2000);
+      }
 
       _backoffMs = 30_000;
-      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: 'put' });
+      _emit('cloud-sync', { type: 'webdav-sync-ok', detail: failedIds.length ? 'put-partial' : 'put', uploaded: uploadedIds.size });
 
     } catch (e) {
       if (e instanceof RateLimitError) {
         _handleRateLimit();
       } else if (e instanceof PreconditionFailedError) {
-        // 被抢先：manifest 在"读→改"间被别的设备更新。不清 dirty（清 dirty 的代码在 PUT 成功之后，
-        // 本次未执行到）、不立基准、不报错；下一轮重新读取合并后重试。连续被抢则退化为普通写避免空转。
+        // 被抢先：目录没写成。已过关的正文不清回脏；目录脏留下，下一轮重交卷。
         _casFailStreak++;
         if (_casFailStreak >= 2) _casForceUnconditional = true;
         _pendingPut = true;
@@ -2569,6 +3597,8 @@
       // 手动同步：如实上抛真实结果；但 412 是"已自动重排重试"的良性信号，不当失败上报。
       if (strict && !(e instanceof PreconditionFailedError)) throw e;
     } finally {
+      try { console.log('[sync-put] 结束', (Date.now() - _tPut) + 'ms'); } catch (_) {}
+      _uiSyncing = false;
       _syncing = false;
       _drainPending();
     }
@@ -2603,9 +3633,9 @@
     {
       const { errors } = await _runPool(Object.keys(data.notes), async (id) => {
         const note = data.notes[id];
-        const body = await _prepareNoteBody(note);
-        await webdavPut(`notes/${id}.json`, body);
-        manifest.notes[id] = { updatedAt: new Date(note.updatedAt || note.createdAt || 0).getTime(), title: note.title || '', parentId: note.parentId == null ? null : note.parentId };
+        const body = await _prepareYbin(note);
+        await webdavPut(`notes/${id}.ybin`, body);
+        manifest.notes[id] = { v: 1 };
         uploadedNoteIds.add(id);
       });
       const rl = errors.find(e => e.error instanceof RateLimitError);
@@ -2660,10 +3690,11 @@
         const merged = window.storage._webdavGetStructLedger();
         if (merged) {
           if (window.storage._webdavMarkStructLedgerRooted) window.storage._webdavMarkStructLedgerRooted();
-          await _persistStructLedgerExternal(manifest, merged);
+          await _persistStructLedgerExternal(manifest, merged, { forceFull: true });
         }
       }
     } catch (e) { console.warn('[webdav] 首次同步结构总账写入失败（忽略）', e); }
+    manifest.rev = 1;
     manifest.updatedAt = Date.now();
     manifest.deviceId = _ensureClientId();
 
@@ -2674,7 +3705,7 @@
 
     // 立基准：首次同步把本地所有笔记当作"已同步"的基准点
     for (const id in data.notes) {
-      if (manifest.notes[id]) _setBase(id, _noteHash(data.notes[id]), manifest.notes[id].updatedAt || 0);
+      if (manifest.notes[id]) _setBase(id, _noteHash(data.notes[id]), _noteVer(manifest.notes[id]));
     }
     _flushSyncBase();
 
@@ -2688,7 +3719,7 @@
   }
 
   function _createEmptyManifest() {
-    return { version: 2, epoch: 1, dataFormatVersion: _localDataFormat(), updatedAt: 0, deviceId: _ensureClientId(), notes: {}, trash: {}, images: {}, deleted: {}, wsDeleted: {}, tplDeleted: {} };
+    return { version: 2, epoch: 1, rev: 0, dataFormatVersion: _localDataFormat(), updatedAt: 0, deviceId: _ensureClientId(), notes: {}, trash: {}, images: {}, deleted: {}, wsDeleted: {}, tplDeleted: {} };
   }
 
   /** 墓碑时间戳归一化：规范是毫秒数字，但历史版本曾误写 ISO 字符串，这里统一转数字兼容旧数据 */
@@ -2713,13 +3744,16 @@
     if (!_config || _paused || _stopped) return;
     if (!_hasDirtyData()) return;
     try {
-      const ids = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
-      const g = window.storage.isGlobalDirty ? window.storage.isGlobalDirty() : false;
-      console.log('[sync-put-sched]', reason || '?', 'globalDirty=', g,
-        'dirtyNotes=', ids.length, ids.length ? ids.slice(0, 8) : []);
+      if (window.__MD_DEBUG__) {
+        const ids = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
+        const g = window.storage.isGlobalDirty ? window.storage.isGlobalDirty() : false;
+        console.log('[sync-put-sched]', reason || '?', 'globalDirty=', g,
+          'dirtyNotes=', ids.length, ids.length ? ids.slice(0, 8) : []);
+      }
     } catch (_) {}
     clearTimeout(_putTimer);
     _putTimer = setTimeout(() => {
+      _putTimer = null;
       if (_syncing) {
         // 如果正在同步，延后重试
         _putTimer = setTimeout(() => schedulePut(reason || 'retry-busy'), 2000);
@@ -2734,20 +3768,27 @@
     }, _putDebounceMs);
   }
 
+  function flushIndex() {
+    if (!_config || _stopped || !_hasDirtyData()) return;
+    if (_syncing) { _pendingPut = true; return; }
+    clearTimeout(_putTimer);
+    doPut({ flushIndex: true, _schedReason: 'flush-index' });
+  }
+
   function flushPutOnBlur() {
     if (!_config || _stopped || !_hasDirtyData()) return;
     if (Date.now() - _lastBlurPutTime < BLUR_PUT_COOLDOWN_MS) return;
     if (_syncing) { _pendingPut = true; return; }
     clearTimeout(_putTimer);
     _lastBlurPutTime = Date.now();
-    doPut({ _schedReason: 'blur' });
+    doPut({ flushIndex: true, _schedReason: 'blur' });
   }
 
-  function flushPutOnHide() {
+  async function flushPutOnHide() {
     if (!_config || _stopped || !_hasDirtyData()) return;
     if (_syncing) { _pendingPut = true; return; }
     clearTimeout(_putTimer);
-    doPut({ _schedReason: 'hide' });
+    await doPut({ flushIndex: true, _schedReason: 'hide' });
   }
 
   // ─── 手动同步 ────────────────────────────────────────────────────────────────
@@ -2770,10 +3811,12 @@
       // 再上传本地改动。避免"先推"把另一台设备的同篇更新静默覆盖。
       // strict：失败必须上抛——以前 doGet 把错误内部消化掉，"立即同步"明明失败却显示"同步完成"，
       // 用户因此以为同步没问题、错误提示是误报。
-      await doGet({ force: true, strict: true });
+      // full：手动同步 = 最彻底的一次核对（整份读名单、名单未变也补拉补对、销已传未交的账、对当前篇）。
+      // 核对本身只多花本地比对功夫；只有真发现不一致才会去下载那几篇，账都对得上时就一两秒。
+      await doGet({ force: true, strict: true, full: true });
       downloaded = (_lastDownloadedIds && _lastDownloadedIds.size) || 0;
       if (_hasDirtyData()) {
-        await doPut({ force: true, strict: true });
+        await doPut({ force: true, strict: true, flushIndex: true });
       }
       return { downloaded };
     } finally {
@@ -2791,7 +3834,7 @@
   function _onUserInteraction() {
     if (_isSilent) {
       _isSilent = false;
-      doGet();
+      doGet({ silent: true });
     }
     _resetSilenceTimer();
   }
@@ -2821,7 +3864,8 @@
         return;
       }
       _pendingWakeGet = false;
-      doGet({ force: true });
+      // 新开一轮先拉后传。正在传时 doGet 会排队，不打断上传。怎么拉由 _openGetOpts 一处决策。
+      doGet(_openGetOpts());
     }, WAKE_GET_DELAY_MS);
   }
 
@@ -2883,7 +3927,27 @@
     _registerListeners();
     _resetSilenceTimer();
     _startPolling();
-    setTimeout(() => doGet({ force: true }), 1000);
+    setTimeout(() => doGet(_openGetOpts()), 1000);         // 怎么拉由 _openGetOpts 一处决策（含久闲完整核对）
+    _scheduleFullCheck(3 * 60_000);                        // 每日慢核对：打开约 3 分钟后挑空闲跑，绝不挡打开
+  }
+
+  // ─── 每日慢核对：后台静默、只挑空闲时跑 ─────────────────────────────────────
+  // 快路（跳过空转、名单稍后交、自己写的不补拉）省下的核对，由这条慢路每天兜一遍：
+  // 不带旧标记整份读名单、名单未变也补拉补对、销「已传未交」的账。跑一次约几秒、全程后台，不影响使用。
+  function _scheduleFullCheck(delayMs) {
+    clearTimeout(_fullCheckTimer);
+    _fullCheckTimer = setTimeout(_maybeFullCheck, delayMs);
+  }
+  function _maybeFullCheck() {
+    if (_stopped || !_config) return;
+    _scheduleFullCheck(60 * 60_000);                       // 页面常驻：不管这次跑不跑，一小时后再看
+    if (Date.now() - _lastFullCheckAt < FULL_CHECK_INTERVAL_MS) return;
+    const busy = _paused || _syncing || !navigator.onLine
+      || (typeof document !== 'undefined' && document.hidden)
+      || _hasDirtyData();
+    if (busy) { _scheduleFullCheck(10 * 60_000); return; } // 正忙/有待传/在后台：10 分钟后再试
+    try { console.log('[sync-get] 每日慢核对（后台静默）'); } catch (_) {}
+    doGet({ force: true, silent: true, full: true });
   }
 
   // 周期性后台轮询：即使窗口一直处于前台、用户也没切走，也能定期拉取云端变更。
@@ -2905,7 +3969,7 @@
         if (now - _lastIdlePollAt < IDLE_POLL_INTERVAL_MS) return;
         _lastIdlePollAt = now;
       }
-      doGet({ silent: true }); // 非强制：受 GET_COOLDOWN_MS 节流，无变更时早退、不闪徽标
+      doGet({ silent: true }); // 非强制；刚写过且对面不在会跳过空转
     }, _pollIntervalMs);
   }
   function _stopPolling() {
@@ -2919,6 +3983,7 @@
     clearTimeout(_putTimer);
     clearTimeout(_silenceTimer);
     clearTimeout(_pauseResumeTimer);
+    clearTimeout(_fullCheckTimer); _fullCheckTimer = null;
     _stopPolling();
     if (_imageDownloadTimer) { clearTimeout(_imageDownloadTimer); _imageDownloadTimer = null; }
     _removeListeners();
@@ -2942,11 +4007,15 @@
   }
 
   // ─── 排队与等待 ──────────────────────────────────────────────────────────────
-  // 先拉后推：GET/PUT 都排队时优先 GET，避免「该下没下却先推本地」放大跳过下载的洞。
+  // 新开一轮先拉后传。正在传时进来的拉只排队，传完再拉，拉完再传剩下的。
   function _drainPending() {
     if (_pendingGet) {
       _pendingGet = false;
-      setTimeout(() => doGet({ force: true }), 100);
+      if (_canSkipIdleGet()) {
+        if (_pendingPut && _hasDirtyData()) setTimeout(() => doPut(), 100);
+        return;
+      }
+      setTimeout(() => doGet(_openGetOpts()), 100);
       return;
     }
     if (_pendingPut) {
@@ -3038,7 +4107,8 @@
     if (!window.storage) return false;
     const dirtyIds = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
     const globalDirty = window.storage.isGlobalDirty ? window.storage.isGlobalDirty() : false;
-    return dirtyIds.length > 0 || globalDirty;
+    const indexDirty = !!(window.storage.isIndexDirty && window.storage.isIndexDirty());
+    return dirtyIds.length > 0 || globalDirty || indexDirty;
   }
 
   /** 上传合并：本地在前，追加仅远端有的 id，去重（绝不丢远端 id） */
@@ -3083,13 +4153,77 @@
   }
 
   async function _prepareNoteBody(note) {
-    // frac 不写进按篇文件：它只由结构总账权威同步。写进文件会和总账互踩、且陈旧 frac 回传会反复重排。
-    let body = note;
-    if (note && 'frac' in note) { body = Object.assign({}, note); delete body.frac; }
-    const json = JSON.stringify(body);
+    // 位置跟着新建走：对端还没有这篇时用文件里的 frac 落座（含子笔记「在父笔记下」的位置）。
+    // 已有笔记仍由总账覆盖（_webdavApplyNote 保留本地 frac），不把文件当第二套裁判。
+    const json = JSON.stringify(note);
     if (_config && _config.encryptNotes) return await notesEncrypt(json);
     return json;
   }
+  async function _prepareYbin(note) {
+    let ydoc = note && note.ydoc;
+    let doc = (note && note.doc) || null;
+    if (!ydoc && doc) {
+      try {
+        const Y = window.__ydoc;
+        if (Y && Y.ready && Y.ready()) ydoc = Y.build(doc);
+      } catch (_) {}
+    }
+    // 只有 content(markdown) 的笔记（导入后从未打开）：就地解析成 doc 再建账本一起上传。
+    // 否则包里 doc/ydoc 双空，对端收到只有标题的空正文；对端再一改还会反盖掉本机原文（t18 堵洞）。
+    // parseMdToDoc + 创世 clientID=0 均确定性——本机日后首开建的账本与这份同根，合并不重复。
+    if (!ydoc && !doc && note && (note.content || '').trim()) {
+      try {
+        const Y = window.__ydoc;
+        const p = window.editor && window.editor.parseMdToDoc;
+        if (Y && Y.ready && Y.ready() && typeof p === 'function') {
+          const d = p(note.content);
+          if (d && d.type === 'doc') { doc = d; ydoc = Y.build(d); }
+        }
+      } catch (_) {}
+    }
+    // ── C3（t21）：有账本 → 云端只存账本，正文不再重复入包（体积约减半）──────────────
+    //   收端 _hydrateYbin 一直是「有账本就从账本重算正文、扔掉包里那份」，故包里的 doc 本来就没人用。
+    //   上传前顺手对账：账本还原的正文若与手头正文不一致（极老失修账本），把正文并入**现有**账本
+    //   （__ydoc.update 保留历史，绝不重建创世 → 不会与对端账本分家造成重复）后再传。
+    //   注意：自愈只改「包里」的账本、不回写本地（上传中 _setNoteYdoc 会再标脏 → 幻影上传循环）；
+    //   本地失修账本待该篇下次打开由 _maintainLedger 归正。引擎未就绪则保守带上正文（行为同旧版）。
+    if (ydoc && doc) {
+      try {
+        const Y = window.__ydoc;
+        if (Y && Y.ready && Y.ready()) {
+          // 规范化比较（经 schema 往返）——账本还原的 JSON 与编辑器 JSON 可能仅键序/默认值形态不同，
+          //   语义相同不算失修，防止每次上传都误触自愈。规范化不可用才退回原样比较。
+          const a = _canonDocStr(doc), b = _canonDocStr(Y.toDoc(ydoc));
+          const mismatch = (a != null && b != null) ? (a !== b) : (JSON.stringify(Y.toDoc(ydoc)) !== JSON.stringify(doc));
+          if (mismatch) {
+            ydoc = Y.update(ydoc, doc);
+            if (!_healWarned[note.id]) { _healWarned[note.id] = 1; console.warn('[webdav] 上传前对账：账本与正文不一致，已把正文并入账本随包自愈', note.id); }
+          }
+          doc = null; // 云端只存账本
+        }
+      } catch (_) {}
+    }
+    const payload = {
+      id: note && note.id,
+      ydoc: ydoc || '',
+      doc,       // C3 后：引擎就绪时恒为 null（云端只存账本）；引擎未就绪保守带上，行为同旧版
+      content: (!ydoc && note && note.content) ? note.content : undefined,
+      updatedAt: note && note.updatedAt,
+    };
+    const json = JSON.stringify(payload);
+    if (_config && _config.encryptNotes) return await notesEncrypt(json);
+    return json;
+  }
+
+  /** 规范化正文 JSON（经编辑器 schema 往返）以便语义比较；不可用时返回 null（调用方跳过比较）。 */
+  function _canonDocStr(doc) {
+    try {
+      const ed = window.editor && window.editor.instance && window.editor.instance();
+      if (!ed || !ed.schema || !doc) return null;
+      return JSON.stringify(ed.schema.nodeFromJSON(doc).toJSON());
+    } catch (_) { return null; }
+  }
+  let _healWarned = Object.create(null); // 上传自愈告警：每篇每会话至多一次，防刷屏
 
   async function _decodeNoteBody(raw) {
     if (typeof raw === 'string' && _config && _config.encryptNotes) {
@@ -3131,6 +4265,24 @@
       ]);
       const deleted = (manifest && manifest.deleted) || {};
       const data = window.storage.getAll();
+      // 标题/层级来源（t23 修）：v4 起清单只记版本号、v5 正文包也无 title 字段，
+      //   真身在结构总账——本地笔记直接读，本地没有的查本机结构总账（结构总在正文之前同步到）。
+      //   两处都查不到的才留给逐篇读正文兜底（只对老 .json 包有效）。
+      let led = null;
+      try {
+        const W = window.__wsdoc;
+        const b64 = window.storage._webdavGetStructLedger && window.storage._webdavGetStructLedger();
+        if (W && W.ready && W.ready() && b64) led = W.toData(b64);
+      } catch (_) { led = null; }
+      const _metaOf = (id) => {
+        const ln = data.notes && data.notes[id];
+        if (ln) return { title: ln.title || '', parentId: ln.parentId == null ? null : ln.parentId };
+        const tn = data.trash && data.trash[id];
+        if (tn) return { title: tn.title || '', parentId: tn.parentId == null ? null : tn.parentId };
+        const le = led && ((led.notes && led.notes[id]) || (led.trash && led.trash[id]));
+        if (le) return { title: le.title || '', parentId: le.parentId == null ? null : le.parentId };
+        return null;
+      };
       const found = [];   // 仅"本地缺失且未删除"——可恢复
       const all = [];     // 云端全部笔记（带状态），供"查看全部"用
       const seen = new Set();
@@ -3141,8 +4293,8 @@
         try { name = decodeURIComponent(name); } catch (_) {}
         name = name.replace(/[#?].*$/, '');
         name = name.substring(name.lastIndexOf('/') + 1);
-        if (!/\.json$/i.test(name)) continue;
-        const id = name.replace(/\.json$/i, '');
+        if (!/\.(json|ybin)$/i.test(name)) continue;
+        const id = name.replace(/\.(json|ybin)$/i, '');
         if (!id || seen.has(id)) continue;
         seen.add(id);
         totalSize += (e.size || 0);
@@ -3152,15 +4304,16 @@
         if (data.notes && data.notes[id]) status = 'local';        // 本地已有
         else if (data.trash && data.trash[id]) status = 'trash';   // 回收站已有
         else if (deleted[id]) status = 'deleted';                  // 墓碑（已删除记录）
-        // 标题与层级直接取自 manifest（上传时已写入），无需逐篇读取
+        // 老清单（<v4）还随清单带 title/parentId，先取；新云端走 _metaOf（本地/结构总账）
         const meta = (manifest && manifest.notes && manifest.notes[id]) || null;
         const hasTitleMeta = !!(meta && typeof meta.title === 'string');
+        const m = hasTitleMeta ? { title: meta.title, parentId: ('parentId' in meta) ? meta.parentId : null } : _metaOf(id);
         const item = {
           id,
-          title: hasTitleMeta ? meta.title : '',
-          parentId: meta && ('parentId' in meta) ? meta.parentId : null,
+          title: (m && m.title) || '',
+          parentId: m ? m.parentId : null,
           updatedAt: mtime, size: e.size, _note: null,
-          _titleLoaded: hasTitleMeta, status,
+          _titleLoaded: !!m, status,
         };
         all.push(item);
         if (status === 'missing') found.push(item); // 同一对象引用，两个视图共享
@@ -3206,7 +4359,7 @@
     if (!todo.length) return { loaded: 0, stopped: false };
     let loaded = 0;
     const { errors } = await _runPool(todo, async (it) => {
-      const note = await webdavGetNote(`notes/${it.id}.json`, { allow404: true });
+      const note = await _fetchNoteById(it.id);
       it._titleLoaded = true;
       if (note && typeof note === 'object') {
         it._note = note;
@@ -3221,6 +4374,129 @@
     return { loaded, stopped: false };
   }
 
+  // ─── 云端清扫（E1；t22 上线，t23 改全自动静默）────────────────────────────────
+  // 清掉 notes/ 目录里 v5 搬家前残留的按篇旧格式文件 <id>.json：
+  //   - 同 id 已有 .ybin（搬家已重传）或 id 是墓碑 → 旧文件纯属残留，直接删；
+  //   - 仅剩 .json 的活笔记 → 先读云端这份 → 转打成 .ybin 上传 → 再删 .json（先立新再拆旧，中途断了也不丢）；
+  //   - 读不出的（口令不一致/文件损坏）一律跳过不删，绝不冒险。
+  // 只动 notes/ 目录；trash/<id>.json 是回收站现行格式，不算残留。
+  // 自动路径：每次同步成功后 _autoSweepTick 悄悄清一小口（限流友好），进度记一本账 sweep 字段；
+  //   清完记 done=1，此后零开销。换账号自动重头扫（_acct 随账号重建）。
+  const SWEEP_CHUNK = 30;                 // 每口最多处理的文件数（每个 1~3 个请求）
+  const SWEEP_TICK_GAP_MS = 5 * 60_000;   // 两口之间至少间隔
+  let _sweepBusy = false;
+
+  /** 列目录建残留清单：返回 [{i:id, y:是否已有新格式}]；无残留返回 []。 */
+  async function _sweepScan() {
+    const entries = await webdavPropfind('notes');
+    const jsonIds = new Set(), ybinIds = new Set();
+    for (const e of entries) {
+      if (!e.href || /\/$/.test(e.href)) continue;
+      let name = e.href;
+      try { name = decodeURIComponent(name); } catch (_) {}
+      name = name.replace(/[#?].*$/, '');
+      name = name.substring(name.lastIndexOf('/') + 1);
+      if (name === 'manifest.json' || name === 'manifest.json.tmp') continue;
+      if (/\.ybin$/i.test(name)) ybinIds.add(name.replace(/\.ybin$/i, ''));
+      else if (/\.json$/i.test(name)) jsonIds.add(name.replace(/\.json$/i, ''));
+    }
+    return [...jsonIds].map((id) => ({ i: id, y: ybinIds.has(id) ? 1 : 0 }));
+  }
+
+  /** 处理清单前 limit 项（就地从 items 移除已处理项）。返回 { removed, converted, skipped, rateLimited }。 */
+  async function _sweepProcess(items, limit, onProgress, progressBase, progressTotal) {
+    let manifest = null;
+    try { manifest = await webdavGetJson('manifest.json', { allow404: true }); } catch (_) {}
+    const deleted = (manifest && manifest.deleted) || {};
+    let removed = 0, converted = 0, skipped = 0;
+    for (let n = 0; n < limit && items.length; n++) {
+      const it = items[0];
+      if (typeof onProgress === 'function') { try { onProgress(progressBase + n + 1, progressTotal); } catch (_) {} }
+      try {
+        if (!it.y && !deleted[it.i]) {
+          // 活笔记只剩旧格式文件：以云端这份为准转成新格式（不掺本地状态，避免盖掉云端较新内容）
+          const note = await webdavGetNote('notes/' + it.i + '.json', { allow404: true });
+          if (!note) { items.shift(); removed++; continue; } // 文件已不在，视作清完
+          await webdavPut('notes/' + it.i + '.ybin', await _prepareYbin(note));
+          _setHint(it.i, 'y', (manifest && manifest.notes && manifest.notes[it.i] && manifest.notes[it.i].v) || 0);
+          converted++;
+        }
+        await webdavDelete('notes/' + it.i + '.json');
+        items.shift();
+        removed++;
+      } catch (e) {
+        if (e instanceof RateLimitError) return { removed, converted, skipped, rateLimited: true };
+        items.shift();
+        skipped++; // 解不开/写失败：留在云端不删（本轮不再重试，避免死循环）
+      }
+    }
+    return { removed, converted, skipped, rateLimited: false };
+  }
+
+  /** 自动清扫：每次同步成功后被叫一下，静默清一小口。全部完成后 done=1 永不再扫。 */
+  async function _autoSweepTick() {
+    if (_sweepBusy || _stopped || !_config || _paused || _syncing) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (!navigator.onLine) return;
+    const led = _ledger();
+    if (!led.account) return;
+    const sw = led.sweep;
+    if (sw && sw.done) return;
+    if (sw && Date.now() - (sw.at || 0) < SWEEP_TICK_GAP_MS) return;
+    _sweepBusy = true;
+    try {
+      const s = led.sweep || (led.sweep = { removed: 0, converted: 0, skipped: 0 });
+      s.at = Date.now();
+      if (!Array.isArray(s.pend)) {
+        s.pend = await _sweepScan();
+        if (!s.pend.length) {
+          s.done = 1; s.pend = null; _saveLedger();
+          console.log('[webdav] 云端无旧格式残留，清扫收官');
+          return;
+        }
+        console.log('[webdav] 云端旧格式残留 ' + s.pend.length + ' 个，开始后台分批清扫');
+      }
+      _saveLedger();
+      const r = await _sweepProcess(s.pend, SWEEP_CHUNK);
+      s.removed += r.removed; s.converted += r.converted; s.skipped += r.skipped;
+      if (!s.pend.length) {
+        s.done = 1; s.pend = null;
+        console.log('[webdav] 云端清扫完成：删旧文件 ' + s.removed + '，其中转新格式 ' + s.converted + '，跳过 ' + s.skipped);
+      }
+      _saveLedger();
+    } catch (e) {
+      console.warn('[webdav] 自动清扫本口失败（下口再试）', e && e.message);
+      _saveLedger();
+    } finally {
+      _sweepBusy = false;
+    }
+  }
+
+  /** 手动/调试入口：一口气扫到完（自动路径见 _autoSweepTick）。返回 { ok, total, removed, converted, skipped, partial? }。 */
+  async function sweepLegacyCloudFiles(onProgress) {
+    if (!_config) return { ok: false, error: '同步未配置' };
+    let items;
+    try { items = await _sweepScan(); }
+    catch (e) { return { ok: false, error: '无法列出云端笔记目录：' + (e.message || e) }; }
+    const total = items.length;
+    if (!total) {
+      const led = _ledger();
+      if (led.account) { led.sweep = { done: 1, removed: 0, converted: 0, skipped: 0 }; _saveLedger(); }
+      return { ok: true, total: 0, removed: 0, converted: 0, skipped: 0 };
+    }
+    let removed = 0, converted = 0, skipped = 0;
+    while (items.length) {
+      const r = await _sweepProcess(items, items.length, onProgress, total - items.length, total);
+      removed += r.removed; converted += r.converted; skipped += r.skipped;
+      if (r.rateLimited) {
+        return { ok: true, partial: true, total, removed, converted, skipped, error: '服务器限流，本次清扫了一部分，稍后自动继续' };
+      }
+    }
+    const led = _ledger();
+    if (led.account) { led.sweep = { done: 1, removed, converted, skipped }; _saveLedger(); }
+    return { ok: true, total, removed, converted, skipped };
+  }
+
   /** 把选中的云端笔记写回本地，并触发结构自愈 + 上传同步，返回成功条数 */
   async function recoverCloudNotes(items, onProgress) {
     if (!_config || !Array.isArray(items) || !items.length) return 0;
@@ -3232,7 +4508,7 @@
       let note = it && it._note; // 若已通过"读取标题"缓存内容，则直接复用，省一次请求
       if (!note && it) {
         try {
-          note = await webdavGetNote(`notes/${it.id}.json`, { allow404: true });
+          note = await _fetchNoteById(it.id);
         } catch (e) {
           if (e instanceof RateLimitError) { limited = true; break; } // 命中限流即停，保留已恢复的
           done++; if (typeof onProgress === 'function') { try { onProgress(done, total); } catch (_) {} }
@@ -3284,6 +4560,7 @@
       const id = it && it.id;
       if (!id) { done++; continue; }
       try {
+        try { await webdavDelete(`notes/${id}.ybin`); } catch (_) {}
         await webdavDelete(`notes/${id}.json`);
         deletedIds.push(id);
         if (manifest) {
@@ -3314,6 +4591,7 @@
     try {
       const manifest = await webdavGetJson('manifest.json', { allow404: true });
       if (!manifest || !manifest.notes) return { ok: true, updated: 0 };
+      if ((manifest.dataFormatVersion || 1) >= 4) return { ok: true, updated: 0 };
       const data = window.storage.getAll();
       let updated = 0;
       for (const id in manifest.notes) {
@@ -3383,8 +4661,8 @@
             let name = e.href; try { name = decodeURIComponent(name); } catch (_) {}
             name = name.replace(/[#?].*$/, '');
             name = name.substring(name.lastIndexOf('/') + 1);
-            if (!/\.json$/i.test(name)) continue;
-            const id = name.replace(/\.json$/i, '');
+            if (!/\.(json|ybin)$/i.test(name)) continue; // 曾只认 .json，v5 后 .ybin 孤儿漏删（t22 修）
+            const id = name.replace(/\.(json|ybin)$/i, '');
             if (id && !liveIds.has(id)) extra.add(id);
           }
         } catch (_) { /* PROPFIND 失败不阻断主流程 */ }
@@ -3400,6 +4678,7 @@
       try {
         const now = Date.now();
         await _runPool([...extra], async (id) => {
+          try { await webdavDelete(`notes/${id}.ybin`); } catch (_) {}
           try { await webdavDelete(`notes/${id}.json`); } catch (_) {}
           try { await webdavDelete(`trash/${id}.json`); } catch (_) {}
           if (manifest.notes) delete manifest.notes[id];
@@ -3417,6 +4696,9 @@
         await _putManifestVerified(manifest);
         _rememberManifestCursor(manifest);
         _setAdoptedEpoch(manifest.epoch); // 本机就是权威发起方，对齐到新世代，避免自己又去"采纳"
+        // 覆盖云端 = 从零重传全部：覆盖前的「已传未交 / 名单回执」旧账作废
+        _clearPendingVers();
+        _savePendingCatalogConfirm(null);
       } finally {
         _syncing = false;
       }
@@ -3478,6 +4760,7 @@
     schedulePut,
     flushPutOnBlur,
     flushPutOnHide,
+    flushIndex,
     doGet,
     doPut,
     manualSync,
@@ -3485,6 +4768,7 @@
     scanCloudNotes,
     loadCloudTitles,
     recoverCloudNotes,
+    sweepLegacyCloudFiles,
     deleteCloudNotes,
     enrichCloudManifest,
     mirrorLocalToCloud,
@@ -3501,7 +4785,12 @@
     backupBeforeOverwrite: _backupBeforeOverwrite, // 供 storage 总账落地永久删除前留底
     getAdoptedEpoch: _getAdoptedEpoch, // 供即时层「结构入口世代闸」判定对端是否落后（null=本账号首次未记录）
 
+    // 测试探针（C3 打包/还原自动验证用，业务代码勿用）
+    _prepareYbin, _hydrateYbin,
+
     isSyncing: () => _syncing,
+    isUiSyncing: () => !!_uiSyncing,
+    isBusy: () => !!_syncing,
     isPaused: () => _paused,
     getClientId: () => _ensureClientId(),
     getPendingImageDownloads: () => [..._pendingImageDownloads],

@@ -104,5 +104,52 @@
     try { bundle(); defaultSchema(); return true; } catch (e) { return false; }
   }
 
-  window.__ydoc = { ready, build, update, merge, toDoc, bytesToB64, b64ToBytes };
+  // ── 增量直推工具（t19 即时同步 C2）────────────────────────────────────────
+  /** 账本(base64) 的状态指纹（state vector → base64）。发送端记住“上次发到哪”用。 */
+  function sv(b64) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(b64));
+    const v = cb.Y.encodeStateVector(yd);
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(v);
+  }
+
+  /** 相对指纹的最小增量：账本(base64) 里「持有 svB64 指纹的一方还没有的部分」→ 增量(base64)。
+   *  svB64 为空 = 全量。增量通常只有几十字节（对比整本账几 KB～几百 KB）。 */
+  function diff(b64, svB64) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    cb.Y.applyUpdate(yd, b64ToBytes(b64));
+    const u = svB64 ? cb.Y.encodeStateAsUpdate(yd, b64ToBytes(svB64)) : cb.Y.encodeStateAsUpdate(yd);
+    if (yd.destroy) yd.destroy();
+    return bytesToB64(u);
+  }
+
+  /** 合并多份「增量/全量」载荷为一份（Y.mergeUpdates：纯载荷级合并，不需要基线、
+   *  不丢“依赖还没到”的部分——与 merge() 不同，merge 走 Doc 会把缺依赖的增量静默丢掉）。 */
+  function mergeUpdates(b64list) {
+    const cb = bundle();
+    const arr = [];
+    for (let i = 0; i < b64list.length; i++) if (b64list[i]) arr.push(b64ToBytes(b64list[i]));
+    if (!arr.length) return '';
+    if (arr.length === 1) return bytesToB64(arr[0]);
+    return bytesToB64(cb.Y.mergeUpdates(arr));
+  }
+
+  /** 把增量并入账本(base64)：返回 { b64, pending }。
+   *  pending=true = 增量引用了本端没见过的历史（中间漏了包）——合并结果**不含**这份增量，
+   *  调用方必须向对端索要全量，绝不能把 b64 当完整结果落库。 */
+  function applyDiff(baseB64, diffB64) {
+    const cb = bundle();
+    const yd = new cb.Y.Doc();
+    if (baseB64) cb.Y.applyUpdate(yd, b64ToBytes(baseB64));
+    cb.Y.applyUpdate(yd, b64ToBytes(diffB64));
+    const pending = !!(yd.store && yd.store.pendingStructs);
+    const out = bytesToB64(cb.Y.encodeStateAsUpdate(yd));
+    if (yd.destroy) yd.destroy();
+    return { b64: out, pending };
+  }
+
+  window.__ydoc = { ready, build, update, merge, toDoc, bytesToB64, b64ToBytes, sv, diff, mergeUpdates, applyDiff };
 })();

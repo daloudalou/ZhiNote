@@ -39,10 +39,7 @@ const WIN_MIN_W = 600;
 const WIN_MIN_H = 400;
 
 async function bootstrap() {
-  // 显眼的版本水印——在控制台第一行就能看到，确认 cache 是否刷新
-  // 这行是「当前跑的是哪一次构建」的唯一可靠标记（__MD_VER__ 打包后恒为 vX.Y.Z-dev 分不出轮次）。
-  // 每轮改动随 index.html 的 ?v= 一起更新，否则没法判断 Quicker 常驻窗口里跑的是不是新包。
-  console.log('%c[ZhiNote] build 20260730t42 ✓ (emoji 账本只存 Unicode，防旧版同步剥表情)', 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
+  console.log('%c[ZhiNote] ' + (window.__MD_VER__ || ''), 'background:#37352f;color:#fff;padding:2px 8px;font-weight:bold;');
   console.log('[ZhiNote] 调试开关：在控制台运行 window.__MD_DEBUG__=true 后再输入 / 或 ;; 可看判定过程');
 
   // 宿主标记：非 Quicker 宿主（浏览器/PWA）→ body.host-web，CSS 据此隐藏窗口控制等桌面专属 UI。
@@ -50,12 +47,14 @@ async function bootstrap() {
     document.body.classList.add('host-web');
     // PWA：manifest 与 Service Worker 都只在网页宿主动态注入——
     // 桌面 Quicker（单文件 ZhiNote.html）旁边没有这些文件，静态写进 <head> 会产生 404 噪音。
-    try {
-      const link = document.createElement('link');
-      link.rel = 'manifest';
-      link.href = 'manifest.webmanifest';
-      document.head.appendChild(link);
-    } catch (_) {}
+    if (location.protocol !== 'file:') {
+      try {
+        const link = document.createElement('link');
+        link.rel = 'manifest';
+        link.href = 'manifest.webmanifest';
+        document.head.appendChild(link);
+      } catch (_) {}
+    }
     const _isLocalhost = ['localhost', '127.0.0.1'].includes(location.hostname);
     if ('serviceWorker' in navigator && _isLocalhost) {
       // 本地调试：不注册离线缓存，并清掉历史遗留的 SW + 缓存。
@@ -218,6 +217,7 @@ async function bootstrap() {
   }
 
   wireEvents();
+  initWhatsNew();
   template.installSlashTrigger();
   installEmojiTrigger();
   installPaletteTrigger();
@@ -268,7 +268,7 @@ async function bootstrap() {
     }
     // 本地有未上云的改动 → 同步徽标转「本地待上云」(淡蓝)；reload/global-sync 是远端下行，不算本地待传。
     if (payload?.type !== 'reload' && payload?.type !== 'global-sync') {
-      try { _maybeBadgeLocal(); } catch (_) {}
+      try { _refreshSyncDot(); } catch (_) {}
     }
     // 同步模块：本地数据变更 → 调度 PUT（由 storage.js markDirty 统一调度 WebDAV）
   });
@@ -313,26 +313,48 @@ async function bootstrap() {
   let _lastSyncFailAt = 0;
   // 即时同步是否"活着"（有其它设备在场）：用于让网盘的后台上传在多设备实时时低调、不打扰。
   function _realtimeLive() { try { return !!(window.realtime && window.realtime.status && window.realtime.status().active); } catch (_) { return false; } }
+
+  // 直绑哨兵报警（editor.js _sentinelCheck）：每次会话只提示一次，细节在控制台 __ZN_SENTINEL__
+  let _sentinelToasted = false;
+  window.addEventListener('zn-sentinel-mismatch', () => {
+    if (_sentinelToasted) return;
+    _sentinelToasted = true;
+    toast('检测到正文与同步账本不一致，已记录日志（内容不受影响）', 'warning', { duration: 8000 });
+  });
   storage.on('cloud-sync', (payload) => {
     if (payload.type === 'webdav-sync-start') {
       // 同步前先把编辑器里未落盘的正文 flush 到 storage，
       // 否则远端较新时 reloadCurrent 会覆盖掉内存里的未保存修改
       editor.flushSave?.();
-      // 静默后台轮询：不闪同步徽标（避免每 30s 抖一下）；只有真正下载/失败时才提示。
-      // 【止血·绿点狂转】本地编辑/操作触发的网盘上传只是日常保存留底，**任何时候都不再转圈打扰**
-      //   （用户报"打字停一下就转、操作一下就转"——单台设备每次保存都狂闪）。上传期间徽标保持平静：
-      //   编辑时已由 _maybeBadgeLocal 显示淡蓝"待上云"，上传成功后转绿"已同步"，无转圈动画。
-      //   真正值得提示的——下载远端改动 / 首次同步 / 手动同步 / 失败——照旧转圈或报错。
-      const _bgPut = typeof payload.detail === 'string' && payload.detail.indexOf('put') === 0;
-      if (!payload.silent && !_bgPut) _setCloudSyncDot('syncing');
+      // 转圈=正在拉或正在传。静默轮询「清单未变」不闪；淡蓝=还有没存上的或等重试。
+      if (window.webdavSync && window.webdavSync.isUiSyncing && window.webdavSync.isUiSyncing()) {
+        _setCloudSyncDot('syncing');
+        return;
+      }
+      if (payload.silent) {
+        _refreshSyncDot();
+        return;
+      }
+      _setCloudSyncDot('syncing');
     } else if (payload.type === 'sync-protection-start') {
       _startSyncProtection();
+    } else if (payload.type === 'webdav-full-check-fixed') {
+      // 后台慢核对真修了笔记才提示一句；什么都没发现时它全程无声
+      const n = payload.notes | 0;
+      if (n > 0) toast('后台核对发现 ' + n + ' 篇没对齐，已自动修正', 'info', { duration: 6000 });
     } else if (payload.type === 'webdav-sync-ok') {
       if (_syncProtectionActive) _endSyncProtection();
+      // 徽标悬停小详情：记下上次传/收篇数，拼进 tooltip（不占界面位置）
+      try {
+        const up = payload.uploaded | 0;
+        const down = (payload.downloadedNoteIds && payload.downloadedNoteIds.size) | 0;
+        if (up || down) {
+          _lastSyncDetail = ' · ' + (up ? '传 ' + up + ' 篇' : '') + (up && down ? '，' : '') + (down ? '收 ' + down + ' 篇' : '');
+        }
+      } catch (_) {}
       // 瞬时重试占位：绝不能涂绿（曾把「还在重试/后台失败」扮成已同步）
       if (payload.detail === 'retry-transient') {
-        const _dotRt = document.getElementById('cloud-sync-dot');
-        if (_dotRt && _dotRt.classList.contains('syncing')) _setCloudSyncDot('pending');
+        _refreshSyncDot();
         return;
       }
       // 同步成功 → 清掉失败去重记录，下次再失败仍会正常提示
@@ -347,19 +369,9 @@ async function bootstrap() {
         } catch (_) {}
         try { window.aiChat.trySyncKeyDown && window.aiChat.trySyncKeyDown(); } catch (_) {}
       }
-      // 上传/下载成功 → 平静地标记"已同步"。静默无变更：仅把「等待/同步中」收成绿，不覆盖「待上云/失败」。
-      const _quietUnchanged = payload.silent && (payload.detail === 'get-unchanged' || payload.detail === 'get-empty');
-      if (_quietUnchanged) {
-        const _dotOk = document.getElementById('cloud-sync-dot');
-        if (_dotOk && (_dotOk.classList.contains('pending') || _dotOk.classList.contains('syncing'))) {
-          _setCloudSyncDot('synced');
-        }
-      } else {
-        _setCloudSyncDot('synced');
-      }
+      // 绿点只表示「没有待传、也没有正在跑」。GET 完还有待上传 → 保持待上云，绝不先涂绿。
+      queueMicrotask(() => { try { _refreshSyncDot(); } catch (_) {} });
       if (payload.detail === 'first') {
-        const _pn = { jianguoyun: '坚果云', koofr: 'Koofr', infinicloud: 'InfiniCLOUD' }[storage.getSetting('webdavProvider')] || 'WebDAV';
-        toast(`${_pn} 首次同步完成`, 'success');
         tree.render();
         try { refreshWorkspaceSwitcher(); } catch (_) {}
         try { renderWelcomeRecent(); } catch (_) {}
@@ -458,6 +470,14 @@ const THEMES = [
   { id: 'gruvbox',          name: '林间',     dark: true  },
 ];
 window.THEMES = THEMES;
+const THEME_SWATCH = {
+  'light':           ['#ffffff', '#2383e2'],
+  'dark':            ['#191919', '#529cca'],
+  'solarized-light': ['#f4edd7', '#b58900'],
+  'nord':            ['#2e3440', '#88c0d0'],
+  'dracula':         ['#282a36', '#bd93f9'],
+  'gruvbox':         ['#282828', '#d79921'],
+};
 
 // 统一用 data-href（而非 <a href>）打开外链：WebView2 下 <a href> 悬浮会在左下角弹出原生链接预览，
 // 用 window.open 打开则不会出现该预览。全局委托，任何带 data-href 的元素点击即打开。
@@ -469,16 +489,30 @@ document.addEventListener('click', (e) => {
   if (url) { try { window.open(url, '_blank'); } catch (_) {} }
 });
 
-/** 主题选择 popover — 点击主题按钮弹出，统一风格 */
+/** 主题选择 popover — 左下角按钮；点选项不关，方便连看，点外面 / Esc / 再点按钮才收 */
 let _themePopover = null;
+let _themePopDoc = null;
+let _themePopKey = null;
+const THEME_CHECK_SVG = '<svg class="theme-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8.5L6.5 12L13 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>';
+function closeThemePopover() {
+  if (_themePopover) _themePopover.classList.add('hidden');
+  if (_themePopDoc) document.removeEventListener('mousedown', _themePopDoc, true);
+  if (_themePopKey) document.removeEventListener('keydown', _themePopKey, true);
+  _themePopDoc = null;
+  _themePopKey = null;
+}
 function openThemePopover(anchorEl) {
+  if (_themePopover && !_themePopover.classList.contains('hidden')) {
+    closeThemePopover();
+    return;
+  }
+  closeThemePopover();
   if (!_themePopover) {
     _themePopover = document.createElement('div');
     _themePopover.id = 'theme-popover';
     _themePopover.className = 'popover hidden';
     document.body.appendChild(_themePopover);
   }
-  const cur = storage.getSetting('theme') || 'light';
   const swatch = (id) => {
     const map = {
       'light':           ['#ffffff', '#2383e2', '#e8e8e8'],
@@ -495,26 +529,37 @@ function openThemePopover(anchorEl) {
       <span class="ts-line" style="background:${line}"></span>
     </span>`;
   };
+  const paintSel = () => {
+    const cur = storage.getSetting('theme') || 'light';
+    _themePopover.querySelectorAll('.theme-item').forEach((btn) => {
+      const on = btn.dataset.theme === cur;
+      btn.classList.toggle('active', on);
+      const ck = btn.querySelector('.theme-check');
+      if (on && !ck) btn.insertAdjacentHTML('beforeend', THEME_CHECK_SVG);
+      else if (!on && ck) ck.remove();
+    });
+  };
+  const cur = storage.getSetting('theme') || 'light';
   _themePopover.innerHTML = `
     <div class="theme-popover-title">主题</div>
     <div class="theme-popover-list">
       ${THEMES.map(t => `
-        <button class="theme-item ${t.id === cur ? 'active' : ''}" data-theme="${t.id}">
+        <button type="button" class="theme-item ${t.id === cur ? 'active' : ''}" data-theme="${t.id}">
           ${swatch(t.id)}
           <span class="theme-item-name">${t.name}</span>
-          ${t.id === cur ? '<svg class="theme-check" viewBox="0 0 16 16" width="14" height="14"><path d="M3 8.5L6.5 12L13 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>' : ''}
+          ${t.id === cur ? THEME_CHECK_SVG : ''}
         </button>
       `).join('')}
     </div>
   `;
-  _themePopover.querySelectorAll('.theme-item').forEach(btn => {
+  _themePopover.querySelectorAll('.theme-item').forEach((btn) => {
     btn.addEventListener('click', () => {
       const id = btn.dataset.theme;
       storage.setSetting('theme', id);
       localStorage.setItem('zhinote-theme', id);
       applyTheme(id);
       if (editor.setTheme) editor.setTheme(id);
-      closeThemePopover();
+      paintSel();
     });
   });
   _themePopover.classList.remove('hidden');
@@ -534,22 +579,16 @@ function openThemePopover(anchorEl) {
     _themePopover.style.top = Math.round(top) + 'px';
     _themePopover.style.visibility = 'visible';
   });
-  const onDoc = (e) => {
-    if (!_themePopover.contains(e.target) && e.target !== anchorEl && !anchorEl.contains(e.target)) {
-      closeThemePopover();
-    }
+  _themePopDoc = (e) => {
+    if (!_themePopover.contains(e.target) && !anchorEl.contains(e.target)) closeThemePopover();
   };
-  const onKey = (e) => {
+  _themePopKey = (e) => {
     if (e.key === 'Escape') { e.preventDefault(); closeThemePopover(); }
   };
-  function closeThemePopover() {
-    _themePopover.classList.add('hidden');
-    document.removeEventListener('mousedown', onDoc, true);
-    document.removeEventListener('keydown', onKey, true);
-  }
   setTimeout(() => {
-    document.addEventListener('mousedown', onDoc, true);
-    document.addEventListener('keydown', onKey, true);
+    if (!_themePopover || _themePopover.classList.contains('hidden') || !_themePopDoc) return;
+    document.addEventListener('mousedown', _themePopDoc, true);
+    document.addEventListener('keydown', _themePopKey, true);
   }, 0);
 }
 
@@ -972,6 +1011,8 @@ function wireEvents() {
   });
   document.getElementById('btn-cmd-palette').addEventListener('click', () => palette.open());
   document.getElementById('btn-toggle-sidebar').addEventListener('click', toggleSidebar);
+  const _btnNoteBack = document.getElementById('btn-note-back');
+  if (_btnNoteBack) _btnNoteBack.addEventListener('click', () => { try { window.editor.goBack?.(); } catch (_) {} });
   document.getElementById('btn-readonly').addEventListener('click', toggleReadonlyMode);
   document.getElementById('btn-view-md')?.addEventListener('click', () => { if (editor.currentId?.()) editor.toggleMarkdownSource?.(); });
   document.getElementById('btn-pin').addEventListener('click', toggleCurrentPin);
@@ -1309,6 +1350,12 @@ function onGlobalKey(e) {
     // 唤出小枝：优先在正文就地插对话块（用户定的交互）；面板开着则收起
     e.preventDefault();
     try { (window.mascot?.summon || window.mascot?.toggle)?.call(window.mascot); } catch (_) {}
+    return;
+  }
+  if (!ctrl && e.altKey && !e.shiftKey && (e.key === 'ArrowLeft' || e.code === 'ArrowLeft')) {
+    if (window.mentionUi && window.mentionUi.isOpen && window.mentionUi.isOpen()) return;
+    e.preventDefault();
+    try { window.editor.goBack?.(); } catch (_) {}
     return;
   }
   if (!ctrl && e.altKey && e.shiftKey && (e.key === 'a' || e.key === 'A' || e.code === 'KeyA')) {
@@ -1891,10 +1938,27 @@ function openRecoverDialog(found, done, opts) {
   function buildMaint() {
     maintPanel.innerHTML = '';
 
+    // 维护：修复云端清单（救急，一年状态卡外面）
+    const repair = document.createElement('div');
+    repair.className = 'rcv-maint';
+    repair.style.marginTop = '4px';
+    const rt = document.createElement('div'); rt.className = 'rcv-maint-title'; rt.textContent = '修复云端清单';
+    const rd = document.createElement('div'); rd.className = 'rcv-maint-desc';
+    rd.textContent = '清单变成空文件或损坏、同步反复报错时用。按云端已有笔记文件快速重建目录，不重传全部笔记。';
+    const rBtn = document.createElement('button');
+    rBtn.type = 'button'; rBtn.className = 'rcv-btn-soft-danger';
+    rBtn.textContent = '修复云端清单';
+    repair.appendChild(rt); repair.appendChild(rd); repair.appendChild(rBtn);
+    maintPanel.appendChild(repair);
+    rBtn.addEventListener('click', async () => {
+      rBtn.disabled = true;
+      try { await runRepairManifestFlow(); }
+      finally { rBtn.disabled = false; }
+    });
+
     // 维护：用本地覆盖云端
     const maint = document.createElement('div');
     maint.className = 'rcv-maint';
-    maint.style.marginTop = '4px';
     const mt = document.createElement('div'); mt.className = 'rcv-maint-title'; mt.textContent = '覆盖云端';
     const md = document.createElement('div'); md.className = 'rcv-maint-desc';
     md.textContent = '以本设备为准：清掉云端多余笔记并上传本地全部。其它设备下次同步会自动对齐到这份（多余项进它们的同步留底，可找回）。';
@@ -1903,6 +1967,8 @@ function openRecoverDialog(found, done, opts) {
     mBtn.textContent = '覆盖云端';
     maint.appendChild(mt); maint.appendChild(md); maint.appendChild(mBtn);
     maintPanel.appendChild(maint);
+
+    // 云端旧格式残留改为全自动静默清扫（webdav-sync _autoSweepTick），不再放按钮。
 
     // ── 同步留底 ──────────────────────────────────────────────
     const bk = document.createElement('div');
@@ -2109,8 +2175,8 @@ function openRecoverDialog(found, done, opts) {
     doDelete(picked);
   });
 
-  // 标题与层级已随 manifest 一并下发，无需手动读取。
-  // 仅对极少数「旧版本上传、manifest 里没存标题」的遗留笔记，在后台静默补一次（并发、限量，不阻塞面板）。
+  // 标题/层级已由 scanCloudNotes 从本地笔记/结构总账取到（t23 修）；
+  //   这条补读只对"两处都查不到的孤儿"兜底（仅老 .json 包里才有 title，v5 包没有）。
   async function autoLoadMissingTitles() {
     const todo = allItems.filter(it => it && !it._removed && !it._titleLoaded);
     if (!todo.length || !window.webdavSync || !window.webdavSync.loadCloudTitles) return;
@@ -2359,9 +2425,15 @@ function setupMobileLayout() {
   // 刚新建的笔记除外（新建后通常要在树里继续命名/整理，立刻收抽屉会打断操作）。
   const _origOpen = editor.open.bind(editor);
   editor.open = (...args) => {
+    const prev = editor.currentId && editor.currentId();
+    const id = args[0];
+    const opts = args[1];
     const r = _origOpen(...args);
+    if (!(opts && opts.initial) && prev && id && prev !== id) {
+      try { window.webdavSync && window.webdavSync.flushIndex && window.webdavSync.flushIndex(); } catch (_) {}
+    }
     if (mq.matches) {
-      const n = storage.get(args[0]);
+      const n = storage.get(id);
       const isNew = n && n.createdAt && (Date.now() - n.createdAt < 1500);
       if (!isNew) document.body.classList.add('sidebar-collapsed');
     }
@@ -3329,16 +3401,29 @@ function tryEmojiTrigger() {
   const target = node.nodeType === 3 ? node.parentElement : node;
   if (!target?.closest('.ProseMirror')) return;
   if (target.closest('pre, code')) return;
-
-  const wrap = target.closest(
-    '.ProseMirror p, .ProseMirror li, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6, .ProseMirror blockquote'
-  ) || target.closest('.ProseMirror');
-  if (!wrap) return;
-  const all = (wrap.textContent || '').replace(/[\u200b\u200c\u200d\ufeff]/g, '');
-  if (!/[;；][;；]\s*$/.test(all)) return;
   if (!_semiDoubleInWindow()) return;
+
+  // 只看「光标左侧」是否以 ;; 结尾（行首、折叠标题行都可）；
+  // 旧逻辑要求整段末尾是 ;;，导致「标题开头打 ;;」唤不出。
+  const inst0 = window.editor?.instance?.();
+  if (inst0) {
+    const $f0 = inst0.state.selection.$from;
+    if (!$f0.parent.isTextblock) return;
+    const left0 = inst0.state.doc.textBetween($f0.start(), $f0.pos, '\ufffc', '\ufffc')
+      .replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+    if (!/[;；]{2}$/.test(left0)) return;
+  } else {
+    const wrap = target.closest(
+      '.ProseMirror p, .ProseMirror li, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6, .ProseMirror blockquote, .ProseMirror .zn-toggle-summary'
+    );
+    if (!wrap) return;
+    const before = (wrap.textContent || '').replace(/[\u200b\u200c\u200d\ufeff]/g, '');
+    // DOM 兜底：仍尽量看开头附近，不强求整段结尾
+    if (!/[;；]{2}/.test(before.slice(0, Math.min(before.length, range.startOffset + 2)))) return;
+  }
+
   _semiKeyTimes = [];
-  if (window.__MD_DEBUG__) console.log('[;;]', JSON.stringify(all.slice(-6)));
+  if (window.__MD_DEBUG__) console.log('[;;] cursor-left trigger');
 
   _emojiTargetInput = null;
   _emojiTargetRange = null;
@@ -3482,7 +3567,7 @@ function refreshEditorModeBar() {
   bar.style.pointerEvents = '';
   let msg = '';
   if (document.body.classList.contains('sync-protection-mode')) {
-    bar.innerHTML = '正在合并其他设备的修改…（首次或内容较多时会久一些，请稍候）<span class="sync-protection-skip">仍要立即编辑</span>';
+    bar.innerHTML = '正在合并其他设备的修改…请稍候<span class="sync-protection-skip">仍要立即编辑</span>';
     bar.classList.remove('hidden');
     bar.style.pointerEvents = 'auto';
     bar.querySelector('.sync-protection-skip')?.addEventListener('click', () => {
@@ -4207,24 +4292,31 @@ function _zhSyncError(err) {
   return '同步出错（' + s + '），请重试';
 }
 
-/** 本地有未上云的改动 → 徽标转「本地待上云」(淡蓝)。正在传(转圈)或出错时不打断。 */
-function _maybeBadgeLocal() {
+/** 徽标：转圈=正在拉或正在传；淡蓝=还有没传上的篇或整库脏；绿=没有待传篇、此刻没在跑。名单稍后交不占淡蓝。 */
+function _refreshSyncDot() {
   const method = storage.getSetting('syncMethod') || 'none';
-  if (method === 'none') return;
+  if (method === 'none') { _setCloudSyncDot('disabled'); return; }
   const el = document.getElementById('cloud-sync-dot');
-  if (!el || el.classList.contains('syncing') || el.classList.contains('error')) return;
-  _setCloudSyncDot('local');
+  if (el && el.classList.contains('error')) return;
+  const busy = !!(window.webdavSync && window.webdavSync.isUiSyncing && window.webdavSync.isUiSyncing());
+  if (busy) { _setCloudSyncDot('syncing'); return; }
+  const noteDirty = !!(storage.getDirtyNoteIds && storage.getDirtyNoteIds().length);
+  const globalDirty = !!(storage.isGlobalDirty && storage.isGlobalDirty());
+  if (noteDirty || globalDirty) { _setCloudSyncDot('local'); return; }
+  _setCloudSyncDot('synced');
 }
+function _maybeBadgeLocal() { _refreshSyncDot(); }
 
 /** 云同步徽标：显示在 btn-cloud-sync 右上角 */
 let _lastSyncTime = null;
+let _lastSyncDetail = '';        // 上次传/收篇数（如「 · 传 2 篇，收 1 篇」），只进 tooltip，不占界面
 let _cloudBaseTitle = '云同步';   // 同步本身的 tooltip；紫点状态由 _updateRtDot 追加，避免重复拼接
 function _setCloudSyncDot(state, detail) {
   const el = document.getElementById('cloud-sync-dot');
   if (!el) return;
   el.classList.remove('synced', 'syncing', 'pending', 'error', 'disabled', 'local');
   switch (state) {
-    case 'synced':   el.classList.add('synced');   _lastSyncTime = Date.now(); _cloudBaseTitle = '已同步 · 刚刚'; break;
+    case 'synced':   el.classList.add('synced');   _lastSyncTime = Date.now(); _cloudBaseTitle = '已同步 · 刚刚' + _lastSyncDetail; break;
     case 'local':    el.classList.add('local');    _cloudBaseTitle = '已存本机 · 待上云'; break;
     case 'syncing':  el.classList.add('syncing');  _cloudBaseTitle = '同步中…'; break;
     case 'pending':  el.classList.add('pending');  _cloudBaseTitle = '等待同步'; break;
@@ -4263,7 +4355,7 @@ setInterval(() => {
   else if (sec < 60) ago = sec + ' 秒前';
   else if (sec < 3600) ago = Math.floor(sec / 60) + ' 分钟前';
   else ago = Math.floor(sec / 3600) + ' 小时前';
-  _cloudBaseTitle = '已同步 · ' + ago;
+  _cloudBaseTitle = '已同步 · ' + ago + _lastSyncDetail;
   _updateRtDot();
 }, 15000);
 
@@ -4292,9 +4384,8 @@ async function smartCloudSync() {
   _cloudSyncBusy = true;
   try {
     editor.flushSave();
-    const res = await window.webdavSync.manualSync();
-    const n = res && res.downloaded ? res.downloaded : 0;
-    toast(n > 0 ? ('已从云端更新 ' + n + ' 篇') : '同步完成', 'success');
+    await window.webdavSync.manualSync();
+    try { _refreshSyncDot(); } catch (_) {}
   } catch (e) {
     toast('同步失败：' + _zhSyncError(e?.message || e), 'error');
   } finally {
@@ -4424,6 +4515,500 @@ function _webAppUrl() {
   return WEB_APP_URL;
 }
 
+/* ===== 本版更新告知 =====
+ * 铃铛三栏：日程 / 版本 / 消息。落后才弹「发现新版本」；版本页只展示本版。
+ * 给人看的号 = window.__MD_VER__（打包注入）。网页端 whats-new.json 的 id/ver 打包时写成同一串。
+ * 记号只写本机 localStorage，不上云。 */
+const WHATS_NEW = {
+  id: window.__MD_VER__ || '20260819t34',
+  items: [
+    { title: '消息入口', text: '点击右上角铃铛可查看日程、版本以及应用消息。' },
+    { title: '折叠列表', text: '开合状态随笔记同步；折叠标题纳入大纲。' },
+    { title: '页面链接', text: '用 @ 或 / 引用笔记、网页或文件，以胶囊或通栏呈现。' },
+    { title: '同步升级', text: '内容同步更及时，状态更准确。旧版将暂停同步，避免数据不一致。' },
+  ],
+};
+const WN_BELL_KEY = 'zhinote-whatsnew-bell';
+const WN_MSG_SEEN = 'zhinote-whatsnew-msg';
+const WN_VER_SEEN = 'zhinote-whatsnew-ver';
+const WN_SKIP_KEY = 'zhinote-update-skip';
+const WN_SHARE = 'https://getquicker.net/Sharedaction?code=b5091d78-12cc-4fb9-bd01-08debb8a5d21&fromMyShare=true';
+
+function _wnParseId(id) {
+  const m = String(id || '').match(/^(\d{8})t(\d+)/i);
+  if (!m) return null;
+  return { d: m[1], n: parseInt(m[2], 10) };
+}
+function _wnParseSemver(id) {
+  const m = String(id || '').match(/^v?(\d+)\.(\d+)\.(\d+)/);
+  if (!m) return null;
+  return { a: +m[1], b: +m[2], c: +m[3] };
+}
+function _wnIsNewer(remoteId, localId) {
+  const at = _wnParseId(remoteId), bt = _wnParseId(localId);
+  if (at && bt) {
+    if (at.d !== bt.d) return at.d > bt.d;
+    return at.n > bt.n;
+  }
+  const av = _wnParseSemver(remoteId), bv = _wnParseSemver(localId);
+  if (av && bv) {
+    if (av.a !== bv.a) return av.a > bv.a;
+    if (av.b !== bv.b) return av.b > bv.b;
+    return av.c > bv.c;
+  }
+  return !!(remoteId && remoteId !== localId);
+}
+function _wnLsGet(k) {
+  try { return localStorage.getItem(k) || ''; } catch (_) { return ''; }
+}
+function _wnLsSet(k, v) {
+  try { localStorage.setItem(k, v); } catch (_) {}
+}
+function _wnBehind() {
+  return !!( _wnRemote && _wnIsNewer(_wnRemote.id, WHATS_NEW.id) );
+}
+function _wnSeenVal(storeKey, id) {
+  if (!id) return true;
+  if (_wnLsGet(storeKey) === id) return true;
+  if (_wnLsGet(WN_BELL_KEY) === id) return true;
+  return false;
+}
+function _wnMsgUnread() {
+  if (!_wnBehind()) return false;
+  return !_wnSeenVal(WN_MSG_SEEN, _wnRemote.id);
+}
+function _wnVerUnread() {
+  return !_wnSeenVal(WN_VER_SEEN, WHATS_NEW.id);
+}
+function _wnSplitItem(t) {
+  if (t && typeof t === 'object') {
+    return { title: String(t.title || ''), text: String(t.text || t.body || '') };
+  }
+  const s = String(t || '');
+  const i = s.indexOf('：') >= 0 ? s.indexOf('：') : s.indexOf(':');
+  if (i > 0) return { title: s.slice(0, i).trim(), text: s.slice(i + 1).trim() };
+  return { title: '', text: s };
+}
+function _wnNewsHtml(items) {
+  return '<ul class="zn-news">' + (items || []).map((t) => {
+    const { title, text } = _wnSplitItem(t);
+    const head = title ? '<strong>' + escapeHtml(title) + '：</strong>' : '';
+    return '<li><i></i><span>' + head + escapeHtml(text) + '</span></li>';
+  }).join('') + '</ul>';
+}
+function _wnPlaceBelow(anchor, pop, align) {
+  if (!anchor || !pop) return;
+  const r = anchor.getBoundingClientRect();
+  const w = pop.offsetWidth || 300;
+  const h = pop.offsetHeight || 160;
+  let left;
+  if (align === 'end') {
+    const bar = document.getElementById('topbar');
+    const edge = bar ? bar.getBoundingClientRect().right : window.innerWidth;
+    left = edge - w - 8;
+  } else if (align === 'right') {
+    left = r.right - w;
+  } else {
+    left = r.left + (r.width - w) / 2;
+  }
+  if (left < 12) left = 12;
+  if (left + w > window.innerWidth - 12) left = Math.max(12, window.innerWidth - w - 12);
+  let top = r.bottom + 8;
+  if (top + h > window.innerHeight - 12) top = Math.max(12, r.top - h - 8);
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+}
+function _wnEnsureFloat(id) {
+  let el = document.getElementById(id);
+  if (el) return el;
+  el = document.createElement('div');
+  el.id = id;
+  el.className = 'zn-float hidden';
+  document.body.appendChild(el);
+  return el;
+}
+
+function _wnYmd(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _wnParseYmd(s) {
+  const p = String(s).split('-');
+  return new Date(+p[0], +p[1] - 1, +p[2]);
+}
+function _wnAddDays(s, n) {
+  const d = _wnParseYmd(s);
+  d.setDate(d.getDate() + n);
+  return _wnYmd(d);
+}
+function _wnMondayOf(s) {
+  const d = _wnParseYmd(s);
+  const wd = d.getDay();
+  d.setDate(d.getDate() + (wd === 0 ? -6 : 1 - wd));
+  return _wnYmd(d);
+}
+function _wnToday() { return _wnYmd(new Date()); }
+function _wnFmtDay(s) {
+  const today = _wnToday();
+  if (s === today) return '今天';
+  if (s === _wnAddDays(today, 1)) return '明天';
+  const d = _wnParseYmd(s);
+  return (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+}
+function _calDataFromNote(n) {
+  const out = [];
+  function walk(node) {
+    if (!node) return;
+    if (node.type === 'calendarBlock' && node.attrs && node.attrs.data) out.push(node.attrs.data);
+    (node.content || []).forEach(walk);
+  }
+  if (n.doc) walk(n.doc);
+  if (!out.length && typeof n.content === 'string') {
+    const re = /```calendar\s*\n([\s\S]*?)```/g;
+    let m;
+    while ((m = re.exec(n.content))) out.push(m[1].trim());
+  }
+  return out;
+}
+function _collectBellEvents() {
+  const all = (window.storage && storage.getAll) ? storage.getAll() : null;
+  const notes = (all && all.notes) ? Object.values(all.notes) : [];
+  const Z = window.ZhiCalendar;
+  const out = [];
+  if (!Z || typeof Z.listAgenda !== 'function') return out;
+  notes.forEach((n) => {
+    if (!n || (storage.isNoteDeleted && storage.isNoteDeleted(n.id))) return;
+    _calDataFromNote(n).forEach((dataStr) => {
+      Z.listAgenda(dataStr).forEach((it) => {
+        const tyMap = Z.NOTE_TYPES && Z.NOTE_TYPES[it.ty];
+        out.push({
+          ty: it.ty,
+          t: it.name,
+          at: _wnYmd(it.date),
+          date: it.date,
+          dd: it.dd,
+          noteId: n.id,
+          note: n.title || '无标题',
+          kind: (tyMap && tyMap.name) || '',
+          done: !!it.done,
+        });
+      });
+    });
+  });
+  out.sort((a, b) => a.dd - b.dd || String(a.t).localeCompare(String(b.t), 'zh'));
+  return out;
+}
+function _bellIco(ty) {
+  const Z = window.ZhiCalendar;
+  if (!Z || !Z.typeIconSvg) return '';
+  const col = Z.typeColorOf ? (Z.typeColorOf(ty) || 'var(--text-secondary)') : 'var(--text-secondary)';
+  return '<span class="bn-ico" style="color:' + col + '">' + Z.typeIconSvg(ty, 16) + '</span>';
+}
+function _wnDoUpdate(pop) {
+  if (pop) pop.classList.add('hidden');
+  if (window.host?.caps?.quicker) {
+    try { window.open(WN_SHARE, '_blank'); } catch (_) {}
+    toast('请到 Quicker 更新枝记动作', 'info');
+    return;
+  }
+  toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
+  _applyAppUpdate();
+}
+function _openBellEvent(ev) {
+  _bnClose(document.getElementById('zn-bell-pop'));
+  if (!ev || !ev.noteId) return;
+  const g = ev.date ? { y: ev.date.getFullYear(), m: ev.date.getMonth(), d: ev.date.getDate() } : null;
+  try {
+    if (window.tree && window.tree.expandAncestors) window.tree.expandAncestors(ev.noteId);
+    if (window.ZhiCalendar && g) window.ZhiCalendar._pendingGoto = g;
+    window.editor.open(ev.noteId, { fromLink: true });
+    setTimeout(() => {
+      const el = document.querySelector('[data-calendar-block]');
+      if (el && g && window.ZhiCalendar && window.ZhiCalendar._pendingGoto) {
+        el.dispatchEvent(new CustomEvent('zhinote:cal-cmd', { detail: { cmd: 'goto', y: g.y, m: g.m, d: g.d } }));
+        window.ZhiCalendar._pendingGoto = null;
+      }
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    }, 80);
+  } catch (_) {}
+}
+
+function _bnMarkSeen(tab) {
+  if (tab === 'msg' && _wnRemote) _wnLsSet(WN_MSG_SEEN, _wnRemote.id);
+  if (tab === 'ver') _wnLsSet(WN_VER_SEEN, WHATS_NEW.id);
+}
+function _bnClose(pop) {
+  if (!pop || pop.classList.contains('hidden')) return;
+  const st = pop._bn;
+  if (st) _bnMarkSeen(st.tab);
+  pop.classList.add('hidden');
+  _refreshWhatsNewBell();
+}
+function _showBellPop() {
+  const btn = document.getElementById('btn-whats-new');
+  if (!btn) return;
+  document.getElementById('zn-about-pop')?.classList.add('hidden');
+  const pop = _wnEnsureFloat('zn-bell-pop');
+  pop.classList.add('zn-bell');
+  const behind = _wnBehind();
+  const st = pop._bn || { tab: 'cal', weekOff: 0, pickDay: '' };
+  if (_wnMsgUnread()) st.tab = 'msg';
+  else if (_wnVerUnread()) st.tab = 'ver';
+  st.events = _collectBellEvents();
+  pop._bn = st;
+  const WD = ['一', '二', '三', '四', '五', '六', '日'];
+  const today = _wnToday();
+  const sysIco = '<span class="bn-ico" style="color:var(--accent)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/></svg></span>';
+  function weekStart() { return _wnAddDays(_wnMondayOf(today), st.weekOff * 7); }
+  function weekDays() {
+    const a = weekStart();
+    return [0, 1, 2, 3, 4, 5, 6].map((i) => _wnAddDays(a, i));
+  }
+  function inRange(s, a, b) { return s >= a && s <= b; }
+  function calRow(e, i) {
+    const sub = [_wnFmtDay(e.at), e.kind, e.note].filter(Boolean).join(' · ');
+    return '<button type="button" class="bn-msg" data-ev="' + i + '">'
+      + _bellIco(e.ty) + '<div><div class="t">' + escapeHtml(e.t) + '</div><div class="s">' + escapeHtml(sub) + '</div></div></button>';
+  }
+  function groups() {
+    const days = weekDays();
+    const from = days[0], to = days[6];
+    const evs = st.events;
+    if (st.pickDay) {
+      return [{ sec: _wnFmtDay(st.pickDay), items: evs.filter((e) => e.at === st.pickDay) }];
+    }
+    const out = [];
+    if (st.weekOff === 0) {
+      const tod = evs.filter((e) => e.at === today);
+      const soon = evs.filter((e) => e.at > today && inRange(e.at, from, to));
+      if (tod.length) out.push({ sec: '今日', items: tod });
+      if (soon.length) out.push({ sec: '即将到来', items: soon });
+    } else {
+      const inWeek = evs.filter((e) => inRange(e.at, from, to));
+      out.push({ sec: _wnFmtDay(from) + ' – ' + _wnFmtDay(to), items: inWeek });
+    }
+    const later = evs.filter((e) => e.at > to);
+    if (later.length) out.push({ sec: '后续', items: later });
+    return out;
+  }
+  function tabBtn(id, name, unread) {
+    return '<button type="button" data-tab="' + id + '" class="' + (st.tab === id ? 'on' : '') + (unread ? ' has-dot' : '') + '">'
+      + '<span class="lab">' + name + '<span class="tab-dot"></span></span></button>';
+  }
+  function paint() {
+    const days = weekDays();
+    const has = {};
+    st.events.forEach((e) => { has[e.at] = true; });
+    const cells = days.map((d) => {
+      const dt = _wnParseYmd(d);
+      const on = st.pickDay === d ? ' on' : '';
+      const isToday = d === today ? ' today' : '';
+      const hs = has[d] ? ' has' : '';
+      const wd = WD[dt.getDay() === 0 ? 6 : dt.getDay() - 1];
+      return '<button type="button" data-day="' + d + '" class="' + on + isToday + hs + '"><span class="wd">' + wd + '</span><span class="dn">' + dt.getDate() + '</span><span class="dot"></span></button>';
+    }).join('');
+    const back = st.weekOff !== 0
+      ? '<button type="button" class="bn-back" data-act="this-week">回到本周</button>'
+      : '';
+    let cal = '<div class="bn-weekwrap"><button type="button" class="nav" data-act="prev" aria-label="上一周">‹</button>'
+      + '<div class="bn-week">' + cells + '</div>'
+      + '<button type="button" class="nav" data-act="next" aria-label="下一周">›</button></div>' + back;
+    const gs = groups();
+    if (!st.events.length) {
+      cal += '<div class="bn-empty fill">近期没有安排</div>';
+    } else {
+      cal += gs.map((g) => {
+        if (!g.items.length) return '<div class="bn-sec">' + g.sec + '</div><div class="bn-empty">这天没有安排</div>';
+        return '<div class="bn-sec">' + g.sec + '</div>' + g.items.map((e) => calRow(e, st.events.indexOf(e))).join('');
+      }).join('');
+    }
+    const localVer = window.__MD_VER__ || WHATS_NEW.id || '';
+    const verHtml = '<div class="bn-sec">本版</div><div class="bn-body">'
+      + (localVer ? '<p class="zn-hint" style="margin:0 0 8px">' + escapeHtml(localVer) + '</p>' : '')
+      + _wnNewsHtml(WHATS_NEW.items) + '</div>';
+    let msgHtml;
+    if (behind) {
+      const remoteVer = (_wnRemote && (_wnRemote.ver || _wnRemote.id)) || '';
+      msgHtml = '<div class="bn-sec">系统</div>'
+        + '<button type="button" class="bn-msg" data-sys="1">' + sysIco + '<div><div class="t">发现新版本</div><div class="s">'
+        + escapeHtml(remoteVer ? remoteVer + ' 已发布' : '可立即更新') + '</div></div></button>';
+    } else {
+      msgHtml = '<div class="bn-empty fill">暂无新消息</div>';
+    }
+    pop.innerHTML =
+      '<div class="bn-tabs">'
+      + tabBtn('cal', '日程', false)
+      + tabBtn('ver', '版本', _wnVerUnread())
+      + tabBtn('msg', '消息', _wnMsgUnread())
+      + '</div>'
+      + '<div class="bn-pane"' + (st.tab === 'cal' ? '' : ' hidden') + '>' + cal + '</div>'
+      + '<div class="bn-pane"' + (st.tab === 'ver' ? '' : ' hidden') + '>' + verHtml + '</div>'
+      + '<div class="bn-pane"' + (st.tab === 'msg' ? '' : ' hidden') + '>' + msgHtml + '</div>';
+  }
+  paint();
+  pop.classList.remove('hidden');
+  _wnPlaceBelow(btn, pop, 'end');
+  pop.onclick = (e) => {
+    const tabBtnEl = e.target.closest('[data-tab]');
+    if (tabBtnEl) {
+      const next = tabBtnEl.dataset.tab;
+      if (st.tab !== next) _bnMarkSeen(st.tab);
+      st.tab = next;
+      paint();
+      return;
+    }
+    const dayBtn = e.target.closest('[data-day]');
+    if (dayBtn) {
+      const d = dayBtn.dataset.day;
+      st.pickDay = st.pickDay === d ? '' : d;
+      paint();
+      return;
+    }
+    const evBtn = e.target.closest('[data-ev]');
+    if (evBtn) { _openBellEvent(st.events[Number(evBtn.dataset.ev)]); return; }
+    if (e.target.closest('[data-sys]')) {
+      _bnClose(pop);
+      if (_wnRemote) _showUpdateDialog(_wnRemote);
+      return;
+    }
+    const act = e.target.closest('[data-act]');
+    if (!act) return;
+    if (act.dataset.act === 'prev') { st.weekOff -= 1; st.pickDay = ''; paint(); }
+    if (act.dataset.act === 'next') { st.weekOff += 1; st.pickDay = ''; paint(); }
+    if (act.dataset.act === 'this-week') { st.weekOff = 0; st.pickDay = ''; paint(); }
+  };
+}
+
+async function _applyAppUpdate() {
+  try {
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.update();
+  } catch (_) {}
+  try {
+    if (window.caches && caches.keys) {
+      const ks = await caches.keys();
+      await Promise.all(ks.filter((k) => k.indexOf('zhinote-') === 0).map((k) => caches.delete(k)));
+    }
+  } catch (_) {}
+  setTimeout(() => location.reload(), 400);
+}
+
+let _wnRemote = null;
+function _wnNewsId() {
+  if (_wnRemote && _wnIsNewer(_wnRemote.id, WHATS_NEW.id)) return _wnRemote.id;
+  return WHATS_NEW.id;
+}
+function _refreshWhatsNewBell() {
+  const btn = document.getElementById('btn-whats-new');
+  if (!btn) return;
+  btn.hidden = false;
+  btn.classList.toggle('is-unread', _wnMsgUnread() || _wnVerUnread());
+}
+
+function _showAboutPop(anchor) {
+  if (!anchor) return;
+  const pop = _wnEnsureFloat('zn-about-pop');
+  const opening = pop.classList.contains('hidden') || pop._anchor !== anchor;
+  if (!opening) { pop.classList.add('hidden'); return; }
+  document.getElementById('zn-bell-pop')?.classList.add('hidden');
+  pop._anchor = anchor;
+  pop.innerHTML = '<h4>' + escapeHtml(window.__MD_VER__ || WHATS_NEW.id) + ' 更新</h4>' + _wnNewsHtml(WHATS_NEW.items);
+  pop.classList.remove('hidden');
+  _wnPlaceBelow(anchor, pop, 'center');
+}
+
+function _closeUpdateMask(overlay, skippedId) {
+  if (!overlay || overlay.classList.contains('is-closing')) return;
+  if (skippedId) _wnLsSet(WN_SKIP_KEY, skippedId);
+  overlay.classList.add('is-closing');
+  if (overlay._onKey) document.removeEventListener('keydown', overlay._onKey, true);
+  setTimeout(() => overlay.remove(), 180);
+  setTimeout(_refreshWhatsNewBell, 180);
+}
+
+function _showUpdateDialog(remote) {
+  if (!remote || document.querySelector('.zn-update-mask')) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'zn-update-mask';
+  const verLabel = remote.ver || remote.id || '';
+  overlay.innerHTML =
+    '<div class="zn-update-card" role="dialog" aria-labelledby="zn-upd-title">' +
+      '<div class="zn-hd"><span class="ico" aria-hidden="true">📖</span><div>' +
+        '<h2 id="zn-upd-title">发现新版本</h2>' +
+        (verLabel ? '<p class="ver">' + escapeHtml(verLabel) + ' 已发布</p>' : '') +
+      '</div></div>' +
+      '<div class="zn-bd">' + _wnNewsHtml(remote.items) + '</div>' +
+      '<div class="zn-ft">' +
+        '<button type="button" class="secondary-btn" id="zn-upd-later">稍后</button>' +
+        '<button type="button" class="primary-btn" id="zn-upd-now">立即更新</button>' +
+      '</div>' +
+    '</div>';
+  const onKey = (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); _closeUpdateMask(overlay, remote.id); }
+  };
+  overlay._onKey = onKey;
+  overlay.querySelector('#zn-upd-later')?.addEventListener('click', () => _closeUpdateMask(overlay, remote.id));
+  overlay.querySelector('#zn-upd-now')?.addEventListener('click', () => {
+    if (window.host?.caps?.quicker) {
+      try { window.open(WN_SHARE, '_blank'); } catch (_) {}
+      toast('请到 Quicker 更新枝记动作', 'info');
+      _closeUpdateMask(overlay, remote.id);
+      return;
+    }
+    toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
+    _applyAppUpdate();
+  });
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(overlay);
+}
+
+async function _fetchRemoteWhatsNew() {
+  const base = _webAppUrl().replace(/\/$/, '');
+  try {
+    const resp = await fetch(base + '/whats-new.json?_=' + Date.now(), { cache: 'no-store' });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !data.id) return null;
+    return data;
+  } catch (_) { return null; }
+}
+
+function initWhatsNew() {
+  const btn = document.getElementById('btn-whats-new');
+  btn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pop = document.getElementById('zn-bell-pop');
+    if (pop && !pop.classList.contains('hidden')) { _bnClose(pop); return; }
+    _showBellPop();
+  });
+  document.addEventListener('mousedown', (e) => {
+    const bellPop = document.getElementById('zn-bell-pop');
+    const aboutPop = document.getElementById('zn-about-pop');
+    const bellBtn = document.getElementById('btn-whats-new');
+    if (bellPop && !bellPop.classList.contains('hidden') && !bellPop.contains(e.target) && !bellBtn?.contains(e.target)) {
+      _bnClose(bellPop);
+    }
+    const aboutAnchor = aboutPop && aboutPop._anchor;
+    if (aboutPop && !aboutPop.classList.contains('hidden') && !aboutPop.contains(e.target) && !aboutAnchor?.contains?.(e.target)) {
+      aboutPop.classList.add('hidden');
+    }
+  }, true);
+  window.addEventListener('resize', () => {
+    const bellPop = document.getElementById('zn-bell-pop');
+    const aboutPop = document.getElementById('zn-about-pop');
+    const bellBtn = document.getElementById('btn-whats-new');
+    if (bellPop && !bellPop.classList.contains('hidden') && bellBtn) _wnPlaceBelow(bellBtn, bellPop, 'end');
+    if (aboutPop && !aboutPop.classList.contains('hidden') && aboutPop._anchor) _wnPlaceBelow(aboutPop._anchor, aboutPop, 'center');
+  });
+  _refreshWhatsNewBell();
+  setTimeout(async () => {
+    _wnRemote = await _fetchRemoteWhatsNew();
+    if (_wnRemote && _wnIsNewer(_wnRemote.id, WHATS_NEW.id) && _wnLsGet(WN_SKIP_KEY) !== _wnRemote.id) {
+      _showUpdateDialog(_wnRemote);
+    }
+    _refreshWhatsNewBell();
+  }, 800);
+}
+
 // 关于页「检查更新」：绕过缓存拉线上入口页读版本号，与当前运行版本比对。
 // 不同 → 主动更新 SW + 清旧缓存后重载（拿到最新资源）；相同 → 提示已是最新。
 async function checkAppUpdate(btn) {
@@ -4437,17 +5022,7 @@ async function checkAppUpdate(btn) {
     const latest = m ? m[1] : null;
     if (latest && latest !== cur) {
       toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
-      try {
-        const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
-        if (reg) await reg.update();
-      } catch (_) {}
-      try {
-        if (window.caches && caches.keys) {
-          const ks = await caches.keys();
-          await Promise.all(ks.filter((k) => k.indexOf('zhinote-') === 0).map((k) => caches.delete(k)));
-        }
-      } catch (_) {}
-      setTimeout(() => location.reload(), 500);
+      await _applyAppUpdate();
       return;
     }
     toast('已是最新版本（' + (cur || '未知') + '）', 'success', { id: 'app-update' });
@@ -5656,7 +6231,7 @@ function corsHeaders(request) {
   return {
     'Access-Control-Allow-Origin': request.headers.get('Origin') || '*',
     'Access-Control-Allow-Methods': ALLOW_METHODS,
-    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Depth, Destination, Overwrite, If-Match, If-None-Match',
+    'Access-Control-Allow-Headers': 'Authorization, Content-Type, Depth, Destination, Overwrite, If-Match, If-None-Match, Cache-Control, Pragma',
     'Access-Control-Expose-Headers': 'ETag, Content-Length, Content-Type, DAV, Last-Modified',
     'Access-Control-Max-Age': '86400',
   };
@@ -5674,8 +6249,6 @@ function openSettingsModal(initialTab) {
   if (!['appearance', 'sync', 'backup', 'applock', 'mascot', 'shortcuts', 'about'].includes(lastTab)) lastTab = 'appearance';
   const curSyncMethod = storage.getSetting('syncMethod') || 'none';
   const curProvider = storage.getSetting('webdavProvider') || 'jianguoyun';
-  // 实验：正文实时绑定开关（存 localStorage，编辑器在 storage.init 前就要读，故不用普通设置）
-  const _crdtBindOn = (function(){ try { const v = localStorage.getItem('zhinote.crdtBindEditor'); return v == null ? true : (v === '1' || v === 'true'); } catch (_) { return true; } })();
   body.innerHTML = `
     <div class="settings-vnav-wrap">
     <div class="settings-tabs" role="tablist" id="settings-tab-seg">
@@ -5691,23 +6264,13 @@ function openSettingsModal(initialTab) {
     <div class="settings-panes" id="settings-panes">
     <div id="settings-tab-appearance" class="${lastTab!=='appearance'?'settings-tab-hidden':''}">
     <div class="settings-section">主题</div>
-    <div id="set-theme-grid" class="theme-chips">
+    <select id="set-theme" data-keep-open="1">
       ${THEMES.map(t => {
-        const map = {
-          'light':           ['#ffffff', '#2383e2'],
-          'dark':            ['#191919', '#529cca'],
-          'solarized-light': ['#f4edd7', '#b58900'],
-          'nord':            ['#2e3440', '#88c0d0'],
-          'dracula':         ['#282a36', '#bd93f9'],
-          'gruvbox':         ['#282828', '#d79921'],
-        };
-        const [bg, ac] = map[t.id] || ['#fff', '#888'];
-        const sel = t.id === curTheme ? ' active' : '';
-        return `<button type="button" class="theme-grid-item theme-chip${sel}" data-theme="${t.id}" data-name="${t.name}" style="--chip-ac:${ac};">
-          <span class="theme-chip-dot" aria-hidden="true" style="background:${bg};"></span>${t.name}
-        </button>`;
+        const [bg, ac] = THEME_SWATCH[t.id] || ['#fff', '#888'];
+        const sel = t.id === curTheme ? ' selected' : '';
+        return `<option value="${t.id}" data-bg="${bg}" data-ac="${ac}"${sel}>${t.name}</option>`;
       }).join('')}
-    </div>
+    </select>
     <div class="settings-section">字体与排版</div>
     <div class="set-grid-2">
       <div class="set-col">
@@ -5806,13 +6369,21 @@ function openSettingsModal(initialTab) {
 
     <div id="settings-tab-sync" class="${lastTab!=='sync'?'settings-tab-hidden':''}">
     <label>同步方式</label>
-    <select id="set-sync-method" style="width:100%;">
+    <select id="set-sync-method" style="width:100%;" data-sync-status="1">
       <option value="jianguoyun" ${curSyncMethod==='webdav'&&curProvider==='jianguoyun'?'selected':''} title="免费 1GB · 每月上传流量 1GB · 国内直连速度快">坚果云 (1GB)</option>
       <option value="koofr" ${curSyncMethod==='webdav'&&curProvider==='koofr'?'selected':''} title="免费 10GB · 无流量限制 · 欧洲服务器">Koofr (10GB)</option>
       <option value="infinicloud" ${curSyncMethod==='webdav'&&curProvider==='infinicloud'?'selected':''} title="免费 20GB · 无流量限制 · 日本服务器 · 注册可能需排队">InfiniCLOUD (20GB·可能排队)</option>
       <option value="custom" ${curSyncMethod==='webdav'&&curProvider==='custom'?'selected':''} title="自行搭建或其他支持 WebDAV 的服务">自定义 WebDAV</option>
       <option value="none" ${curSyncMethod==='none'?'selected':''} title="关闭所有云端同步，仅本地保存">关闭同步</option>
     </select>
+    <div id="sync-actions-wrap" class="${curSyncMethod==='none'?'settings-tab-hidden':''}">
+    <div class="sync-actions-row">
+      <button type="button" id="set-webdav-sync-now" class="sync-act-btn primary" title="立即同步一次">立即同步</button>
+      <button type="button" id="set-webdav-recover" class="sync-act-btn" title="查看 / 恢复 / 删除云端笔记">管理云端</button>
+      <button type="button" id="set-webdav-test" class="sync-act-btn" title="测试连接">测试连接</button>
+    </div>
+    <div id="webdav-sync-status" class="sync-inline-msg"></div>
+    </div>
 
     <div id="sync-panel-webdav" class="sync-panel ${curSyncMethod==='none'?'settings-tab-hidden':''}">
     ${window.host.caps.quicker ? '' : `
@@ -5901,26 +6472,7 @@ function openSettingsModal(initialTab) {
         ④ 上方选「自建」，把该地址填进输入框 → 保存。
       </div>
     </details>`;})()}
-    <div class="sync-actions-row">
-      <button id="set-webdav-test" class="link-btn" title="测试连接">测试连接</button>
-      <button id="set-webdav-sync-now" class="link-btn" title="立即同步一次">立即同步</button>
-      <button id="set-webdav-recover" class="link-btn" title="查看 / 恢复 / 删除云端笔记">管理云端笔记</button>
-      <button id="set-webdav-repair" class="link-btn" title="清单空文件/损坏时轻量重建目录（不重传全部笔记）">修复云端清单</button>
-    </div>
-    <div id="webdav-sync-status" style="font-size:12px;color:var(--text-tertiary);margin-top:8px;min-height:20px;line-height:1.6;"></div>
-    </div>
-    <div id="sync-exp-block"${curSyncMethod==='none'?' class="settings-tab-hidden"':''}>
-    <div class="settings-section">实验性</div>
-    <div class="set-col">
-      <label>正文实时绑定（逐字同步，光标不跳）</label>
-      <select id="set-crdt-bind" style="width:100%;margin-top:0;">
-        <option value="1"${_crdtBindOn?' selected':''}>开启（默认）</option>
-        <option value="0"${_crdtBindOn?'':' selected'}>关闭</option>
-      </select>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
-        实验功能：多台设备同时编辑同一篇笔记时逐字实时合并，不再整篇刷新、光标不跳、不打断输入法。切换后会刷新页面生效。
-      </div>
-    </div>
+    <div style="font-size:12px;color:var(--text-tertiary);margin-top:14px;line-height:1.6;">升到新同步时会把旧总目录备份到网盘 <code>ZhiNote-bak</code>。确认两端都换新包并对齐后，可自己删这份备份；程序不会自动删。</div>
     </div>
     </div>
     <div id="settings-tab-backup" class="${lastTab!=='backup'?'settings-tab-hidden':''}">
@@ -5987,7 +6539,16 @@ function openSettingsModal(initialTab) {
           ]},
           { title: '编辑（编辑器内）', items: [
             ['加粗', 'Ctrl+B'], ['斜体', 'Ctrl+I'], ['下划线', 'Ctrl+U'], ['删除线', 'Ctrl+Shift+S'],
-            ['行内代码', 'Ctrl+E'], ['引用', 'Ctrl+Shift+B / Alt+Shift+B'], ['分割线', 'Ctrl+Shift+H'], ['无序列表', 'Ctrl+Shift+8'],
+            ['行内代码', 'Ctrl+E'],
+            ['引用', 'Ctrl+Shift+B / Alt+Shift+B；行首引号再空格'],
+            ['折叠列表', '行首大于号再空格；斜杠折叠；右键列表'],
+            ['开合当前折叠', 'Ctrl+Enter'],
+            ['全开/全关折叠', 'Ctrl+Alt+T'],
+            ['折叠内换行', '标题行回车进内部；Shift+Enter 同级（内容里也能按）'],
+            ['跳出折叠', '内容末尾空行再回车'],
+            ['折叠套叠', '标题行 Tab 套进上一条；Shift+Tab 拆出'],
+            ['引用笔记', '文中打 @ 即出菜单；Esc 取消；回车胶囊，Shift+回车通栏，Tab 问小枝'],
+            ['分割线', 'Ctrl+Shift+H'], ['无序列表', 'Ctrl+Shift+8'],
             ['有序列表', 'Ctrl+Shift+7'], ['一级~六级标题', 'Ctrl+Alt+1 … 6'], ['段落对齐 左/中/右/两端', 'Ctrl+Alt+L/E/R/J'], ['软换行', 'Shift+Enter'],
             ['撤销 / 重做', 'Ctrl+Z / Ctrl+Y'],
           ]},
@@ -5995,8 +6556,8 @@ function openSettingsModal(initialTab) {
             ['命令面板', '连按 ` `'], ['表情选择器', '连打 ; ;'], ['跳出续写格式', '双击 空格'],
           ]},
         ];
-        const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
-        const kbd = (k) => k.split(' / ').map(p => p.split('+').map(x => `<kbd class="sc-key">${esc(x)}</kbd>`).join('<span class="sc-plus">+</span>')).join('<span class="sc-or">或</span>');
+        const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const kbd = (k) => k.split(' / ').map(p => p.split('+').map(x => `<kbd class="sc-key">${esc(x.trim())}</kbd>`).join('<span class="sc-plus">+</span>')).join('<span class="sc-or">或</span>');
         // 快捷键图标（复用 feather 风格描边图标，与工具栏/气泡菜单同源）
         const SC_ICON_PATHS = {
           '新建笔记': '<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M12 12v6M9 15h6"/>',
@@ -6022,12 +6583,21 @@ function openSettingsModal(initialTab) {
           '删除线': '<path d="M16 4H9a3 3 0 00-2.83 4"/><path d="M14 12a4 4 0 010 8H6"/><line x1="4" y1="12" x2="20" y2="12"/>',
           '行内代码': '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
           '引用': '<line x1="6" y1="4" x2="6" y2="20"/><line x1="10" y1="7" x2="20" y2="7"/><line x1="10" y1="12" x2="20" y2="12"/><line x1="10" y1="17" x2="16" y2="17"/>',
+          '分割线': '<line x1="4" y1="12" x2="20" y2="12"/>',
           '无序列表': '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3.5" cy="6" r="1"/><circle cx="3.5" cy="12" r="1"/><circle cx="3.5" cy="18" r="1"/>',
           '有序列表': '<line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 4v4M3 8h2M3 13h2l-2 3h2"/>',
           '一级~六级标题': '<path d="M6 4v16M18 4v16M6 12h12"/>',
           '软换行': '<polyline points="9 10 4 15 9 20"/><path d="M20 4v7a4 4 0 01-4 4H4"/>',
-          '撤销 / 重做': '<path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/>',
+          '撤销 / 重做': '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
         };
+        // 折叠相关：抄已有图标，不手绘
+        SC_ICON_PATHS['折叠列表'] = SC_ICON_PATHS['大纲面板'];
+        SC_ICON_PATHS['开合当前折叠'] = SC_ICON_PATHS['大纲面板'];
+        SC_ICON_PATHS['全开/全关折叠'] = SC_ICON_PATHS['侧边栏'];
+        SC_ICON_PATHS['折叠内换行'] = SC_ICON_PATHS['软换行'];
+        SC_ICON_PATHS['跳出折叠'] = SC_ICON_PATHS['软换行'];
+        SC_ICON_PATHS['折叠套叠'] = SC_ICON_PATHS['大纲面板'];
+        SC_ICON_PATHS['引用笔记'] = SC_ICON_PATHS['命令面板 / 切换笔记'];
         const scIco = (label) => {
           const p = SC_ICON_PATHS[label] || '<circle cx="12" cy="12" r="2.5"/>';
           return `<span class="sc-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg></span>`;
@@ -6095,7 +6665,9 @@ function openSettingsModal(initialTab) {
         <div class="about-logo">📖</div>
         <div class="about-title">枝记 ZhiNote</div>
         <div class="about-subtitle">轻量 Markdown 笔记工具</div>
-        <div class="about-version" title="运行版本标记">版本 ${escapeHtml(window.__MD_VER__ || '未知')}${!window.host.caps.quicker ? '<button type="button" class="about-refresh-btn" id="about-refresh" title="检查并刷新到最新版">检查更新</button>' : ''}</div>
+        <div class="about-version">
+          <span id="about-ver" class="about-ver-link" title="查看本版更新">版本 ${escapeHtml(window.__MD_VER__ || '未知')}</span>${!window.host.caps.quicker ? '<button type="button" class="about-refresh-btn" id="about-refresh" title="检查并刷新到最新版">检查更新</button>' : ''}
+        </div>
       </div>
       <div class="about-web-card">
         <div class="about-web-qr" id="about-web-qr">生成中…</div>
@@ -6141,8 +6713,9 @@ function openSettingsModal(initialTab) {
     body,
     dialogClass: 'settings-modal',
     onClose: () => {
+      document.getElementById('zn-about-pop')?.classList.add('hidden');
       const savedTheme = localStorage.getItem('zhinote-theme') || storage.getSetting('theme') || 'light';
-      if (savedTheme !== (body.querySelector('#set-theme-grid .theme-grid-item.active')?.dataset.theme || 'light')) {
+      if (savedTheme !== (body.querySelector('#set-theme')?.value || 'light')) {
         applyTheme(savedTheme);
         if (editor.setTheme) editor.setTheme(savedTheme);
       }
@@ -6160,7 +6733,7 @@ function openSettingsModal(initialTab) {
         // 笔记字体：只接受系统默认或本机仍可用的字体（失效项已 disabled）
         let fontFamily = body.querySelector('#set-font')?.value || '';
         if (fontFamily && !isContentFontUsable(fontFamily)) fontFamily = '';
-        const themeId = body.querySelector('#set-theme-grid .theme-grid-item.active')?.dataset.theme || 'light';
+        const themeId = body.querySelector('#set-theme')?.value || 'light';
         storage.setSetting('fontSize', size);
         storage.setSetting('fontFamily', fontFamily);
         storage.setSetting('theme', themeId);
@@ -6386,6 +6959,7 @@ function openSettingsModal(initialTab) {
   try { window.mascot && window.mascot.mountSettings(body.querySelector('#settings-tab-mascot')); } catch (_) {}
   function activateSettingsTab(tab) {
     if (!SETTINGS_TAB_ORDER.includes(tab)) return;
+    if (tab !== 'about') document.getElementById('zn-about-pop')?.classList.add('hidden');
     body.querySelectorAll('#settings-tab-seg .settings-tabs-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     try { localStorage.setItem('zhinote-settings-tab', tab); } catch (_) {}
     SETTINGS_TAB_ORDER.forEach(id => {
@@ -6432,7 +7006,18 @@ function openSettingsModal(initialTab) {
     try { await navigator.clipboard.writeText(_webAppUrl()); toast('已复制网页版链接', 'success'); }
     catch (_) { toast('复制失败', 'error'); }
   });
-  body.querySelector('#about-refresh')?.addEventListener('click', (e) => checkAppUpdate(e.currentTarget));
+  body.querySelector('#about-ver')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _showAboutPop(e.currentTarget);
+  });
+  body.querySelector('.settings-panes')?.addEventListener('scroll', () => {
+    const pop = document.getElementById('zn-about-pop');
+    if (pop && !pop.classList.contains('hidden') && pop._anchor) _wnPlaceBelow(pop._anchor, pop, 'center');
+  }, { passive: true });
+  body.querySelector('#about-refresh')?.addEventListener('click', (e) => {
+    document.getElementById('zn-about-pop')?.classList.add('hidden');
+    checkAppUpdate(e.currentTarget);
+  });
 
   // PWA 安装按钮：仅当浏览器给出 beforeinstallprompt（网页宿主 + 未安装过）时显示
   const _pwaBtn = body.querySelector('#about-pwa-install');
@@ -6458,11 +7043,41 @@ function openSettingsModal(initialTab) {
   // ========== 同步方式下拉切换 ==========
   const syncMethodSelect = body.querySelector('#set-sync-method');
   const panelWebdav = body.querySelector('#sync-panel-webdav');
+  const syncActionsWrap = body.querySelector('#sync-actions-wrap');
 
   // ========== WebDAV 面板逻辑 ==========
   const urlInput = body.querySelector('#set-webdav-url');
   const helpText = body.querySelector('#webdav-help-text');
   const webdavStatus = body.querySelector('#webdav-sync-status');
+  function _paintSyncMethodStatus() {
+    const el = body.querySelector('#sync-method-status');
+    if (!el) return;
+    // 状态只属于「当前已保存、正在用的那家服务商」：
+    //   下拉切到别家 / 关闭同步 / 本机本来就没开同步 → 框内状态藏起，避免误把旧账号的「已同步」贴到新选项上。
+    const savedMethod = storage.getSetting('syncMethod') || 'none';
+    const savedProvider = savedMethod === 'webdav' ? (storage.getSetting('webdavProvider') || 'none') : 'none';
+    const sel = syncMethodSelect.value;
+    const live = sel !== 'none' && sel === savedProvider;
+    el.hidden = !live;
+    if (!live) { el.title = ''; return; }
+    const cloudDot = document.getElementById('cloud-sync-dot');
+    const cls = ['synced', 'syncing', 'pending', 'error', 'local', 'disabled'].find((c) => cloudDot && cloudDot.classList.contains(c)) || '';
+    const dot = el.querySelector('.sync-method-dot');
+    const text = el.querySelector('.sync-method-text');
+    if (dot) dot.className = 'sync-method-dot' + (cls ? ' ' + cls : '');
+    let sub = '—';
+    if (cls === 'syncing') sub = '同步中…';
+    else if (cls === 'error') sub = '同步失败';
+    else if (cls === 'pending' || cls === 'local') sub = '待同步';
+    else if (cls === 'disabled') sub = '未开启';
+    else if (_lastSyncTime) {
+      const sec = Math.floor((Date.now() - _lastSyncTime) / 1000);
+      const ago = sec < 60 ? '刚刚' : sec < 3600 ? Math.floor(sec / 60) + ' 分钟前' : sec < 86400 ? Math.floor(sec / 3600) + ' 小时前' : Math.floor(sec / 86400) + ' 天前';
+      sub = '已同步 · ' + ago;
+    } else sub = '已同步 · —';
+    if (text) text.textContent = sub;
+    el.title = (_cloudBaseTitle || sub) + (_lastSyncDetail || '');
+  }
   const userInput = body.querySelector('#set-webdav-user');
   const passInput = body.querySelector('#set-webdav-pass');
 
@@ -6505,6 +7120,7 @@ function openSettingsModal(initialTab) {
     urlInput.placeholder = def.placeholder || '';
     helpText.innerHTML = def.help;
     webdavStatus.innerHTML = '';
+    _paintSyncMethodStatus();
     _toggleWebWarn(provider);
 
     if (_draftCache.has(provider)) {
@@ -6541,14 +7157,13 @@ function openSettingsModal(initialTab) {
   function _updateSyncPanels() {
     const v = syncMethodSelect.value;
     const wasWebdav = _lastSyncSelect !== 'none';
-    const expBlock = body.querySelector('#sync-exp-block'); // 实验性(正文实时绑定)：只在开着同步时才有意义
     if (v === 'none') {
       if (wasWebdav) _stashWebdavDraft();
       panelWebdav.classList.add('settings-tab-hidden');
-      if (expBlock) expBlock.classList.add('settings-tab-hidden');
+      if (syncActionsWrap) syncActionsWrap.classList.add('settings-tab-hidden');
     } else {
       panelWebdav.classList.remove('settings-tab-hidden');
-      if (expBlock) expBlock.classList.remove('settings-tab-hidden');
+      if (syncActionsWrap) syncActionsWrap.classList.remove('settings-tab-hidden');
       _switchWebdavProvider(v).then(() => {
         if (!_initialPassCaptured) {
           _initialPassValue = passInput.value;
@@ -6557,9 +7172,14 @@ function openSettingsModal(initialTab) {
       });
     }
     _lastSyncSelect = v;
+    _paintSyncMethodStatus();
   }
   syncMethodSelect.addEventListener('change', _updateSyncPanels);
   _updateSyncPanels();
+  const _cardPaintTimer = setInterval(() => {
+    if (!body.isConnected) { clearInterval(_cardPaintTimer); return; }
+    _paintSyncMethodStatus();
+  }, 15000);
 
   // 是否改动了同步设置但还没保存（服务商或地址/账号变了）。
   // 「立即同步 / 管理云端笔记」作用于已保存的配置，未保存时操作会指向旧服务商，需先拦截避免误解。
@@ -6687,37 +7307,19 @@ function openSettingsModal(initialTab) {
     btn.textContent = '同步中…';
     try {
       editor.flushSave();
-      const res = await window.webdavSync.manualSync();
-      const n = res && res.downloaded ? res.downloaded : 0;
-      toast(n > 0 ? ('已从云端更新 ' + n + ' 篇') : '同步完成', 'success');
+      await window.webdavSync.manualSync();
+      try { _refreshSyncDot(); } catch (_) {}
     } catch (e) {
       toast('同步失败：' + _zhSyncError(e?.message || e), 'error');
     } finally {
       btn.disabled = false;
       btn.textContent = '立即同步';
+      _paintSyncMethodStatus();
     }
   });
 
-  // 修复云端清单（与右上角云同步菜单同一流程；放设置页里更容易被发现）
-  body.querySelector('#set-webdav-repair')?.addEventListener('click', async () => {
-    if (!window.webdavSync) { toast('WebDAV 未配置', 'warning'); return; }
-    if (_hasUnsavedSyncChange()) { toast('你改动了同步设置但尚未保存，请先点「保存」再修复', 'warning'); return; }
-    const btn = body.querySelector('#set-webdav-repair');
-    btn.disabled = true;
-    try { await runRepairManifestFlow(); }
-    finally { btn.disabled = false; }
-  });
-
-  // 实验：正文实时绑定开关 —— 改了立即写 localStorage（编辑器在启动早期读它），随即刷新页面生效。
-  body.querySelector('#set-crdt-bind')?.addEventListener('change', (e) => {
-    const on = e.target.value === '1';
-    try { localStorage.setItem('zhinote.crdtBindEditor', on ? '1' : '0'); } catch (_) {}
-    try { editor.flushSave && editor.flushSave(); } catch (_) {}
-    toast(on ? '已开启「正文实时绑定」，正在刷新生效…' : '已关闭「正文实时绑定」，正在刷新生效…', 'success', 1500);
-    setTimeout(() => { try { location.reload(); } catch (_) {} }, 900);
-  });
-
   // 管理云端笔记（扫描恢复 + 删除云端 + 用本地覆盖云端，统一在一个弹窗内）
+  // 「修复云端清单」已挪到管理弹窗 → 维护 页，不再占状态卡。
   body.querySelector('#set-webdav-recover')?.addEventListener('click', async () => {
     if (!window.webdavSync) { toast('WebDAV 未配置', 'warning'); return; }
     if (_hasUnsavedSyncChange()) { toast('你改动了同步设置但尚未保存，请先点「保存」再管理云端', 'warning'); return; }
@@ -6764,7 +7366,7 @@ function openSettingsModal(initialTab) {
       scanning.setError('扫描失败：' + (e.message || e));
     } finally {
       btn.disabled = false;
-      btn.textContent = '管理云端笔记';
+      btn.textContent = '管理云端';
     }
   });
 
@@ -6905,16 +7507,15 @@ function openSettingsModal(initialTab) {
     }
   }
 
-  // 主题胶囊点击 — 立即预览（名字就在胶囊里，无需另行更新）
-  body.querySelectorAll('.theme-grid-item').forEach(btn => {
-    btn.addEventListener('click', () => {
-      body.querySelectorAll('.theme-grid-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      const id = btn.dataset.theme;
+  // 主题下拉 — 立即预览（关掉设置且未保存则还原）
+  const themeSel = body.querySelector('#set-theme');
+  if (themeSel) {
+    themeSel.addEventListener('change', () => {
+      const id = themeSel.value;
       applyTheme(id);
       if (editor.setTheme) editor.setTheme(id);
     });
-  });
+  }
 
   // 行间距下拉 — 立即预览
   const lineHeightSel = body.querySelector('#set-line-height');
@@ -6976,6 +7577,7 @@ function openSettingsModal(initialTab) {
       fontSel.value = isContentFontUsable(cur) ? cur : '';
     }
     body.querySelectorAll('select').forEach(s => upgradeSelect(s));
+    try { _paintSyncMethodStatus(); } catch (_) {}
   }, 0);
 }
 
@@ -6983,7 +7585,8 @@ function openSettingsModal(initialTab) {
  *  - 原生 select 仍保留（隐藏，作为数据载体），onchange 事件保持一致
  *  - 自定义触发器显示当前选中项 + chevron
  *  - 点击触发器弹自定义面板，带 fade + slight slide 动画
- *  - 支持 <optgroup> 分组、键盘 ↑↓ Enter Esc */
+ *  - 支持 <optgroup> 分组、键盘 ↑↓ Enter Esc
+ *  - data-keep-open="1"：点选项不关（主题预览），点外面 / Esc / 再点触发器才关 */
 function upgradeSelect(select) {
   if (!select || select._upgraded) return;
   select._upgraded = true;
@@ -6997,11 +7600,12 @@ function upgradeSelect(select) {
       if (child.tagName === 'OPTGROUP') {
         const opts = Array.from(child.children).map(o => ({
           value: o.value, label: o.textContent.trim(), disabled: o.disabled, title: o.title || '',
+          bg: o.getAttribute('data-bg') || '', ac: o.getAttribute('data-ac') || '',
         }));
         groups.push({ label: child.label, options: opts });
         flat.push(...opts);
       } else if (child.tagName === 'OPTION') {
-        const opt = { value: child.value, label: child.textContent.trim(), disabled: child.disabled, title: child.title || '' };
+        const opt = { value: child.value, label: child.textContent.trim(), disabled: child.disabled, title: child.title || '', bg: child.getAttribute('data-bg') || '', ac: child.getAttribute('data-ac') || '' };
         groups.push({ label: '', options: [opt] });
         flat.push(opt);
       }
@@ -7022,16 +7626,36 @@ function upgradeSelect(select) {
   trigger.type = 'button';
   trigger.className = 'md-select-trigger';
   trigger.innerHTML = `
+    <span class="md-select-swatch" hidden><i></i></span>
     <span class="md-select-label"></span>
     <svg class="md-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
   `;
+  // 同步方式下拉：触发器右侧嵌状态（绿点 + 「已同步 · 刚刚」），不另占一行
+  if (select.getAttribute('data-sync-status') === '1') {
+    const st = document.createElement('span');
+    st.className = 'sync-method-status';
+    st.id = 'sync-method-status';
+    st.innerHTML = '<span class="sync-method-dot" aria-hidden="true"></span><span class="sync-method-text">—</span>';
+    const chev = trigger.querySelector('.md-select-chevron');
+    trigger.insertBefore(st, chev);
+  }
   wrap.appendChild(trigger);
 
   const labelEl = trigger.querySelector('.md-select-label');
+  const swatchEl = trigger.querySelector('.md-select-swatch');
+  const paintSwatch = (el, opt) => {
+    if (!el) return;
+    if (!opt || !opt.bg) { el.hidden = true; return; }
+    el.hidden = false;
+    el.style.background = opt.bg;
+    const bar = el.querySelector('i');
+    if (bar) bar.style.background = opt.ac || opt.bg;
+  };
   const sync = () => {
     rebuildFromSelect();
     const cur = flat.find(o => o.value === select.value);
     labelEl.textContent = cur?.label || flat[0]?.label || '';
+    paintSwatch(swatchEl, cur);
   };
   sync();
 
@@ -7073,6 +7697,7 @@ function upgradeSelect(select) {
       const head = g.label ? `<div class="md-select-group">${escapeHtml(g.label)}</div>` : '';
       return head + g.options.map(o =>
         `<div class="md-select-item${o.value === select.value ? ' is-active' : ''}${o.disabled ? ' is-disabled' : ''}" data-value="${escapeHtml(o.value)}"${o.title ? ` title="${escapeHtml(o.title)}"` : ''}>
+          ${o.bg ? `<span class="md-select-swatch" style="background:${escapeHtml(o.bg)}"><i style="background:${escapeHtml(o.ac || o.bg)}"></i></span>` : ''}
           <span class="md-select-item-label">${escapeHtml(o.label)}</span>
           ${o.value === select.value ? '<span class="md-select-item-check">✓</span>' : ''}
         </div>`
@@ -7099,6 +7724,21 @@ function upgradeSelect(select) {
     trigger.classList.add('is-open');
 
     // 事件
+    const keepOpen = select.getAttribute('data-keep-open') === '1';
+    const paintPanelSelection = () => {
+      if (!panel) return;
+      panel.querySelectorAll('.md-select-item').forEach(it => {
+        const on = it.dataset.value === select.value;
+        it.classList.toggle('is-active', on);
+        const ck = it.querySelector('.md-select-item-check');
+        if (on && !ck) {
+          const s = document.createElement('span');
+          s.className = 'md-select-item-check';
+          s.textContent = '✓';
+          it.appendChild(s);
+        } else if (!on && ck) ck.remove();
+      });
+    };
     panel.addEventListener('click', (e) => {
       const item = e.target.closest('.md-select-item');
       if (!item || item.classList.contains('is-disabled')) return;
@@ -7107,8 +7747,9 @@ function upgradeSelect(select) {
         select.value = v;
         select.dispatchEvent(new Event('change', { bubbles: true }));
         sync();
+        if (keepOpen) paintPanelSelection();
       }
-      close();
+      if (!keepOpen) close();
     });
     setTimeout(() => {
       document.addEventListener('mousedown', onDoc, true);
@@ -7685,6 +8326,12 @@ function initEditorContextMenu() {
 
     const calHit = e.target.closest('[data-calendar-block]');
     const zcHit = e.target.closest('[data-zhichat-block]');
+    const mentionHit = e.target.closest('.zn-mention');
+    const pageLinkHit = e.target.closest('.zn-pagelink');
+    const classicLink = (!mentionHit && !pageLinkHit) ? e.target.closest('a[href]') : null;
+    if (classicLink && editable.contains(classicLink) && !classicLink.closest('pre, code')) {
+      try { window.mentionUi?.convertClassicLink?.(); } catch (_) {}
+    }
     // 对话块的输入框里让位给系统输入菜单（粘贴等）
     if (zcHit && e.target.closest('.zc-ask')) return;
 
@@ -7830,7 +8477,57 @@ function initEditorContextMenu() {
       ],
     }, { sep: true }] : [];
 
-    const items = zcHit ? _zcMenuItems : calHit ? _calMenuItems : inSource ? _srcMenuItems : [
+    const _refDelete = () => {
+      const inst = editor.instance?.();
+      if (!inst) return;
+      const sel = inst.state.selection;
+      if (sel.node && (sel.node.type.name === 'znMention' || sel.node.type.name === 'znPageLink')) {
+        inst.chain().focus().deleteSelection().run();
+      }
+    };
+    const _fileHref = (() => {
+      const fromChip = (el) => {
+        if (!el) return '';
+        const k = el.getAttribute('data-kind') || '';
+        const h = el.getAttribute('data-href') || '';
+        if (k === 'file' || /^file:/i.test(h)) return h;
+        return '';
+      };
+      const chip = fromChip(mentionHit) || fromChip(pageLinkHit);
+      if (chip) return chip;
+      if (classicLink) {
+        const h = classicLink.getAttribute('href') || '';
+        if (/^file:/i.test(h)) return h;
+      }
+      return '';
+    })();
+    const _ri = (d) => '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="' + d + '"/></svg>';
+    const _icoEdit = _ri('M9.24264 18.9967H21V20.9967H3V16.754L12.8995 6.85453L17.1421 11.0972L9.24264 18.9967ZM14.3137 5.44032L16.435 3.319C16.8256 2.92848 17.4587 2.92848 17.8492 3.319L20.6777 6.14743C21.0682 6.53795 21.0682 7.17112 20.6777 7.56164L18.5563 9.68296L14.3137 5.44032Z');
+    const _icoPill = _ri('M19.7786 4.22184C22.1217 6.56498 22.1217 10.364 19.7786 12.7071L17.6565 14.8277L12.7075 19.7782C10.3643 22.1213 6.56535 22.1213 4.2222 19.7782C1.87906 17.435 1.87906 13.6361 4.2222 11.2929L11.2933 4.22184C13.6364 1.87869 17.4354 1.87869 19.7786 4.22184ZM14.8288 14.8284L9.17195 9.17158L5.63642 12.7071C4.07432 14.2692 4.07432 16.8019 5.63642 18.364C7.19851 19.9261 9.73117 19.9261 11.2933 18.364L14.8288 14.8284Z');
+    const _icoPage = _ri('M20 22H4C3.44772 22 3 21.5523 3 21V3C3 2.44772 3.44772 2 4 2H20C20.5523 2 21 2.44772 21 3V21C21 21.5523 20.5523 22 20 22ZM7 6V10H11V6H7ZM7 12V14H17V12H7ZM7 16V18H17V16H7ZM13 7V9H17V7H13Z');
+    const _icoFolder = _ri('M3 21C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H10.4142L12.4142 5H20C20.5523 5 21 5.44772 21 6V9H4V18.996L6 11H22.5L20.1894 20.2425C20.0781 20.6877 19.6781 21 19.2192 21H3Z');
+    const _icoTrash = _ri('M17 6H22V8H20V21C20 21.5523 19.5523 22 19 22H5C4.44772 22 4 21.5523 4 21V8H2V6H7V3C7 2.44772 7.44772 2 8 2H16C16.5523 2 17 2.44772 17 3V6ZM9 11V17H11V11H9ZM13 11V17H15V11H13ZM9 4V6H15V4H9Z');
+    const _locateItems = _fileHref ? [{
+      label: '定位',
+      icon: _icoFolder,
+      title: '在资源管理器中显示这个文件',
+      action: () => window.mentionUi?.revealHref?.(_fileHref),
+    }] : [];
+    const _refMenuItems = (mentionHit || classicLink) ? [
+      { label: '修改', icon: _icoEdit, action: () => window.mentionUi?.editSelected?.() },
+      { label: '通栏', icon: _icoPage, title: '变成通栏入口，可再换回胶囊', action: () => window.mentionUi?.convertToPageLink?.() },
+      ..._locateItems,
+      { sep: true },
+      { label: '删除', icon: _icoTrash, action: _refDelete },
+    ] : pageLinkHit ? [
+      { label: '修改', icon: _icoEdit, action: () => window.mentionUi?.editSelected?.() },
+      { label: '胶囊', icon: _icoPill, title: '变成句子里的小胶囊，可再换回通栏', action: () => window.mentionUi?.convertToMention?.() },
+      ..._locateItems,
+      { sep: true },
+      { label: '删除', icon: _icoTrash, action: _refDelete },
+    ] : null;
+
+    const items = zcHit ? _zcMenuItems : calHit ? _calMenuItems : (_refMenuItems) ? _refMenuItems : inSource ? _srcMenuItems : [
       ..._aiMenu,
       ...(_inCodeBlock && _codeWrapper?._toggleFold ? [{ label: _codeWrapper.classList.contains('code-block-folded') ? '展开代码块' : '折叠代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>', action: () => { _codeWrapper._toggleFold(); } }] : []),
       ...(_inCodeBlock && _codeWrapper ? [{ label: '复制全部代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>', action: () => { const code = _codeWrapper.querySelector('code'); if (code) navigator.clipboard?.writeText(code.textContent || ''); } }, { label: '删除代码块', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>', action: () => { const inst = editor.instance(); if (!inst) return; const { $from } = inst.state.selection; for (let d = $from.depth; d >= 0; d--) { if ($from.node(d).type.name === 'codeBlock') { const pos = $from.before(d); const node = $from.node(d); inst.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run(); break; } } } }, { sep: true }] : []),
@@ -7855,6 +8552,7 @@ function initEditorContextMenu() {
         { label: '无序列表', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 4H21V6H8V4ZM4.5 6.5C3.67 6.5 3 5.83 3 5S3.67 3.5 4.5 3.5 6 4.17 6 5 5.33 6.5 4.5 6.5ZM4.5 13.5C3.67 13.5 3 12.83 3 12S3.67 10.5 4.5 10.5 6 11.17 6 12 5.33 13.5 4.5 13.5ZM4.5 20.4C3.67 20.4 3 19.73 3 18.9S3.67 17.4 4.5 17.4 6 18.07 6 18.9 5.33 20.4 4.5 20.4ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"/></svg>', action: () => editor.execCommand('toggleBulletList') },
         { label: '有序列表', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 4H21V6H8V4ZM5 3V6H6V7H3V6H4V4H3V3H5ZM3 14V11.5H5V11H3V10H6V12.5H4V13H6V14H3ZM5 19.5H3V18.5H5V18H3V17H6V21H3V20H5V19.5ZM8 11H21V13H8V11ZM8 18H21V20H8V18Z"/></svg>', action: () => editor.execCommand('toggleOrderedList') },
         { label: '任务列表', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4 3H20C20.55 3 21 3.45 21 4V20C21 20.55 20.55 21 20 21H4C3.45 21 3 20.55 3 20V4C3 3.45 3.45 3 4 3ZM5 5V19H19V5H5ZM11.003 16.007L6.76 11.76L8.174 10.346L11.003 13.175L16.659 7.519L18.073 8.933L11.003 16.007Z"/></svg>', action: () => editor.execCommand('toggleTaskList') },
+        { label: '折叠列表', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>', action: () => editor.execCommand('setToggle', { level: 0 }) },
       ]},
       { label: '引用 / 代码', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4.58 17.32C3.55 16.23 3 15 3 13.01C3 9.51 5.46 6.37 9.03 4.82L9.92 6.2C6.59 8.01 5.94 10.35 5.68 11.82C6.21 11.54 6.92 11.45 7.6 11.51C9.41 11.68 10.83 13.16 10.83 15C10.83 16.93 9.26 18.5 7.33 18.5C6.26 18.5 5.23 18.01 4.58 17.32ZM14.58 17.32C13.55 16.23 13 15 13 13.01C13 9.51 15.46 6.37 19.03 4.82L19.92 6.2C16.59 8.01 15.94 10.35 15.68 11.82C16.21 11.54 16.92 11.45 17.6 11.51C19.41 11.68 20.83 13.16 20.83 15C20.83 16.93 19.26 18.5 17.33 18.5C16.26 18.5 15.23 18.01 14.58 17.32Z"/></svg>', submenu: [
         { label: '引用', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4.58 17.32C3.55 16.23 3 15 3 13.01 3 9.51 5.46 6.37 9.03 4.82L9.92 6.2C6.59 8.01 5.94 10.35 5.68 11.82 6.21 11.54 6.92 11.45 7.6 11.51 9.41 11.68 10.83 13.16 10.83 15 10.83 16.93 9.26 18.5 7.33 18.5 6.26 18.5 5.23 18.01 4.58 17.32Z"/></svg>', action: () => editor.execCommand('toggleBlockquote') },
@@ -7864,7 +8562,7 @@ function initEditorContextMenu() {
       { label: '插入', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M11 11V5H13V11H19V13H13V19H11V13H5V11H11Z"/></svg>', submenu: [
         { label: '表格', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M13 10V14H19V10H13ZM11 10H5V14H11V10ZM13 19H19V16H13V19ZM11 19V16H5V19H11ZM13 5V8H19V5H13ZM11 5H5V8H11V5ZM4 3H20C20.55 3 21 3.45 21 4V20C21 20.55 20.55 21 20 21H4C3.45 21 3 20.55 3 20V4C3 3.45 3.45 3 4 3Z"/></svg>', action: () => showTableDialog() },
         { label: '图片', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M4.828 21L3 19.172V4.828L4.828 3H19.172L21 4.828V19.172L19.172 21H4.828ZM5 19H19V5H5V19ZM15.5 11L19 16H5L8.5 11.5L11 14.5L15.5 11Z"/></svg>', action: () => insertImageFromPicker() },
-        { label: '链接', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M18.36 15.54L16.95 14.12 18.36 12.71C20.32 10.75 20.32 7.59 18.36 5.64 16.41 3.68 13.25 3.68 11.29 5.64L9.88 7.05 8.46 5.64 9.88 4.22C12.61 1.49 17.04 1.49 19.78 4.22 22.51 6.96 22.51 11.39 19.78 14.12L18.36 15.54ZM15.54 18.36L14.12 19.78C11.39 22.51 6.96 22.51 4.22 19.78 1.49 17.04 1.49 12.61 4.22 9.88L5.64 8.46 7.05 9.88 5.64 11.29C3.68 13.25 3.68 16.41 5.64 18.36 7.59 20.32 10.75 20.32 12.71 18.36L14.12 16.95 15.54 18.36ZM14.83 7.76L16.24 9.17 9.17 16.24 7.76 14.83 14.83 7.76Z"/></svg>', action: () => editor.execCommand('toggleLink') },
+        { label: '页面链接', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="13" x2="13" y2="13"/></svg>', action: () => editor.execCommand('insertPageLink') },
         { label: '分割线', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M2 11H22V13H2V11Z"/></svg>', action: () => editor.execCommand('setHorizontalRule') },
         { label: '公式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 11.5L5 17H3L6.5 10 3 3H5L8 8.5 11 3H13L9.5 10 13 17H11L8 11.5ZM18 7H20V17H18V7ZM14 10H22V12H14V10Z"/></svg>', action: () => insertMathFormula() },
         { label: '简易日历', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="16" rx="4"/><line x1="3.5" y1="9" x2="20.5" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/><path d="M9 14.5l2 2 4-4"/></svg>', action: () => editor.execCommand('insertCalendar') },
