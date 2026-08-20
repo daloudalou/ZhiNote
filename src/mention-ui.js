@@ -35,6 +35,435 @@
   function hostOf(href) {
     try { return new URL(href).hostname.replace(/^www\./, ''); } catch (_) { return ''; }
   }
+  function urlShowHost() {
+    try { return !!(window.storage && window.storage.getSetting && window.storage.getSetting('urlShowHost')); }
+    catch (_) { return false; }
+  }
+  function urlOpenTarget() {
+    var v = '';
+    try { v = (window.storage && window.storage.getSetting && window.storage.getSetting('urlOpenBrowser')) || ''; }
+    catch (_) { v = ''; }
+    if (v === 'app') return { kind: 'app' };
+    if (v === 'default') return { kind: 'default' };
+    if (v) return { kind: 'exe', exe: v };
+    try {
+      if (window.storage && window.storage.getSetting && window.storage.getSetting('urlOpenInBrowser')) {
+        return { kind: 'default' };
+      }
+    } catch (_) {}
+    return { kind: 'app' };
+  }
+  function canOpenInSysBrowser() {
+    return !!(window.host && window.host.caps && window.host.caps.file);
+  }
+  function sameExe(a, b) {
+    return String(a || '').replace(/\//g, '\\').toLowerCase() === String(b || '').replace(/\//g, '\\').toLowerCase();
+  }
+  function fileOpResult(sp) {
+    if (sp == null) return '';
+    if (typeof sp === 'string') return sp;
+    if (sp.result != null) return String(sp.result);
+    return '';
+  }
+  var _webHist = [];
+  var _webIdx = -1;
+  var _webBound = false;
+  var _webTimer = 0;
+  function webEls() {
+    var pane = document.getElementById('zn-web-pane');
+    if (!pane) return null;
+    return {
+      pane: pane,
+      frame: pane.querySelector('.zn-web-frame'),
+      url: pane.querySelector('.zn-web-url'),
+      fail: pane.querySelector('.zn-web-fail'),
+      back: pane.querySelector('[data-web="back"]'),
+      fwd: pane.querySelector('[data-web="fwd"]')
+    };
+  }
+  function isWebPaneOpen() {
+    var pane = document.getElementById('zn-web-pane');
+    return !!(pane && !pane.classList.contains('hidden'));
+  }
+  function syncWebNav() {
+    var els = webEls();
+    if (!els) return;
+    if (els.back) els.back.disabled = _webIdx <= 0;
+    if (els.fwd) els.fwd.disabled = _webIdx < 0 || _webIdx >= _webHist.length - 1;
+  }
+  function showWebFail(on) {
+    var els = webEls();
+    if (!els || !els.fail) return;
+    els.fail.classList.toggle('hidden', !on);
+  }
+  function currentWebHref() {
+    return _webIdx >= 0 ? (_webHist[_webIdx] || '') : '';
+  }
+  function loadWebFrame(href, push) {
+    href = String(href || '').trim();
+    if (!href) return;
+    if (!/^https?:\/\//i.test(href)) {
+      if (/^www\./i.test(href)) href = 'https://' + href;
+      else if (/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}/i.test(href)) href = 'https://' + href;
+      else return;
+    }
+    var els = webEls();
+    if (!els || !els.frame) return;
+    if (push) {
+      if (!(_webIdx >= 0 && _webHist[_webIdx] === href)) {
+        _webHist = _webHist.slice(0, _webIdx + 1);
+        _webHist.push(href);
+        if (_webHist.length > 40) _webHist.shift();
+        _webIdx = _webHist.length - 1;
+      }
+    }
+    if (els.url) els.url.value = href;
+    showWebFail(false);
+    if (_webTimer) { clearTimeout(_webTimer); _webTimer = 0; }
+    _webTimer = setTimeout(function () {
+      _webTimer = 0;
+      if (!isWebPaneOpen()) return;
+      try {
+        var loc = els.frame.contentWindow && els.frame.contentWindow.location.href;
+        if (!loc || loc === 'about:blank') showWebFail(true);
+      } catch (_) {}
+    }, 8000);
+    els.frame.src = href;
+    syncWebNav();
+  }
+  function openOutside(href) {
+    href = String(href || currentWebHref() || '').trim();
+    if (!href) return;
+    if (!canOpenInSysBrowser()) {
+      try { window.open(href, '_blank'); } catch (_) {}
+      return;
+    }
+    window.host.file.op({ mode: 'openUrl', path: href, exe: '', fileName: '' }).then(function (sp) {
+      if (fileOpResult(sp)) return;
+      return window.host.file.op({ mode: 'open', path: href });
+    }).catch(function () {
+      try { window.open(href, '_blank'); } catch (_) {}
+    });
+  }
+  function closeWebPane() {
+    var els = webEls();
+    if (!els) return;
+    if (_webTimer) { clearTimeout(_webTimer); _webTimer = 0; }
+    els.pane.classList.add('hidden');
+    els.pane.setAttribute('aria-hidden', 'true');
+    try { els.frame.src = 'about:blank'; } catch (_) {}
+    showWebFail(false);
+  }
+  function webGoBack() {
+    if (!isWebPaneOpen()) return false;
+    if (_webIdx > 0) {
+      _webIdx--;
+      loadWebFrame(_webHist[_webIdx], false);
+      return true;
+    }
+    closeWebPane();
+    return true;
+  }
+  function bindWebPane() {
+    if (_webBound) return;
+    var els = webEls();
+    if (!els) return;
+    _webBound = true;
+    els.pane.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-web]') : null;
+      if (!btn) return;
+      var act = btn.getAttribute('data-web');
+      if (act === 'back') webGoBack();
+      else if (act === 'fwd') {
+        if (_webIdx < _webHist.length - 1) {
+          _webIdx++;
+          loadWebFrame(_webHist[_webIdx], false);
+        }
+      } else if (act === 'reload') {
+        var u = currentWebHref();
+        if (u) {
+          try { els.frame.contentWindow.location.reload(); }
+          catch (_) { els.frame.src = u; }
+        }
+      } else if (act === 'ext' || act === 'ext2') openOutside();
+      else if (act === 'close') closeWebPane();
+    });
+    els.url.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      loadWebFrame(els.url.value, true);
+    });
+    els.frame.addEventListener('load', function () {
+      if (_webTimer) { clearTimeout(_webTimer); _webTimer = 0; }
+      if (!isWebPaneOpen()) return;
+      var blocked = false;
+      try {
+        var loc = els.frame.contentWindow && els.frame.contentWindow.location.href;
+        if (!loc || loc === 'about:blank') blocked = true;
+        else if (els.url && loc.indexOf('http') === 0) els.url.value = loc;
+      } catch (_) {
+        blocked = false;
+      }
+      showWebFail(blocked);
+    });
+  }
+  function openInApp(href) {
+    href = String(href || '').trim();
+    if (!href) return;
+    bindWebPane();
+    var els = webEls();
+    if (!els) {
+      try { window.open(href, '_blank'); } catch (_) {}
+      return;
+    }
+    els.pane.classList.remove('hidden');
+    els.pane.setAttribute('aria-hidden', 'false');
+    loadWebFrame(href, true);
+  }
+  function openWebHref(href) {
+    href = String(href || '').trim();
+    if (!href) return;
+    if (!/^https?:\/\//i.test(href)) {
+      try { window.open(href, '_blank'); } catch (_) {}
+      return;
+    }
+    var t = urlOpenTarget();
+    if (t.kind === 'app' || !canOpenInSysBrowser()) {
+      openInApp(href);
+      return;
+    }
+    var args = { mode: 'openUrl', path: href, exe: '', fileName: '' };
+    if (t.kind === 'exe' && t.exe) {
+      args.exe = t.exe;
+      args.fileName = t.exe;
+    }
+    window.host.file.op(args).then(function (sp) {
+      if (fileOpResult(sp)) return;
+      if (t.kind === 'exe') {
+        if (window.toast) window.toast('无法用这个浏览器打开', 'warning');
+        return;
+      }
+      return window.host.file.op({ mode: 'open', path: href });
+    }).catch(function () {
+      if (t.kind === 'exe') {
+        if (window.toast) window.toast('无法用这个浏览器打开', 'warning');
+        return;
+      }
+      window.host.file.op({ mode: 'open', path: href }).catch(function () {
+        try { window.open(href, '_blank'); } catch (_) {}
+      });
+    });
+  }
+
+  var BROWSER_ICO = {
+    chrome: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#EA4335"/><path fill="#FBBC05" d="M12 12l9.8-3.5A10 10 0 0 0 12 2z"/><path fill="#34A853" d="M12 12l-3.2 9.4A10 10 0 0 0 21.8 8.5z"/><circle cx="12" cy="12" r="4.4" fill="#fff"/><circle cx="12" cy="12" r="2.7" fill="#4285F4"/></svg>',
+    edge: '<svg viewBox="0 0 24 24"><path fill="#33C3F0" d="M4 12.2C5.2 6.8 9.4 3.2 15 4.6c3.2.8 5.8 3.6 6 6.9-2.2-3.4-6.4-4.6-10.1-2.7C8.4 10.2 7 13 7.4 16c.2 1.4 1 2.6 2.1 3.4C6.6 18.4 4.4 15.6 4 12.2z"/><path fill="#0C63C8" d="M8.2 18.8c2.4 2.4 6.6 3 9.6.4 1.8-1.6 2.4-3.8 2.2-6.1-2.6 4.2-8.4 4.6-11.8 1.7z"/></svg>',
+    firefox: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FF7139"/><path fill="#FFDA2D" d="M7 14c1.2-4 4.2-6.2 8.2-5.4 1.4.3 2.6 1.2 3.2 2.4-1.8-2-4.8-2.6-7.4-1.2C9.2 10.8 8 12.4 7.6 14.2z"/><circle cx="13" cy="12.2" r="3.2" fill="#0060DF"/></svg>',
+    opera: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FF1B2D"/><ellipse cx="12" cy="12" rx="4.2" ry="7.2" fill="#fff"/></svg>',
+    brave: '<svg viewBox="0 0 24 24"><path fill="#FB542B" d="M12 2l3.2 2.2 3.6-.4-.2 3.6L22 10l-2.2 3.2.4 3.6-3.6.2L14 20.8 12 22l-2-1.2-2.6-3.8-3.6-.2.4-3.6L2 10l3.4-2.6L5.2 3.8l3.6.4z"/><path fill="#fff" d="M12 6.2l2.4 1.6v3.4L12 17.2 9.6 11.2V7.8z"/></svg>',
+    vivaldi: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#EF3939"/><path fill="#fff" d="M7 10.2c1.6 3.4 3.2 6.6 5 6.6s3.4-3.2 5-6.6c-.8 1.2-2.2 2-3.6 1.4-.6 1.4-1.4 2.4-1.4 2.4s-.8-1-1.4-2.4C9.2 12.2 7.8 11.4 7 10.2z"/></svg>',
+    arc: '<svg viewBox="0 0 24 24"><path fill="none" stroke="#F26430" stroke-width="2.2" stroke-linecap="round" d="M6 16.5a7.5 7.5 0 0 1 12 0"/><path fill="none" stroke="#1B73E8" stroke-width="2.2" stroke-linecap="round" d="M4.5 13a9.5 9.5 0 0 1 15 0"/></svg>',
+    ie: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#1EBBEE"/><ellipse cx="12" cy="12" rx="10" ry="4.2" fill="none" stroke="#fff" stroke-width="1.6"/><rect x="8" y="10.4" width="8" height="3.2" rx="1" fill="#0B5EA8"/></svg>',
+    chromium: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#8CB4FF"/><circle cx="12" cy="12" r="4.2" fill="#fff"/><circle cx="12" cy="12" r="2.6" fill="#4B8BFF"/></svg>',
+    '360': '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#22A861"/><circle cx="12" cy="12" r="5.2" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="1.6" fill="#fff"/></svg>',
+    qq: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#12B7F5"/><ellipse cx="12" cy="13.2" rx="5.4" ry="4.6" fill="#fff"/><circle cx="10" cy="10.4" r="1.1" fill="#111"/><circle cx="14" cy="10.4" r="1.1" fill="#111"/></svg>',
+    sogou: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FB6022"/><path fill="#fff" d="M8 12.2c0-2.4 1.8-4.2 4-4.2 1.6 0 3 .8 3.6 2.1h-2.2A2 2 0 0 0 12 9.8c-1.3 0-2.2 1-2.2 2.4S10.7 14.6 12 14.6c.8 0 1.4-.3 1.8-.8h2.2A4 4 0 0 1 12 16.4c-2.2 0-4-1.8-4-4.2z"/></svg>',
+    liebao: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FF7A00"/><path fill="#fff" d="M7.5 15.2c1.6-4.4 3.4-7.4 4.5-7.4s2.9 3 4.5 7.4c-1.2-1.6-2.8-2.5-4.5-2.5s-3.3.9-4.5 2.5z"/></svg>',
+    uc: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FF6A00"/><path fill="#fff" d="M8 8.5h2.2v5.2c0 1.4 1 2.3 2.8 2.3s2.8-.9 2.8-2.3V8.5H18v5.2c0 2.6-2 4.4-5 4.4s-5-1.8-5-4.4z"/></svg>',
+    whale: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#1ED760"/><path fill="#fff" d="M6.5 13.5c2.2 3.2 8.8 3.2 11 0-2 .8-4.2 1.2-5.5 1.2s-3.5-.4-5.5-1.2z"/></svg>',
+    yandex: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#FC3F1D"/><path fill="#fff" d="M10.2 6.8h2.4c2 0 3.4 1.1 3.4 3.1 0 1.5-.8 2.5-2 3l2.4 4.3h-2.6l-2.1-3.9h-.3v3.9H10.2z m2.2 4.4c.9 0 1.4-.5 1.4-1.3s-.5-1.3-1.4-1.3h-.6v2.6z"/></svg>',
+    maxthon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#1E88E5"/><path fill="#fff" d="M7 16.2L12 6.8l5 9.4h-2.2l-1-2.1h-3.6l-1 2.1zM11.2 12h1.6L12 9.4z"/></svg>',
+    quark: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#00C2B3"/><path fill="#fff" d="M9.2 8.2h3.1c2.1 0 3.5 1.2 3.5 3.1 0 1.5-.8 2.6-2.1 3l1.8 2.7h-2.3l-1.6-2.5H11v2.5H9.2zm2.8 4.5c.9 0 1.5-.5 1.5-1.4s-.6-1.4-1.5-1.4H11v2.8z"/></svg>',
+    generic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>',
+    app: ''
+  };
+  var ZHINOTE_ICON = '📖';
+  function paintZnIco(el) {
+    if (!el) return;
+    el.classList.add('is-app');
+    el.textContent = ZHINOTE_ICON;
+    try { if (window.emojiUi && window.emojiUi.paintIcon) window.emojiUi.paintIcon(el, ZHINOTE_ICON); } catch (_) {}
+  }
+  function fillBrowserIco(el, brand, png) {
+    if (!el) return;
+    if (brand === 'app') { paintZnIco(el); return; }
+    el.classList.remove('is-app');
+    png = String(png || '').replace(/\s/g, '');
+    if (png && /^[A-Za-z0-9+/=]+$/.test(png)) {
+      el.innerHTML = '<img alt="" src="data:image/png;base64,' + png + '">';
+      return;
+    }
+    el.innerHTML = browserIco(brand);
+  }
+  function browserBrand(name, exe) {
+    var s = (String(name || '') + ' ' + String(exe || '')).toLowerCase();
+    if (/360/.test(s)) return '360';
+    if (/qqbrowser|qq浏览器/.test(s)) return 'qq';
+    if (/sogou|搜狗/.test(s)) return 'sogou';
+    if (/liebao|猎豹/.test(s)) return 'liebao';
+    if (/ucbrowser|uc浏览器/.test(s)) return 'uc';
+    if (/quark|夸克/.test(s)) return 'quark';
+    if (/opera/.test(s)) return 'opera';
+    if (/brave/.test(s)) return 'brave';
+    if (/vivaldi/.test(s)) return 'vivaldi';
+    if (/\barc\b/.test(s)) return 'arc';
+    if (/firefox|waterfox|librewolf/.test(s)) return 'firefox';
+    if (/msedge|microsoft edge|\\edge\\|\/edge\//.test(s)) return 'edge';
+    if (/iexplore|internet explorer/.test(s)) return 'ie';
+    if (/chromium/.test(s)) return 'chromium';
+    if (/chrome/.test(s)) return 'chrome';
+    if (/whale|naver/.test(s)) return 'whale';
+    if (/yandex/.test(s)) return 'yandex';
+    if (/maxthon|傲游/.test(s)) return 'maxthon';
+    return 'generic';
+  }
+  function browserIco(brand) {
+    return BROWSER_ICO[brand] || BROWSER_ICO.generic;
+  }
+  function parseBrowserResult(sp) {
+    var raw = sp && (sp.result != null ? sp.result : sp);
+    if (raw == null) return null;
+    if (typeof raw === 'object') return raw;
+    var s = String(raw).trim();
+    if (!s) return null;
+    try { return JSON.parse(s); } catch (_) { return null; }
+  }
+  function loadBrowserList() {
+    if (!canOpenInSysBrowser()) return Promise.resolve(null);
+    return window.host.file.op({ mode: 'listBrowsers' }).then(parseBrowserResult).catch(function () { return null; });
+  }
+  function mountBrowserSelect(hostEl) {
+    if (!hostEl) return;
+    var t = urlOpenTarget();
+    var trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'zn-url-browser-btn';
+    hostEl.appendChild(trigger);
+    var panel = null;
+    var rows = [];
+
+    function paintTrigger(item) {
+      if (!item) return;
+      trigger.innerHTML = '<span class="zn-url-browser-ico"></span>'
+        + '<span class="zn-url-browser-label">' + esc(item.label) + '</span>'
+        + '<svg class="md-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+      fillBrowserIco(trigger.querySelector('.zn-url-browser-ico'), item.brand, item.icon);
+    }
+    function isOn(item) {
+      var cur = urlOpenTarget();
+      if (!item) return false;
+      if (item.value === 'app') return cur.kind === 'app';
+      if (item.value === 'default') return cur.kind === 'default';
+      if (item.value === 'exe') return cur.kind === 'exe' && sameExe(item.exe, cur.exe);
+      return false;
+    }
+    function currentItem() {
+      for (var i = 0; i < rows.length; i++) {
+        if (!rows[i].sep && isOn(rows[i])) return rows[i];
+      }
+      return rows.filter(function (x) { return x && !x.sep; })[0] || { brand: 'app', label: '在枝记里打开', value: 'app' };
+    }
+    function pick(item) {
+      close();
+      if (!item || !window.storage || !window.storage.setSetting) return;
+      if (item.value === 'app') window.storage.setSetting('urlOpenBrowser', 'app');
+      else if (item.value === 'default') window.storage.setSetting('urlOpenBrowser', 'default');
+      else window.storage.setSetting('urlOpenBrowser', item.exe || '');
+      try { window.storage.setSetting('urlOpenInBrowser', item.value !== 'app'); } catch (_) {}
+      paintTrigger(item);
+    }
+    function close() {
+      if (!panel) return;
+      panel.remove();
+      panel = null;
+      trigger.classList.remove('is-open');
+      document.removeEventListener('mousedown', onDoc, true);
+    }
+    function onDoc(e) {
+      if (panel && !panel.contains(e.target) && !trigger.contains(e.target)) close();
+    }
+    function open() {
+      if (panel) { close(); return; }
+      if (!rows.length) return;
+      panel = document.createElement('div');
+      panel.className = 'md-select-panel zn-url-browser-panel is-open';
+      var html = '';
+      for (var i = 0; i < rows.length; i++) {
+        var it = rows[i];
+        if (it.sep) { html += '<div class="zn-url-browser-sep"></div>'; continue; }
+        var on = isOn(it);
+        html += '<div class="md-select-item' + (on ? ' is-active' : '') + '" data-i="' + i + '">'
+          + '<span class="zn-url-browser-ico"></span>'
+          + '<span class="md-select-item-label">' + esc(it.label) + '</span>'
+          + (on ? '<span class="md-select-item-check">✓</span>' : '')
+          + '</div>';
+      }
+      panel.innerHTML = html;
+      var icos = panel.querySelectorAll('.md-select-item');
+      for (var j = 0; j < icos.length; j++) {
+        var idx = parseInt(icos[j].getAttribute('data-i'), 10);
+        if (rows[idx] && !rows[idx].sep) fillBrowserIco(icos[j].querySelector('.zn-url-browser-ico'), rows[idx].brand, rows[idx].icon);
+      }
+      document.body.appendChild(panel);
+      var r = trigger.getBoundingClientRect();
+      var w = Math.max(r.width, 220);
+      panel.style.minWidth = w + 'px';
+      panel.style.left = Math.min(r.left, window.innerWidth - w - 8) + 'px';
+      var top = r.bottom + 4;
+      if (top + panel.offsetHeight > window.innerHeight - 8) top = Math.max(8, r.top - panel.offsetHeight - 4);
+      panel.style.top = top + 'px';
+      trigger.classList.add('is-open');
+      panel.querySelectorAll('.md-select-item').forEach(function (el) {
+        el.addEventListener('click', function () {
+          var idx = parseInt(el.getAttribute('data-i'), 10);
+          if (rows[idx] && !rows[idx].sep) pick(rows[idx]);
+        });
+      });
+      document.addEventListener('mousedown', onDoc, true);
+    }
+    trigger.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      open();
+    });
+
+    paintTrigger({ brand: 'generic', label: '读取浏览器…', value: 'app' });
+    loadBrowserList().then(function (data) {
+      var items = (data && data.items) || [];
+      var def = null;
+      var rest = [];
+      for (var i = 0; i < items.length; i++) {
+        var it = items[i] || {};
+        if (it.isDefault && !def) def = it;
+        else if (!def || !sameExe(it.exe, def.exe)) rest.push(it);
+      }
+      var next = [];
+      next.push({ brand: 'app', label: '在枝记里打开', value: 'app' });
+      next.push({ sep: true });
+      if (def && def.name) {
+        next.push({
+          brand: browserBrand(def.name, def.exe),
+          label: def.name + '（默认）',
+          value: 'default',
+          exe: def.exe || '',
+          icon: def.icon || ''
+        });
+      } else {
+        next.push({ brand: 'generic', label: '系统默认（默认）', value: 'default', exe: '' });
+      }
+      rest.forEach(function (it) {
+        next.push({
+          brand: browserBrand(it.name, it.exe),
+          label: it.name || '浏览器',
+          value: 'exe',
+          exe: it.exe || '',
+          icon: it.icon || ''
+        });
+      });
+      rows = next;
+      paintTrigger(currentItem());
+    });
+  }
   function looksUrl(q) {
     q = String(q || '').trim();
     if (!q) return '';
@@ -74,6 +503,7 @@
       href: (attrs && attrs.href) || '',
       title: (attrs && attrs.title) || '',
       icon: (attrs && attrs.icon) || '',
+      hideHost: !!(attrs && (attrs.hideHost === true || attrs.hideHost === '1' || attrs.hideHost === 1)),
     };
     if (a.kind === 'note' && a.id && window.storage) {
       var n = window.storage.get(a.id);
@@ -89,9 +519,8 @@
       else if (a.kind === 'file') a.title = fileName(a.href) || '文件';
       else a.title = '笔记';
     }
-    if (a.kind === 'url') a.icon = '🌐';
-    else if (!a.icon) {
-      a.icon = a.kind === 'file' ? '📁' : '📄';
+    if (!a.icon) {
+      a.icon = a.kind === 'url' ? '🌐' : (a.kind === 'file' ? '📁' : '📄');
     }
     return a;
   }
@@ -166,6 +595,7 @@
     if (a.href) dom.setAttribute('data-href', a.href); else dom.removeAttribute('data-href');
     dom.setAttribute('data-title', a.title);
     dom.setAttribute('data-icon', a.icon);
+    if (a.kind === 'url' && !urlShowHost()) dom.setAttribute('data-hide-host', '1'); else dom.removeAttribute('data-hide-host');
     dom.innerHTML = '';
     var ico = document.createElement('span');
     ico.className = 'zn-mn-ico';
@@ -175,7 +605,7 @@
     t.textContent = a.title;
     dom.appendChild(ico);
     dom.appendChild(t);
-    if (a.kind === 'url') {
+    if (a.kind === 'url' && urlShowHost()) {
       var host = hostOf(a.href);
       if (host) {
         var ext = document.createElement('span');
@@ -195,6 +625,7 @@
     if (a.href) dom.setAttribute('data-href', a.href); else dom.removeAttribute('data-href');
     dom.setAttribute('data-title', a.title);
     dom.setAttribute('data-icon', a.icon);
+    if (a.kind === 'url' && !urlShowHost()) dom.setAttribute('data-hide-host', '1'); else dom.removeAttribute('data-hide-host');
     dom.innerHTML = '';
     var ico = document.createElement('span');
     ico.className = 'zn-pl-ico';
@@ -206,7 +637,7 @@
     t.textContent = a.title;
     body.appendChild(t);
     var path = a.kind === 'note' ? pathOf(a.id)
-      : (a.kind === 'url' ? hostOf(a.href) : (a.kind === 'file' ? fileName(a.href) : ''));
+      : (a.kind === 'url' ? (urlShowHost() ? hostOf(a.href) : '') : (a.kind === 'file' ? fileName(a.href) : ''));
     if (path) {
       var s = document.createElement('span');
       s.className = 'zn-pl-path';
@@ -224,6 +655,7 @@
         href: el.getAttribute('data-href') || '',
         title: el.getAttribute('data-title') || '',
         icon: el.getAttribute('data-icon') || '',
+        hideHost: el.getAttribute('data-hide-host') === '1',
       });
     });
     document.querySelectorAll('.zn-pagelink').forEach(function (el) {
@@ -233,6 +665,7 @@
         href: el.getAttribute('data-href') || '',
         title: el.getAttribute('data-title') || '',
         icon: el.getAttribute('data-icon') || '',
+        hideHost: el.getAttribute('data-hide-host') === '1',
       });
     });
   }
@@ -247,6 +680,7 @@
       href: hit.getAttribute('data-href') || '',
       title: hit.getAttribute('data-title') || '',
       icon: hit.getAttribute('data-icon') || '',
+      hideHost: hit.getAttribute('data-hide-host') === '1',
     };
   }
 
@@ -280,9 +714,7 @@
       }
       return;
     }
-    if (href) {
-      try { window.open(href, '_blank'); } catch (_) {}
-    }
+    if (href) openWebHref(href);
   }
 
   function fileHrefOf(attrs) {
@@ -520,7 +952,7 @@
         title: query.replace(/^https?:\/\//i, ''),
         sub: hostOf(url) || '网址',
         icon: '🌐',
-        attrs: { kind: 'url', id: '', href: url, title: hostOf(url) || query, icon: '🌐' },
+        attrs: { kind: 'url', id: '', href: url, title: hostOf(url) || query, icon: '🌐', hideHost: true },
       });
     }
     items.push({ type: 'sep' });
@@ -764,6 +1196,43 @@
     if (replacePos != null) return replaceAt(replacePos, attrs);
     return insertNode(attrs, asBlock, range);
   }
+  function patchSelected(partial) {
+    var inst = ed();
+    var hit = findSelectedRef(inst);
+    if (!inst || !hit) return false;
+    return inst.chain().focus().command(function (_ref) {
+      var tr = _ref.tr, state = _ref.state, dispatch = _ref.dispatch;
+      var node = state.doc.nodeAt(hit.pos);
+      if (!node || (node.type.name !== 'znMention' && node.type.name !== 'znPageLink')) return false;
+      tr.setNodeMarkup(hit.pos, undefined, liveAttrs(Object.assign({}, node.attrs, partial || {})));
+      if (dispatch) dispatch(tr);
+      return true;
+    }).run();
+  }
+  function pickSelectedIcon(anchor) {
+    var inst = ed();
+    var hit = findSelectedRef(inst);
+    if (!hit) return false;
+    var kind = hit.node.attrs.kind || 'note';
+    if (kind === 'note') return false;
+    var fallback = kind === 'file' ? '📁' : '🌐';
+    var cur = hit.node.attrs.icon || fallback;
+    if (!window.openIconPicker) return false;
+    window.openIconPicker(anchor || document.body, {
+      currentIcon: cur,
+      defaultIcon: fallback,
+      title: '更换图标',
+      onPick: function (icon) { patchSelected({ icon: icon || fallback }); }
+    });
+    return true;
+  }
+  function toggleHideHost() {
+    var inst = ed();
+    var hit = findSelectedRef(inst);
+    if (!hit) return false;
+    if ((hit.node.attrs.kind || '') !== 'url') return false;
+    return patchSelected({ hideHost: !hit.node.attrs.hideHost });
+  }
   function refreshPicker() {
     _items = buildItems(_query);
     _hi = defaultHi(_items, _query);
@@ -814,17 +1283,65 @@
 
   function openUrlCard(asBlock, range, extra) {
     extra = extra || {};
+    var initIcon = extra.icon || '🌐';
+    var showHost = urlShowHost();
+    var sysBrowser = canOpenInSysBrowser();
     var body = document.createElement('div');
+    body.className = 'zn-url-card-body';
     body.innerHTML =
-      '<div style="display:flex;flex-direction:column;gap:12px;">'
-      + '<div><label style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:4px;">网址</label>'
+      '<div class="zn-url-pane is-on" data-pane="edit">'
+      + '<div><label style="font-size:13px;color:var(--text-secondary);display:block;margin:0 0 6px;">图标</label>'
+      + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+      + '<button type="button" id="zn-url-icon" class="ws-icon-pick-btn" title="选择图标">' + esc(initIcon) + '</button>'
+      + '<input type="hidden" id="zn-url-icon-input" value="' + esc(initIcon) + '">'
+      + '<span style="color:var(--text-tertiary);font-size:12px;">点击图标打开表情库</span></div></div>'
+      + '<div><label style="font-size:13px;color:var(--text-secondary);display:block;margin:0 0 4px;">网址</label>'
       + '<input id="zn-url-href" type="url" placeholder="https://" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--bg);color:var(--text);outline:none;box-sizing:border-box;"></div>'
-      + '<div><label style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:4px;">显示名称<span style="color:var(--text-tertiary);font-weight:400;">（选填，空白则用网站名）</span></label>'
+      + '<div><label style="font-size:13px;color:var(--text-secondary);display:block;margin:0 0 4px;">显示名称<span style="color:var(--text-tertiary);font-weight:400;">（选填，空白则用网站名）</span></label>'
       + '<input id="zn-url-title" type="text" placeholder="例如：维基百科" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;background:var(--bg);color:var(--text);outline:none;box-sizing:border-box;"></div>'
+      + '</div>'
+      + '<div class="zn-url-pane" data-pane="global">'
+      + '<div class="zn-url-showhost-row"><span class="zn-url-showhost-text">显示域名</span>'
+      + '<label class="zn-toggle">'
+      + '<input type="checkbox" id="zn-url-show-host"' + (showHost ? ' checked' : '') + '>'
+      + '<i></i></label></div>'
+      + (sysBrowser
+        ? ('<div class="zn-url-open-row"><div class="zn-url-open-label">打开方式</div><div id="zn-url-browser-wrap"></div></div>')
+        : '')
       + '</div>';
+    var globalPane0 = body.querySelector('.zn-url-pane[data-pane="global"]');
+    if (globalPane0 && 'inert' in globalPane0) globalPane0.inert = true;
+    var iconBtn = body.querySelector('#zn-url-icon');
+    var iconInp = body.querySelector('#zn-url-icon-input');
+    if (iconBtn && iconInp) {
+      iconBtn.addEventListener('click', function () {
+        if (!window.openIconPicker) return;
+        window.openIconPicker(iconBtn, {
+          title: '选择图标',
+          currentIcon: iconInp.value || '🌐',
+          defaultIcon: '🌐',
+          onPick: function (icon) {
+            var v = icon || '🌐';
+            iconInp.value = v;
+            try { window.emojiUi && window.emojiUi.paintIcon && window.emojiUi.paintIcon(iconBtn, v); }
+            catch (_) { iconBtn.textContent = v; }
+          }
+        });
+      });
+      try { window.emojiUi && window.emojiUi.paintIcon && window.emojiUi.paintIcon(iconBtn, iconInp.value || '🌐'); } catch (_) {}
+    }
+    var showEl = body.querySelector('#zn-url-show-host');
+    if (showEl) {
+      showEl.addEventListener('change', function () {
+        if (window.storage && window.storage.setSetting) window.storage.setSetting('urlShowHost', !!showEl.checked);
+        refreshLive();
+      });
+    }
+    mountBrowserSelect(body.querySelector('#zn-url-browser-wrap'));
     if (typeof window.openModal !== 'function') return;
     window.openModal({
       title: extra.replacePos != null ? '修改网址' : '粘贴网址',
+      dialogClass: 'zn-url-card-modal',
       body: body,
       footer: [
         { label: '取消', class: 'secondary-btn', onClick: function () { window.closeModal(); } },
@@ -833,11 +1350,32 @@
           var title = (body.querySelector('#zn-url-title').value || '').trim();
           if (!href) return;
           if (!/^https?:\/\//i.test(href) && !/^mailto:/i.test(href) && href.indexOf('file:') !== 0) href = 'https://' + href;
-          applyRef({ kind: 'url', href: href, title: title || hostOf(href) || href, icon: '🌐' }, !!asBlock, range, extra.replacePos);
+          var icon = ((body.querySelector('#zn-url-icon-input') || {}).value || '').trim() || '🌐';
+          applyRef({
+            kind: 'url', href: href, title: title || hostOf(href) || href, icon: icon,
+            hideHost: extra.replacePos != null ? !!extra.hideHost : true,
+          }, !!asBlock, range, extra.replacePos);
           window.closeModal();
         } },
       ],
     });
+    var titleEl = document.getElementById('modal-title');
+    if (titleEl) {
+      var editName = extra.replacePos != null ? '修改网址' : '粘贴网址';
+      titleEl.innerHTML = '<button type="button" class="zn-url-tab is-on" data-pane="edit">' + esc(editName) + '</button>'
+        + '<button type="button" class="zn-url-tab" data-pane="global">全局设置</button>';
+      titleEl.querySelectorAll('.zn-url-tab').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var pane = btn.getAttribute('data-pane');
+          titleEl.querySelectorAll('.zn-url-tab').forEach(function (b) { b.classList.toggle('is-on', b === btn); });
+          body.querySelectorAll('.zn-url-pane').forEach(function (p) {
+            var on = p.getAttribute('data-pane') === pane;
+            p.classList.toggle('is-on', on);
+            if ('inert' in p) p.inert = !on;
+          });
+        });
+      });
+    }
     setTimeout(function () {
       var inp = body.querySelector('#zn-url-href');
       var titleInp = body.querySelector('#zn-url-title');
@@ -961,6 +1499,7 @@
     var attrs = liveAttrs({
       kind: kind, id: '', href: href, title: title,
       icon: kind === 'file' ? '📁' : '🌐',
+      hideHost: kind === 'url',
     });
     return inst.chain().focus().command(function (_ref) {
       var tr = _ref.tr, state = _ref.state, dispatch = _ref.dispatch;
@@ -1044,7 +1583,7 @@
     }
     var url = looksUrl(query);
     if (url && from != null && to != null && to > from) {
-      applyRef({ kind: 'url', href: url, title: hostOf(url) || query, icon: '🌐' }, !!opts.asBlock, { from: from, to: to }, null);
+      applyRef({ kind: 'url', href: url, title: hostOf(url) || query, icon: '🌐', hideHost: true }, !!opts.asBlock, { from: from, to: to }, null);
       return;
     }
     showPicker({
@@ -1171,7 +1710,7 @@
     var a = liveAttrs(hit.node.attrs);
     var asBlock = hit.node.type.name === 'znPageLink';
     if (a.kind === 'url') {
-      openUrlCard(asBlock, null, { replacePos: hit.pos, href: a.href, title: a.title });
+      openUrlCard(asBlock, null, { replacePos: hit.pos, href: a.href, title: a.title, icon: a.icon, hideHost: a.hideHost });
       return true;
     }
     if (a.kind === 'file') {
@@ -1221,6 +1760,7 @@
   }
 
   function init() {
+    bindWebPane();
     document.addEventListener('keydown', onKeyDown, true);
     document.addEventListener('compositionend', handleAtTrigger, true);
     document.addEventListener('keyup', function (e) {
@@ -1251,12 +1791,18 @@
     bindChipEvents: bindChipEvents,
     liveAttrs: liveAttrs,
     openTarget: openTarget,
+    openWebHref: openWebHref,
+    closeWebPane: closeWebPane,
+    isWebPaneOpen: isWebPaneOpen,
+    webGoBack: webGoBack,
     revealHref: revealHref,
     revealTarget: revealTarget,
     revealSelected: revealSelected,
     convertToPageLink: convertToPageLink,
     convertToMention: convertToMention,
     editSelected: editSelected,
+    pickSelectedIcon: pickSelectedIcon,
+    toggleHideHost: toggleHideHost,
     convertClassicLink: convertClassicLink,
     openUrlFromToolbar: openUrlFromToolbar,
     openSelected: openSelected,

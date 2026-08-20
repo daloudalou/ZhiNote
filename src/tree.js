@@ -1444,7 +1444,7 @@ const tree = (() => {
     const data = storage.exportCurrentNoteMd(id);
     if (!data) { toast('笔记不存在', 'error'); return; }
     const safeTitle = (data.title || '无标题').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80) || '无标题';
-    const fileName = `${safeTitle}.md`;
+    const fileName = `ZhiNote_${safeTitle}.md`;
     const content = data.content;
     try {
       if (storage.isQuicker()) {
@@ -1483,14 +1483,16 @@ const tree = (() => {
         let content = '';
         let title = name.replace(/\.[^.]+$/, '') || '导入笔记';
 
-        if (ext === 'docx' && typeof mammoth !== 'undefined') {
+        if (ext === 'docx') {
+          if (typeof mammoth === 'undefined' || typeof mammoth.convertToMarkdown !== 'function') {
+            toast('打不开 Word 文件，请另存为 Markdown 或纯文本后再打开', 'warning');
+            return;
+          }
           const bytes = Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0));
           const result = await mammoth.convertToMarkdown({ arrayBuffer: bytes.buffer });
           content = result.value || '';
         } else {
-          content = ext === 'docx'
-            ? atob(fileData.content)
-            : new TextDecoder().decode(Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0)));
+          content = new TextDecoder().decode(Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0)));
         }
 
         const pid = parentId || null;
@@ -1857,7 +1859,7 @@ const tree = (() => {
     if (ids.length === 1) { await exportSingleNote(ids[0]); return; }
     if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
     const ts = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const fileName = `notes_selected_${ts}.zip`;
+    const fileName = `ZhiNote_selected_${ts}.zip`;
     const filter = 'ZIP 压缩包|*.zip';
     try {
       const used = {};

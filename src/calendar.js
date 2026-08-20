@@ -8,7 +8,7 @@
  * 对外接口：
  *   ZhiCalendar.defaultData()            → 当月默认数据（规范 JSON 串）
  *   ZhiCalendar.mount(dom, dataStr, cb)  → 挂载到 dom，数据变化时 cb(newStr)；返回 {update,destroy}
- *   ZhiCalendar.listAgenda(dataStr)      → 近期生日/纪念日 + 记事（不含例假预测），供铃铛消息页
+ *   ZhiCalendar.listAgenda(dataStr)      → 近期生日/纪念日 + 记事（不含例假预测），供铃铛日程页
  *   ZhiCalendar._pendingAutoOpen         → 插入后自动弹当月月历（一次性）
  *   ZhiCalendar._pendingGoto             → {y,m,d} 打开笔记时翻到该月（只改视图，不写入正文）
  *

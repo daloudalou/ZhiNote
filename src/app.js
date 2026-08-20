@@ -270,6 +270,7 @@ async function bootstrap() {
     if (payload?.type !== 'reload' && payload?.type !== 'global-sync') {
       try { _refreshSyncDot(); } catch (_) {}
     }
+    try { _bnOnDataChange(payload); } catch (_) {}
     // 同步模块：本地数据变更 → 调度 PUT（由 storage.js markDirty 统一调度 WebDAV）
   });
 
@@ -326,16 +327,11 @@ async function bootstrap() {
       // 同步前先把编辑器里未落盘的正文 flush 到 storage，
       // 否则远端较新时 reloadCurrent 会覆盖掉内存里的未保存修改
       editor.flushSave?.();
-      // 转圈=正在拉或正在传。静默轮询「清单未变」不闪；淡蓝=还有没存上的或等重试。
-      if (window.webdavSync && window.webdavSync.isUiSyncing && window.webdavSync.isUiSyncing()) {
-        _setCloudSyncDot('syncing');
-        return;
-      }
-      if (payload.silent) {
-        _refreshSyncDot();
-        return;
-      }
-      _setCloudSyncDot('syncing');
+      const heavy = !!(payload.heavy || (window.webdavSync && window.webdavSync.isUiHeavy && window.webdavSync.isUiHeavy()));
+      const busy = !!(window.webdavSync && window.webdavSync.isUiSyncing && window.webdavSync.isUiSyncing());
+      if (heavy) { _setCloudSyncDot('syncing', 'heavy'); return; }
+      if (busy) { _setCloudSyncDot('syncing'); return; }
+      _refreshSyncDot();
     } else if (payload.type === 'sync-protection-start') {
       _startSyncProtection();
     } else if (payload.type === 'webdav-full-check-fixed') {
@@ -360,6 +356,12 @@ async function bootstrap() {
       // 同步成功 → 清掉失败去重记录，下次再失败仍会正常提示
       _lastSyncFailMsg = '';
       _lastSyncFailAt = 0;
+      if (_wnFmtBlocked) {
+        _wnFmtBlocked = false;
+        _wnLsSet(WN_FMT_BLOCK, '');
+        try { _refreshWhatsNewBell(); } catch (_) {}
+        try { _bnRepaintOpen(); } catch (_) {}
+      }
       // 网盘可用后：云端还没有密钥密文时才补传一次；同时尝试解出云端密文补本机缺的（绝不覆盖本机已有）。
       // 禁止每次 sync-ok 都 syncKeyUp：AES 随机 IV 会让密文每次不同 → setSetting(aiKeyEnc) 狂标脏 → 整份清单死循环（20260805t3）。
       if (window.aiChat) {
@@ -412,8 +414,12 @@ async function bootstrap() {
       toast(_msg, 'warning', { id: 'webdav-skip', duration: 8000 });
     } else if (payload.type === 'webdav-version-block') {
       // 云端数据格式比本客户端新 → 已停止同步，提示更新，避免旧版污染/覆盖新格式数据
+      _wnFmtBlocked = true;
+      _wnLsSet(WN_FMT_BLOCK, '1');
       _setCloudSyncDot('error', '云端数据格式较新');
       toast('云端数据已升级到更新版本，当前枝记过旧，已暂停同步。请更新 / 重启枝记后再同步，以免数据冲突。', 'error', { id: 'webdav-version-block', duration: 0 });
+      try { _refreshWhatsNewBell(); } catch (_) {}
+      try { _bnRepaintOpen(); } catch (_) {}
     } else if (payload.type === 'webdav-rate-limited') {
       _setCloudSyncDot('pending');
       toast('同步请求频率受限，将自动恢复', 'warning', { id: 'webdav-rate', duration: 5000 });
@@ -486,7 +492,10 @@ document.addEventListener('click', (e) => {
   if (!el) return;
   e.preventDefault();
   const url = el.getAttribute('data-href');
-  if (url) { try { window.open(url, '_blank'); } catch (_) {} }
+  if (url) {
+    if (window.mentionUi && typeof window.mentionUi.openWebHref === 'function') window.mentionUi.openWebHref(url);
+    else try { window.open(url, '_blank'); } catch (_) {}
+  }
 });
 
 /** 主题选择 popover — 左下角按钮；点选项不关，方便连看，点外面 / Esc / 再点按钮才收 */
@@ -1119,6 +1128,7 @@ function wireEvents() {
       if (saved) appIconEl.textContent = saved;
     }
   }
+  try { window.emojiUi?.paintIcon?.(document.querySelector('.welcome-icon'), '📖'); } catch (_) {}
 
   // 标题栏文字 — 点击修改自定义名称
   const appTitleEl = document.querySelector('.titlebar-title-text');
@@ -2324,6 +2334,185 @@ async function _mirrorAfterOverwrite() {
   }
 }
 
+/** 覆盖导入/恢复期间挡住另一台把旧结构抢着传回来。 */
+async function _withAuthoritativeReset(fn) {
+  try { window.realtime && window.realtime.beginAuthoritativeReset && window.realtime.beginAuthoritativeReset(); } catch (_) {}
+  try { return await fn(); }
+  finally {
+    try { window.realtime && window.realtime.endAuthoritativeReset && window.realtime.endAuthoritativeReset(); } catch (_) {}
+  }
+}
+
+async function _buildBackupZip() {
+  if (typeof JSZip === 'undefined') throw new Error('ZIP 库未加载');
+  try { if (storage.imagesReady) await storage.imagesReady(); } catch (_) {}
+  const zip = new JSZip();
+  const json = storage.exportJSON();
+  zip.file('zhinote-backup.json', json);
+  let imgs = [];
+  try { imgs = (storage.listBackupImageFiles && await storage.listBackupImageFiles()) || []; } catch (_) { imgs = []; }
+  for (const f of imgs) zip.file(f.path, f.content, { base64: true });
+  const base64 = await zip.generateAsync({ type: 'base64' });
+  return { base64, json, imagePaths: imgs.map(f => f.path) };
+}
+
+function _bytesFromB64(b64) {
+  return Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+}
+function _utf8FromB64(b64) {
+  return new TextDecoder().decode(_bytesFromB64(b64));
+}
+
+async function _extractBackupZip(zip) {
+  let jsonFile = zip.file('zhinote-backup.json');
+  if (!jsonFile) {
+    zip.forEach((p, e) => {
+      if (!jsonFile && !e.dir && /(^|\/)zhinote-backup\.json$/i.test(p)) jsonFile = e;
+    });
+  }
+  if (!jsonFile) {
+    zip.forEach((p, e) => {
+      if (!jsonFile && !e.dir && /\.json$/i.test(p) && !/(^|\/)images\//i.test(p)) jsonFile = e;
+    });
+  }
+  if (!jsonFile) throw new Error('压缩包里没有备份文件');
+  const text = await jsonFile.async('string');
+  const images = {};
+  const assetEntries = [];
+  zip.forEach((p, e) => {
+    if (!e.dir && /(^|\/)images\/[^/]+\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p)) assetEntries.push({ p, e });
+  });
+  for (const { p, e } of assetEntries) {
+    const b64 = await e.async('base64');
+    let ext = (p.split('.').pop() || 'png').toLowerCase();
+    const mime = ext === 'jpg' ? 'jpeg' : ext === 'svg' ? 'svg+xml' : ext;
+    const hash = (p.split('/').pop() || '').replace(/\.[^.]+$/, '');
+    if (hash) images[hash] = `data:image/${mime};base64,${b64}`;
+  }
+  return { text, images };
+}
+
+function _ingestMdImages(md) {
+  if (!md || !storage.ingestImageDataUrl) return md;
+  return String(md).replace(/data:image\/[a-zA-Z0-9+.-]+;base64,[A-Za-z0-9+/=]+/g, (url) => {
+    try { return storage.ingestImageDataUrl(url) || url; } catch (_) { return url; }
+  });
+}
+
+function _itemPathKey(wsId, parentPath, title) {
+  return String(wsId || '') + '|' + (parentPath || []).join('/') + '/' + String(title || '');
+}
+
+function _buildExistingNoteIndex() {
+  const notes = (storage.getAll().notes || {});
+  const byKey = new Map();
+  for (const id in notes) {
+    const n = notes[id];
+    if (!n) continue;
+    const parts = [];
+    let cur = n, g = 0;
+    while (cur && g++ < 80) {
+      parts.unshift(cur.title || '');
+      cur = cur.parentId != null ? notes[cur.parentId] : null;
+    }
+    const title = parts.pop() || '';
+    const key = _itemPathKey(n.workspaceId, parts, title);
+    if (!byKey.has(key)) byKey.set(key, id);
+  }
+  return { byKey };
+}
+
+function _materializeImportedNotes(notesToImport, opts) {
+  const mode = (opts && opts.mode) || 'incremental';
+  const defaultWsId = (opts && opts.defaultWsId) || (storage.getActiveWorkspace() && storage.getActiveWorkspace().id);
+  const nameToId = (opts && opts.nameToId) || {};
+  const forceWsId = (opts && opts.forceWsId) || null;
+  const existing = _buildExistingNoteIndex();
+  const pathMap = {};
+  const createdKeys = new Set();
+  let imported = 0, skipped = 0;
+
+  const resolveWs = (item) => {
+    if (forceWsId) return forceWsId;
+    if (item.workspaceId) return item.workspaceId;
+    if (item.workspaceName && nameToId[item.workspaceName]) return nameToId[item.workspaceName];
+    return defaultWsId;
+  };
+
+  const items = (notesToImport || []).slice().sort((a, b) => (a.parentPath || []).length - (b.parentPath || []).length);
+
+  const ensureAt = (wsId, parentPath, title, content) => {
+    const key = _itemPathKey(wsId, parentPath, title);
+    const accum = String(wsId || '') + '|' + (parentPath || []).join('/') + '/' + title + '/';
+    if (pathMap[accum]) return pathMap[accum];
+    if (mode === 'incremental' && existing.byKey.has(key)) {
+      const id = existing.byKey.get(key);
+      pathMap[accum] = id;
+      createdKeys.add(key);
+      return id;
+    }
+    let parentId = null;
+    if (parentPath && parentPath.length) {
+      parentId = ensureAt(wsId, parentPath.slice(0, -1), parentPath[parentPath.length - 1], '');
+    }
+    const note = storage.create({
+      parentId,
+      title,
+      content: _ingestMdImages(content || ''),
+      workspaceId: wsId,
+    });
+    pathMap[accum] = note.id;
+    existing.byKey.set(key, note.id);
+    createdKeys.add(key);
+    imported++;
+    return note.id;
+  };
+
+  for (const item of items) {
+    const wsId = resolveWs(item);
+    const parentPath = item.parentPath || [];
+    const title = item.title || '无标题';
+    const key = _itemPathKey(wsId, parentPath, title);
+    const accum = String(wsId || '') + '|' + parentPath.join('/') + '/' + title + '/';
+    if (createdKeys.has(key)) continue;
+    if (mode === 'incremental' && existing.byKey.has(key)) {
+      skipped++;
+      pathMap[accum] = existing.byKey.get(key);
+      createdKeys.add(key);
+      continue;
+    }
+    ensureAt(wsId, parentPath, title, item.content || '');
+  }
+  return { imported, skipped };
+}
+
+async function _overwriteLibraryShell({ workspaces }) {
+  const cur = storage.getAll() || {};
+  const ws = (workspaces && workspaces.length) ? workspaces : (cur.workspaces || []);
+  const fresh = {
+    version: cur.version || 2,
+    dataFormatVersion: cur.dataFormatVersion || 5,
+    notes: {},
+    rootOrder: [],
+    trash: {},
+    trashOrder: [],
+    workspaces: ws.length ? ws : [{ id: 'ws-default', name: '默认笔记本', icon: '📒' }],
+    settings: cur.settings || {},
+    templates: cur.templates || [],
+    localImages: {},
+  };
+  await storage.importJSON(JSON.stringify(fresh));
+}
+
+function _backupNoteDepth(notes, id) {
+  let d = 0, cur = notes[id], g = 0;
+  while (cur && cur.parentId && notes[cur.parentId] && g++ < 80) {
+    d++;
+    cur = notes[cur.parentId];
+  }
+  return d;
+}
+
 /** 顺序关闭最上层的浮层；返回是否关掉了任意一个 */
 function closeAnyOverlay() {
   // modal
@@ -2344,6 +2533,12 @@ function closeAnyOverlay() {
   // workspace switcher 等独立 popup
   const wp = document.querySelector('.workspace-popup');
   if (wp) { wp.remove(); return true; }
+  try {
+    if (window.mentionUi && window.mentionUi.isWebPaneOpen && window.mentionUi.isWebPaneOpen()) {
+      window.mentionUi.closeWebPane();
+      return true;
+    }
+  } catch (_) {}
   return false;
 }
 
@@ -4292,13 +4487,15 @@ function _zhSyncError(err) {
   return '同步出错（' + s + '），请重试';
 }
 
-/** 徽标：转圈=正在拉或正在传；淡蓝=还有没传上的篇或整库脏；绿=没有待传篇、此刻没在跑。名单稍后交不占淡蓝。 */
+/** 徽标：大动作转圈、短传可呼吸；淡蓝=还有没传上的篇或整库脏；绿=没有待传篇、此刻没在跑。名单稍后交不占淡蓝。 */
 function _refreshSyncDot() {
   const method = storage.getSetting('syncMethod') || 'none';
   if (method === 'none') { _setCloudSyncDot('disabled'); return; }
   const el = document.getElementById('cloud-sync-dot');
   if (el && el.classList.contains('error')) return;
+  const heavy = !!(window.webdavSync && window.webdavSync.isUiHeavy && window.webdavSync.isUiHeavy());
   const busy = !!(window.webdavSync && window.webdavSync.isUiSyncing && window.webdavSync.isUiSyncing());
+  if (heavy) { _setCloudSyncDot('syncing', 'heavy'); return; }
   if (busy) { _setCloudSyncDot('syncing'); return; }
   const noteDirty = !!(storage.getDirtyNoteIds && storage.getDirtyNoteIds().length);
   const globalDirty = !!(storage.isGlobalDirty && storage.isGlobalDirty());
@@ -4314,11 +4511,11 @@ let _cloudBaseTitle = '云同步';   // 同步本身的 tooltip；紫点状态�
 function _setCloudSyncDot(state, detail) {
   const el = document.getElementById('cloud-sync-dot');
   if (!el) return;
-  el.classList.remove('synced', 'syncing', 'pending', 'error', 'disabled', 'local');
+  el.classList.remove('synced', 'syncing', 'pending', 'error', 'disabled', 'local', 'busy');
   switch (state) {
     case 'synced':   el.classList.add('synced');   _lastSyncTime = Date.now(); _cloudBaseTitle = '已同步 · 刚刚' + _lastSyncDetail; break;
     case 'local':    el.classList.add('local');    _cloudBaseTitle = '已存本机 · 待上云'; break;
-    case 'syncing':  el.classList.add('syncing');  _cloudBaseTitle = '同步中…'; break;
+    case 'syncing':  el.classList.add('syncing'); if (detail === 'heavy' || (window.webdavSync && window.webdavSync.isUiHeavy && window.webdavSync.isUiHeavy())) el.classList.add('busy'); _cloudBaseTitle = '同步中…'; break;
     case 'pending':  el.classList.add('pending');  _cloudBaseTitle = '等待同步'; break;
     case 'error':    el.classList.add('error');    _cloudBaseTitle = '同步失败' + (detail ? '：' + detail : ''); break;
     case 'disabled': el.classList.add('disabled'); _cloudBaseTitle = '未开启云同步'; break;
@@ -4516,23 +4713,27 @@ function _webAppUrl() {
 }
 
 /* ===== 本版更新告知 =====
- * 铃铛三栏：日程 / 版本 / 消息。落后才弹「发现新版本」；版本页只展示本版。
+ * 铃铛三栏：日程 / 版本 / 消息。落后时版本页顶上「发现新版本」；消息页只放值得点的事。
  * 给人看的号 = window.__MD_VER__（打包注入）。网页端 whats-new.json 的 id/ver 打包时写成同一串。
- * 记号只写本机 localStorage，不上云。 */
+ * 版本已读、勿扰、跟这台走的勾删只写本机；跟笔记走的勾删进 settings.bellMsgAcks 随账号。 */
 const WHATS_NEW = {
-  id: window.__MD_VER__ || '20260819t34',
+  id: window.__MD_VER__ || '20260820t2',
   items: [
-    { title: '消息入口', text: '点击右上角铃铛可查看日程、版本以及应用消息。' },
-    { title: '折叠列表', text: '开合状态随笔记同步；折叠标题纳入大纲。' },
-    { title: '页面链接', text: '用 @ 或 / 引用笔记、网页或文件，以胶囊或通栏呈现。' },
-    { title: '同步升级', text: '内容同步更及时，状态更准确。旧版将暂停同步，避免数据不一致。' },
+    { title: '网页胶囊', text: '可更换图标；全局设置可显示域名、选择浏览器（Quicker 端）。' },
   ],
 };
 const WN_BELL_KEY = 'zhinote-whatsnew-bell';
 const WN_MSG_SEEN = 'zhinote-whatsnew-msg';
 const WN_VER_SEEN = 'zhinote-whatsnew-ver';
 const WN_SKIP_KEY = 'zhinote-update-skip';
+const WN_FMT_BLOCK = 'zhinote-fmt-block';
+const BN_DND_KEY = 'zhinote-bell-dnd';
+const BN_DEV_ACKS = 'zhinote-bell-acks-dev';
+const BN_LIB_ACKS = 'bellMsgAcks';
+const BN_KEEP_MS = 7 * 24 * 3600 * 1000;
+const BN_EASE_MS = 240;
 const WN_SHARE = 'https://getquicker.net/Sharedaction?code=b5091d78-12cc-4fb9-bd01-08debb8a5d21&fromMyShare=true';
+let _wnFmtBlocked = false;
 
 function _wnParseId(id) {
   const m = String(id || '').match(/^(\d{8})t(\d+)/i);
@@ -4564,6 +4765,7 @@ function _wnLsGet(k) {
 function _wnLsSet(k, v) {
   try { localStorage.setItem(k, v); } catch (_) {}
 }
+_wnFmtBlocked = _wnLsGet(WN_FMT_BLOCK) === '1';
 function _wnBehind() {
   return !!( _wnRemote && _wnIsNewer(_wnRemote.id, WHATS_NEW.id) );
 }
@@ -4574,10 +4776,13 @@ function _wnSeenVal(storeKey, id) {
   return false;
 }
 function _wnMsgUnread() {
-  if (!_wnBehind()) return false;
-  return !_wnSeenVal(WN_MSG_SEEN, _wnRemote.id);
+  if (_bnDnd()) return false;
+  const pop = document.getElementById('zn-bell-pop');
+  const pending = (pop && pop._bn && pop._bn.pending) || {};
+  return _bnLiveItems(pending).some((it) => !it.done);
 }
 function _wnVerUnread() {
+  if (_wnBehind() && _wnRemote && !_wnSeenVal(WN_MSG_SEEN, _wnRemote.id)) return true;
   return !_wnSeenVal(WN_VER_SEEN, WHATS_NEW.id);
 }
 function _wnSplitItem(t) {
@@ -4654,6 +4859,259 @@ function _wnFmtDay(s) {
   const d = _wnParseYmd(s);
   return (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
 }
+function _bnFmtDay(s) {
+  const today = _wnToday();
+  if (s === today) return '今天';
+  if (s === _wnAddDays(today, -1)) return '昨天';
+  const d = _wnParseYmd(s);
+  return (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+}
+function _bnRi(d, n) {
+  n = n || 16;
+  return '<svg viewBox="0 0 24 24" width="' + n + '" height="' + n + '" fill="currentColor"><path d="' + d + '"/></svg>';
+}
+const BN_ICO = {
+  chk: '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6"/></svg>',
+  minus: '<svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 8h8"/></svg>',
+  x: null,
+  arch: null,
+  clear: null,
+  back: null,
+  bell: null,
+  mute: null,
+  sys: null
+};
+BN_ICO.x = _bnRi('M12 10.586l4.95-4.95 1.414 1.414-4.95 4.95 4.95 4.95-1.414 1.414-4.95-4.95-4.95 4.95-1.414-1.414 4.95-4.95-4.95-4.95L7.05 5.636z', 14);
+BN_ICO.arch = _bnRi('M3 10h18v10.004c0 .55-.445.996-.993.996H3.993A.994.994 0 0 1 3 20.004V10zm6 2v2h6v-2H9zM2 4c0-.552.455-1 .992-1h18.016c.548 0 .992.444.992 1v4H2V4z');
+BN_ICO.clear = _bnRi('M17 6H22V8H20V21C20 21.5523 19.5523 22 19 22H5C4.44772 22 4 21.5523 4 21V8H2V6H7V3C7 2.44772 7.44772 2 8 2H16C16.5523 2 17 2.44772 17 3V6ZM9 11V17H11V11H9ZM13 11V17H15V11H13ZM9 4V6H15V4H9Z');
+BN_ICO.back = _bnRi('M13.1717 12.0007L8.22192 7.05093L9.63614 5.63672L16.0001 12.0007L9.63614 18.3646L8.22192 16.9504L13.1717 12.0007Z');
+BN_ICO.bell = _bnRi('M20 17h2v2H2v-2h2v-7a8 8 0 1 1 16 0v7zm-2 0v-7a6 6 0 1 0-12 0v7h12zm-9 4h6v2H9v-2z');
+BN_ICO.mute = _bnRi('M18.586 20H4a.5.5 0 0 1-.4-.8L4 18.667V11c0-.11.002-.22.007-.329L1.394 6.28l1.414-1.415 16.97 16.97-1.414 1.415L16.32 21.2A4.978 4.978 0 0 1 15 22H9a4.99 4.99 0 0 1-3.606-1.54L18.586 20zM20 15.786V11c0-3.466-2.21-6.428-5.294-7.527A1.5 1.5 0 0 0 13.5 2h-3c-.507 0-.96.252-1.232.644a8.01 8.01 0 0 0-.96 1.51L20 15.786z');
+BN_ICO.sys = _bnRi('M13 10h5l-6 6-6-6h5V3h2v7zm-9 9h16v-7h2v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-8h2v7z');
+
+function _bnDnd() { return _wnLsGet(BN_DND_KEY) === '1'; }
+function _bnSetDnd(on) { _wnLsSet(BN_DND_KEY, on ? '1' : ''); }
+function _bnParseMap(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  return raw;
+}
+function _bnPruneMap(map) {
+  const now = Date.now();
+  const out = {};
+  let changed = false;
+  for (const id in map) {
+    const rec = map[id];
+    if (!rec || typeof rec !== 'object' || !rec.kept || now - rec.kept >= BN_KEEP_MS) {
+      changed = true;
+      continue;
+    }
+    out[id] = rec;
+  }
+  return { map: out, changed };
+}
+function _bnReadLib() {
+  try { return _bnParseMap(storage.getSetting && storage.getSetting(BN_LIB_ACKS)); }
+  catch (_) { return {}; }
+}
+function _bnReadDev() {
+  try { return _bnParseMap(JSON.parse(_wnLsGet(BN_DEV_ACKS) || '{}')); }
+  catch (_) { return {}; }
+}
+function _bnSaveLib(map) {
+  try { if (storage.setSetting) storage.setSetting(BN_LIB_ACKS, map); } catch (_) {}
+}
+function _bnSaveDev(map) {
+  try { _wnLsSet(BN_DEV_ACKS, JSON.stringify(map)); } catch (_) {}
+}
+function _bnPruneStores() {
+  const lib = _bnPruneMap(_bnReadLib());
+  const dev = _bnPruneMap(_bnReadDev());
+  if (lib.changed) _bnSaveLib(lib.map);
+  if (dev.changed) _bnSaveDev(dev.map);
+  return { lib: lib.map, dev: dev.map };
+}
+function _bnGetAck(id) {
+  const now = Date.now();
+  function ok(rec) {
+    if (!rec || !rec.kept || now - rec.kept >= BN_KEEP_MS) return null;
+    return rec;
+  }
+  return ok(_bnReadLib()[id]) || ok(_bnReadDev()[id]) || null;
+}
+function _bnWriteAck(item, how, extra) {
+  if (!item || !item.id) return;
+  const rec = Object.assign({
+    how: how,
+    kept: Date.now(),
+    t: item.t || '',
+    s: item.s || '',
+    kind: item.kind || '',
+    at: item.at || _wnToday()
+  }, extra || {});
+  if (item.scope === 'dev') {
+    const map = _bnPruneMap(_bnReadDev()).map;
+    map[item.id] = rec;
+    _bnSaveDev(map);
+  } else {
+    const map = _bnPruneMap(_bnReadLib()).map;
+    map[item.id] = rec;
+    _bnSaveLib(map);
+  }
+}
+function _bnPatchAck(id, patch) {
+  const lib = _bnPruneMap(_bnReadLib());
+  if (lib.map[id]) {
+    Object.assign(lib.map[id], patch);
+    _bnSaveLib(lib.map);
+    return;
+  }
+  const dev = _bnPruneMap(_bnReadDev());
+  if (dev.map[id]) {
+    Object.assign(dev.map[id], patch);
+    _bnSaveDev(dev.map);
+  }
+}
+function _bnHistItems() {
+  const now = Date.now();
+  const out = [];
+  function collect(map, scope) {
+    for (const id in map) {
+      const rec = map[id];
+      if (!rec || rec.purged || !rec.kept || now - rec.kept >= BN_KEEP_MS) continue;
+      out.push({
+        id: id,
+        kind: rec.kind || '',
+        scope: scope,
+        at: rec.at || _wnYmd(new Date(rec.kept)),
+        kept: rec.kept,
+        t: rec.t || '',
+        s: rec.s || '',
+        how: rec.how === 'del' ? 'del' : 'done'
+      });
+    }
+  }
+  collect(_bnReadLib(), 'lib');
+  collect(_bnReadDev(), 'dev');
+  out.sort((a, b) => (b.kept || 0) - (a.kept || 0));
+  return out;
+}
+function _bnRemainDays(it) {
+  const kept = it.kept || 0;
+  const left = Math.ceil((BN_KEEP_MS - (Date.now() - kept)) / 86400000);
+  return Math.max(1, left);
+}
+function _bnTrashSoon() {
+  const all = (window.storage && storage.getAll) ? storage.getAll() : null;
+  const trash = (all && all.trash) ? all.trash : {};
+  const now = Date.now();
+  const limit = 30 * 86400000;
+  const warn = 7 * 86400000;
+  const out = [];
+  for (const id in trash) {
+    const t = trash[id];
+    if (!t) continue;
+    const del = new Date(t.deletedAt || t.updatedAt || 0).getTime();
+    if (!del) continue;
+    const age = now - del;
+    const left = limit - age;
+    if (left > warn) continue;
+    out.push({
+      id: id,
+      days: Math.max(0, Math.ceil(left / 86400000)),
+      title: t.title || '无标题'
+    });
+  }
+  return out;
+}
+function _bnFacts() {
+  const out = [];
+  const today = _wnToday();
+  _collectBellEvents().forEach((e) => {
+    if ((e.ty !== 'task' && e.ty !== 'work') || e.done || e.at !== today) return;
+    out.push({
+      id: 'task:' + e.noteId + ':' + e.at + ':' + String(e.t),
+      kind: 'task',
+      scope: 'lib',
+      at: e.at,
+      t: e.t,
+      s: [e.kind, e.note].filter(Boolean).join(' · '),
+      noteId: e.noteId,
+      date: e.date
+    });
+  });
+  const soon = _bnTrashSoon();
+  if (soon.length) {
+    const minLeft = Math.min.apply(null, soon.map((x) => x.days));
+    out.push({
+      id: 'trash:soon',
+      kind: 'trash',
+      scope: 'lib',
+      at: today,
+      t: '回收站有 ' + soon.length + ' 篇快满 30 天',
+      s: minLeft <= 0 ? '建议尽快清理' : '大约 ' + minLeft + ' 天后满 30 天'
+    });
+  }
+  if (_wnFmtBlocked) {
+    out.push({
+      id: 'sync:fmt',
+      kind: 'sync',
+      scope: 'dev',
+      at: today,
+      t: '这台已暂停同步',
+      s: '版本过旧，先更新'
+    });
+  }
+  return out;
+}
+function _bnLiveItems(pending) {
+  pending = pending || {};
+  return _bnFacts().filter((it) => {
+    if (pending[it.id]) return true;
+    const ack = _bnGetAck(it.id);
+    return !ack;
+  }).map((it) => Object.assign({}, it, { done: !!pending[it.id] }));
+}
+function _bnGroups(list, hist) {
+  const map = {};
+  const order = [];
+  list.forEach((it) => {
+    const k = hist ? _wnYmd(new Date(it.kept || Date.now())) : (it.at || _wnToday());
+    if (!map[k]) { map[k] = []; order.push(k); }
+    map[k].push(it);
+  });
+  order.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+  return order.map((k) => ({ day: k, label: _bnFmtDay(k), items: map[k] }));
+}
+function _bnFlushPending(st) {
+  if (!st || !st.pending) return;
+  const ids = Object.keys(st.pending).filter((id) => st.pending[id]);
+  if (!ids.length) return;
+  (st.items || []).forEach((it) => {
+    if (st.pending[it.id]) _bnWriteAck(it, 'done');
+  });
+  st.pending = {};
+}
+function _bnRepaintOpen() {
+  const pop = document.getElementById('zn-bell-pop');
+  if (!pop || pop.classList.contains('hidden') || typeof pop._bnPaint !== 'function') return;
+  pop._bnPaint();
+}
+function _bnOnDataChange(payload) {
+  const ty = payload && payload.type;
+  const trashish = ty === 'emptyTrash' || ty === 'purge' || ty === 'restore';
+  if (trashish) {
+    const pop = document.getElementById('zn-bell-pop');
+    const st = pop && pop._bn;
+    if (st && !_bnTrashSoon().length) {
+      const hit = (st.items || []).find((x) => x.id === 'trash:soon');
+      if (hit && !_bnGetAck(hit.id)) st.pending[hit.id] = true;
+    }
+  }
+  if (trashish || ty === 'reload' || ty === 'global-sync') {
+    try { _refreshWhatsNewBell(); } catch (_) {}
+    _bnRepaintOpen();
+  }
+}
 function _calDataFromNote(n) {
   const out = [];
   function walk(node) {
@@ -4713,8 +5171,8 @@ function _wnDoUpdate(pop) {
   toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
   _applyAppUpdate();
 }
-function _openBellEvent(ev) {
-  _bnClose(document.getElementById('zn-bell-pop'));
+function _openBellEvent(ev, keep) {
+  if (!keep) _bnClose(document.getElementById('zn-bell-pop'));
   if (!ev || !ev.noteId) return;
   const g = ev.date ? { y: ev.date.getFullYear(), m: ev.date.getMonth(), d: ev.date.getDate() } : null;
   try {
@@ -4733,13 +5191,18 @@ function _openBellEvent(ev) {
 }
 
 function _bnMarkSeen(tab) {
-  if (tab === 'msg' && _wnRemote) _wnLsSet(WN_MSG_SEEN, _wnRemote.id);
-  if (tab === 'ver') _wnLsSet(WN_VER_SEEN, WHATS_NEW.id);
+  if (tab === 'ver') {
+    _wnLsSet(WN_VER_SEEN, WHATS_NEW.id);
+    if (_wnRemote) _wnLsSet(WN_MSG_SEEN, _wnRemote.id);
+  }
 }
 function _bnClose(pop) {
   if (!pop || pop.classList.contains('hidden')) return;
   const st = pop._bn;
-  if (st) _bnMarkSeen(st.tab);
+  if (st) {
+    _bnFlushPending(st);
+    _bnMarkSeen(st.tab);
+  }
   pop.classList.add('hidden');
   _refreshWhatsNewBell();
 }
@@ -4749,15 +5212,18 @@ function _showBellPop() {
   document.getElementById('zn-about-pop')?.classList.add('hidden');
   const pop = _wnEnsureFloat('zn-bell-pop');
   pop.classList.add('zn-bell');
-  const behind = _wnBehind();
-  const st = pop._bn || { tab: 'cal', weekOff: 0, pickDay: '' };
-  if (_wnMsgUnread()) st.tab = 'msg';
-  else if (_wnVerUnread()) st.tab = 'ver';
+  const st = pop._bn || { tab: 'cal', weekOff: 0, pickDay: '', histView: false, pending: {} };
+  if (!st.pending) st.pending = {};
+  _bnFlushPending(st);
+  _bnPruneStores();
+  st.histView = false;
+  if (_wnVerUnread()) st.tab = 'ver';
+  else if (_wnMsgUnread()) st.tab = 'msg';
+  else st.tab = st.tab || 'cal';
   st.events = _collectBellEvents();
   pop._bn = st;
   const WD = ['一', '二', '三', '四', '五', '六', '日'];
   const today = _wnToday();
-  const sysIco = '<span class="bn-ico" style="color:var(--accent)"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 20h14"/></svg></span>';
   function weekStart() { return _wnAddDays(_wnMondayOf(today), st.weekOff * 7); }
   function weekDays() {
     const a = weekStart();
@@ -4766,7 +5232,7 @@ function _showBellPop() {
   function inRange(s, a, b) { return s >= a && s <= b; }
   function calRow(e, i) {
     const sub = [_wnFmtDay(e.at), e.kind, e.note].filter(Boolean).join(' · ');
-    return '<button type="button" class="bn-msg" data-ev="' + i + '">'
+    return '<button type="button" class="bn-cal-msg" data-ev="' + i + '">'
       + _bellIco(e.ty) + '<div><div class="t">' + escapeHtml(e.t) + '</div><div class="s">' + escapeHtml(sub) + '</div></div></button>';
   }
   function groups() {
@@ -4794,7 +5260,109 @@ function _showBellPop() {
     return '<button type="button" data-tab="' + id + '" class="' + (st.tab === id ? 'on' : '') + (unread ? ' has-dot' : '') + '">'
       + '<span class="lab">' + name + '<span class="tab-dot"></span></span></button>';
   }
+  function liveRow(it) {
+    return '<div class="bn-row" data-row="' + escapeHtml(it.id) + '"><div class="bn-row-in">'
+      + '<div class="bn-msg' + (it.done ? ' is-done' : '') + '">'
+      + '<button type="button" class="bn-chk" data-chk="' + escapeHtml(it.id) + '" aria-label="勾选">' + BN_ICO.chk + '</button>'
+      + '<div class="bd" data-jump="' + escapeHtml(it.id) + '"><div class="t">' + escapeHtml(it.t) + '</div><div class="s">' + escapeHtml(it.s) + '</div></div>'
+      + '<button type="button" class="bn-x" data-del="' + escapeHtml(it.id) + '" aria-label="删除">' + BN_ICO.x + '</button>'
+      + '</div></div></div>';
+  }
+  function histRow(it) {
+    const del = it.how === 'del';
+    const left = del
+      ? '<span class="bn-ph">' + BN_ICO.minus + '</span>'
+      : '<span class="bn-chk" style="pointer-events:none">' + BN_ICO.chk + '</span>';
+    const sub = (del ? '已删除' : '已勾选') + (it.s ? ' · ' + it.s : '') + ' · 还剩 ' + _bnRemainDays(it) + ' 天';
+    return '<div class="bn-row" data-row="' + escapeHtml(it.id) + '"><div class="bn-row-in">'
+      + '<div class="bn-msg' + (del ? ' is-del' : ' is-done') + '">'
+      + left
+      + '<div class="bd" data-jump="' + escapeHtml(it.id) + '"><div class="t">' + escapeHtml(it.t) + '</div><div class="s">' + escapeHtml(sub) + '</div></div>'
+      + '<button type="button" class="bn-x" data-purge="' + escapeHtml(it.id) + '" aria-label="彻底删除">' + BN_ICO.x + '</button>'
+      + '</div></div></div>';
+  }
+  function listHtml(list, hist) {
+    if (!list.length) {
+      return '<div class="bn-empty fill">' + (hist ? '没有记录，超过 7 天的会自动清掉' : '暂无消息') + '</div>';
+    }
+    const rowFn = hist ? histRow : liveRow;
+    return _bnGroups(list, hist).map((g) => {
+      return '<div class="bn-sec">' + g.label + '</div>' + g.items.map(rowFn).join('');
+    }).join('');
+  }
+  function headTitle(live, hist) {
+    const list = st.histView ? hist : live;
+    if (!list.length) return '今天';
+    return _bnGroups(list, st.histView)[0].label;
+  }
+  function bindSwipe() {
+    const view = pop.querySelector('#msg-view');
+    const track = pop.querySelector('#msg-track');
+    if (!view || !track) return;
+    let drag = null;
+    view.onpointerdown = (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.target.closest('.bn-chk, .bn-x, .bn-icon, .bd')) return;
+      drag = { x: e.clientX, pid: e.pointerId, w: view.clientWidth };
+      try { view.setPointerCapture(e.pointerId); } catch (_) {}
+      track.classList.add('grabbing');
+    };
+    view.onpointermove = (e) => {
+      if (!drag || e.pointerId !== drag.pid) return;
+      const start = st.histView ? -50 : 0;
+      const dx = ((e.clientX - drag.x) / drag.w) * 50;
+      let p = start + dx;
+      if (p > 0) p = p * 0.25;
+      if (p < -50) p = -50 + (p + 50) * 0.25;
+      track.style.transform = 'translateX(' + p + '%)';
+    };
+    function endDrag(e) {
+      if (!drag || (e && e.pointerId !== drag.pid)) return;
+      const dx = e ? e.clientX - drag.x : 0;
+      track.classList.remove('grabbing');
+      drag = null;
+      if (st.histView && dx > 48) setHistView(false);
+      else if (!st.histView && dx < -48) setHistView(true);
+      else track.style.transform = st.histView ? 'translateX(-50%)' : 'translateX(0)';
+    }
+    view.onpointerup = endDrag;
+    view.onpointercancel = endDrag;
+  }
+  function setHistView(on) {
+    if (on) _bnFlushPending(st);
+    st.histView = !!on;
+    paint();
+  }
+  function findLive(id) {
+    return (st.items || []).find((x) => x.id === id) || _bnHistItems().find((x) => x.id === id);
+  }
+  function jumpItem(it) {
+    if (!it) return;
+    if (it.kind === 'trash') {
+      try { window.tree && window.tree.showTrash(); } catch (_) {}
+      return;
+    }
+    if (it.kind === 'sync') {
+      if (st.tab !== 'ver') _bnMarkSeen(st.tab);
+      st.tab = 'ver';
+      st.histView = false;
+      paint();
+      return;
+    }
+    if (it.kind === 'task') {
+      _openBellEvent(it, true);
+    }
+  }
+  function collapseRow(id, then) {
+    const row = pop.querySelector('[data-row="' + String(id).replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"]');
+    if (!row) { then(); return; }
+    row.classList.add('is-out');
+    setTimeout(then, BN_EASE_MS);
+  }
   function paint() {
+    st.events = _collectBellEvents();
+    st.items = _bnLiveItems(st.pending);
+    const hist = _bnHistItems();
     const days = weekDays();
     const has = {};
     st.events.forEach((e) => { has[e.at] = true; });
@@ -4822,28 +5390,42 @@ function _showBellPop() {
       }).join('');
     }
     const localVer = window.__MD_VER__ || WHATS_NEW.id || '';
-    const verHtml = '<div class="bn-sec">本版</div><div class="bn-body">'
-      + (localVer ? '<p class="zn-hint" style="margin:0 0 8px">' + escapeHtml(localVer) + '</p>' : '')
-      + _wnNewsHtml(WHATS_NEW.items) + '</div>';
-    let msgHtml;
-    if (behind) {
-      const remoteVer = (_wnRemote && (_wnRemote.ver || _wnRemote.id)) || '';
-      msgHtml = '<div class="bn-sec">系统</div>'
-        + '<button type="button" class="bn-msg" data-sys="1">' + sysIco + '<div><div class="t">发现新版本</div><div class="s">'
-        + escapeHtml(remoteVer ? remoteVer + ' 已发布' : '可立即更新') + '</div></div></button>';
-    } else {
-      msgHtml = '<div class="bn-empty fill">暂无新消息</div>';
-    }
+    const remoteVer = (_wnRemote && (_wnRemote.ver || _wnRemote.id)) || '';
+    const banner = _wnBehind()
+      ? '<button type="button" class="bn-upd" data-sys="1"><span class="ico">' + BN_ICO.sys + '</span><div><div class="t">发现新版本</div><div class="s">'
+        + escapeHtml(remoteVer ? remoteVer + ' 已发布，点此查看' : '可立即更新') + '</div></div></button>'
+      : '';
+    const verHtml = banner
+      + '<div class="bn-sec">本版' + (localVer ? ' ' + escapeHtml(localVer) : '') + '</div>'
+      + '<div class="bn-body">' + _wnNewsHtml(WHATS_NEW.items) + '</div>';
+    const dnd = _bnDnd();
+    const msgHtml =
+      '<div class="bn-head">'
+      + '<div class="ttl" id="msg-ttl">' + headTitle(st.items, hist) + '</div>'
+      + '<button type="button" class="bn-icon' + (st.histView && hist.length ? '' : ' is-hide') + '" data-clear="1" aria-label="清空历史">' + BN_ICO.clear + '</button>'
+      + '<button type="button" class="bn-icon" data-hist="1" aria-label="' + (st.histView ? '返回' : '历史') + '">' + (st.histView ? BN_ICO.back : BN_ICO.arch) + '</button>'
+      + '</div>'
+      + '<div class="bn-view" id="msg-view">'
+      + '<div class="bn-track" id="msg-track" style="transform:translateX(' + (st.histView ? '-50%' : '0') + ')">'
+      + '<div class="bn-page" id="page-live">' + listHtml(st.items, false) + '</div>'
+      + '<div class="bn-page" id="page-hist">' + listHtml(hist, true) + '</div>'
+      + '</div></div>'
+      + '<div class="bn-bar"><button type="button" class="bn-icon" data-dnd="1" aria-label="勿扰">' + (dnd ? BN_ICO.mute : BN_ICO.bell) + '</button></div>';
     pop.innerHTML =
       '<div class="bn-tabs">'
       + tabBtn('cal', '日程', false)
       + tabBtn('ver', '版本', _wnVerUnread())
       + tabBtn('msg', '消息', _wnMsgUnread())
       + '</div>'
-      + '<div class="bn-pane"' + (st.tab === 'cal' ? '' : ' hidden') + '>' + cal + '</div>'
-      + '<div class="bn-pane"' + (st.tab === 'ver' ? '' : ' hidden') + '>' + verHtml + '</div>'
-      + '<div class="bn-pane"' + (st.tab === 'msg' ? '' : ' hidden') + '>' + msgHtml + '</div>';
+      + '<div class="bn-stack">'
+      + '<div class="bn-pane bn-scroll' + (st.tab === 'cal' ? ' on' : '') + '">' + cal + '</div>'
+      + '<div class="bn-pane bn-scroll' + (st.tab === 'ver' ? ' on' : '') + '">' + verHtml + '</div>'
+      + '<div class="bn-pane' + (st.tab === 'msg' ? ' on' : '') + '">' + msgHtml + '</div>'
+      + '</div>';
+    if (st.tab === 'msg') bindSwipe();
+    _refreshWhatsNewBell();
   }
+  pop._bnPaint = paint;
   paint();
   pop.classList.remove('hidden');
   _wnPlaceBelow(btn, pop, 'end');
@@ -4851,7 +5433,10 @@ function _showBellPop() {
     const tabBtnEl = e.target.closest('[data-tab]');
     if (tabBtnEl) {
       const next = tabBtnEl.dataset.tab;
-      if (st.tab !== next) _bnMarkSeen(st.tab);
+      if (st.tab !== next) {
+        if (st.tab === 'msg') { _bnFlushPending(st); st.histView = false; }
+        _bnMarkSeen(st.tab);
+      }
       st.tab = next;
       paint();
       return;
@@ -4866,8 +5451,63 @@ function _showBellPop() {
     const evBtn = e.target.closest('[data-ev]');
     if (evBtn) { _openBellEvent(st.events[Number(evBtn.dataset.ev)]); return; }
     if (e.target.closest('[data-sys]')) {
-      _bnClose(pop);
       if (_wnRemote) _showUpdateDialog(_wnRemote);
+      return;
+    }
+    if (e.target.closest('[data-hist]')) { setHistView(!st.histView); return; }
+    if (e.target.closest('[data-clear]')) {
+      const page = pop.querySelector('#page-hist');
+      if (page) page.querySelectorAll('.bn-row').forEach((r) => r.classList.add('is-out'));
+      setTimeout(() => {
+        const lib = _bnPruneMap(_bnReadLib()).map;
+        const dev = _bnPruneMap(_bnReadDev()).map;
+        let n = 0;
+        for (const id in lib) { if (!lib[id].purged) { lib[id].purged = true; n++; } }
+        for (const id in dev) { if (!dev[id].purged) { dev[id].purged = true; n++; } }
+        if (n) { _bnSaveLib(lib); _bnSaveDev(dev); }
+        paint();
+      }, BN_EASE_MS);
+      return;
+    }
+    if (e.target.closest('[data-dnd]')) {
+      _bnSetDnd(!_bnDnd());
+      paint();
+      return;
+    }
+    const chk = e.target.closest('[data-chk]');
+    if (chk) {
+      const id = chk.getAttribute('data-chk');
+      st.pending[id] = !st.pending[id];
+      const row = chk.closest('.bn-msg');
+      if (row) row.classList.toggle('is-done', !!st.pending[id]);
+      _refreshWhatsNewBell();
+      const tabMsg = pop.querySelector('[data-tab="msg"]');
+      if (tabMsg) tabMsg.classList.toggle('has-dot', _wnMsgUnread());
+      return;
+    }
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      const id = del.getAttribute('data-del');
+      collapseRow(id, () => {
+        const hit = findLive(id);
+        if (hit) _bnWriteAck(hit, 'del');
+        delete st.pending[id];
+        paint();
+      });
+      return;
+    }
+    const pg = e.target.closest('[data-purge]');
+    if (pg) {
+      const id = pg.getAttribute('data-purge');
+      collapseRow(id, () => {
+        _bnPatchAck(id, { purged: true });
+        paint();
+      });
+      return;
+    }
+    const jumpEl = e.target.closest('[data-jump]');
+    if (jumpEl) {
+      jumpItem(findLive(jumpEl.getAttribute('data-jump')));
       return;
     }
     const act = e.target.closest('[data-act]');
@@ -4985,6 +5625,7 @@ function initWhatsNew() {
     const aboutPop = document.getElementById('zn-about-pop');
     const bellBtn = document.getElementById('btn-whats-new');
     if (bellPop && !bellPop.classList.contains('hidden') && !bellPop.contains(e.target) && !bellBtn?.contains(e.target)) {
+      if (e.target.closest && e.target.closest('#modal-overlay, .zn-update-mask, .confirm-popover, .confirm-popover-mask')) return;
       _bnClose(bellPop);
     }
     const aboutAnchor = aboutPop && aboutPop._anchor;
@@ -5006,6 +5647,7 @@ function initWhatsNew() {
       _showUpdateDialog(_wnRemote);
     }
     _refreshWhatsNewBell();
+    try { _bnRepaintOpen(); } catch (_) {}
   }, 800);
 }
 
@@ -5165,11 +5807,11 @@ function _backupSet(patch) {
 }
 
 /** 取「笔记正文」内容指纹：只看 notes/trash/workspaces/images，忽略 settings（主题、侧栏宽度、同步时间戳等不算内容变化）。 */
-function _backupSignature(jsonStr) {
+function _backupSignature(jsonStr, imagePaths) {
   let sig = jsonStr;
   try {
     const o = JSON.parse(jsonStr);
-    sig = JSON.stringify({ n: o.notes, t: o.trash, w: o.workspaces, i: o.images });
+    sig = JSON.stringify({ n: o.notes, t: o.trash, w: o.workspaces, img: (imagePaths || []).slice().sort() });
   } catch (_) {}
   // DJB2 哈希，够区分内容是否变化
   let h = 5381;
@@ -5202,18 +5844,17 @@ async function _runLocalBackup({ manual = false } = {}) {
   _backupRunning = true;
   try {
     try { editor.flushSave?.(); } catch (_) {}
-    const content = storage.exportJSON();
+    const pack = await _buildBackupZip();
     // 内容去重：与上次备份内容一致则跳过，避免把久远有用的备份顶掉
-    // （窗口隐藏时笔记不会变化，自然也命中这里跳过，无需单独判断可见性）
-    const sig = _backupSignature(content);
+    const sig = _backupSignature(pack.json, pack.imagePaths);
     if (sig === cfg.hash) {
       if (manual) toast('内容无变化，已是最新备份', 'info');
       return { ok: true, skipped: true };
     }
-    const fileName = `zhinote_backup_${_backupTs()}.json`;
+    const fileName = `ZhiNote_backup_${_backupTs()}.zip`;
     const fullPath = _backupJoin(cfg.dir, fileName);
     try { await window.host.file.op({ mode: 'ensureDir', path: cfg.dir }); } catch (_) {}
-    await window.host.file.op({ mode: 'write', path: fullPath, content });
+    await window.host.file.op({ mode: 'writeFile', path: fullPath, content: pack.base64, isBinary: 'true' });
     _backupSet({ last: Date.now(), hash: sig });
     await _backupRotate(cfg);
     if (manual) toast(`已备份到本地：${fileName}`, 'success');
@@ -5230,9 +5871,14 @@ async function _runLocalBackup({ manual = false } = {}) {
 /** 轮转清理：备份文件按时间戳命名，超过保留份数则删最早的几份。 */
 async function _backupRotate(cfg) {
   try {
-    const res = await window.host.file.op({ mode: 'list', dir: cfg.dir, pattern: 'zhinote_backup_*.json' });
-    const raw = (res && res.result) || '';
-    const files = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const files = [];
+    for (const pattern of ['ZhiNote_backup_*.zip', 'zhinote_backup_*.zip', 'zhinote_backup_*.json']) {
+      try {
+        const res = await window.host.file.op({ mode: 'list', dir: cfg.dir, pattern });
+        const raw = (res && res.result) || '';
+        for (const s of raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean)) files.push(s);
+      } catch (_) {}
+    }
     if (files.length <= cfg.keep) return;
     files.sort(); // 文件名内嵌定宽时间戳，字典序即时间序，最早在前
     const toDelete = files.slice(0, files.length - cfg.keep);
@@ -5396,7 +6042,7 @@ async function requestExport() {
     { id: 'current', icon: '📄', label: '导出当前笔记 (.md)' },
     { id: 'notebook', icon: '📓', label: '导出笔记本 (.zip)' },
     { id: 'all', icon: '📦', label: '导出全部笔记 (.zip)' },
-    { id: 'backup', icon: '💾', label: '完整备份 (.json)' },
+    { id: 'backup', icon: '💾', label: '完整备份 (.zip)' },
     { id: 'sync-config', icon: '🔗', label: '导出同步配置' },
   ]);
   if (!result) return;
@@ -5410,7 +6056,8 @@ async function requestExport() {
       if (!id) { toast('请先打开一篇笔记', 'warning'); return; }
       const data = storage.exportCurrentNoteMd(id);
       if (!data) { toast('笔记不存在', 'error'); return; }
-      fileName = `${data.title}.md`;
+      const safeTitle = (data.title || '无标题').replace(/[<>:"/\\|?*]/g, '_').slice(0, 80) || '无标题';
+      fileName = `ZhiNote_${safeTitle}.md`;
       filter = 'Markdown 文件|*.md';
       makeContent = () => data.content;
     } else if (choice === 'notebook') {
@@ -5425,7 +6072,7 @@ async function requestExport() {
         ws = workspaces.find(w => w.id === pick.id);
       }
       if (!ws) { toast('没有可导出的笔记本', 'warning'); return; }
-      fileName = `${(ws.name || '笔记本').replace(/[<>:"/\\|?*]/g, '_')}_${ts}.zip`;
+      fileName = `ZhiNote_${(ws.name || '笔记本').replace(/[<>:"/\\|?*]/g, '_')}_${ts}.zip`;
       filter = '笔记本压缩包|*.zip';
       isBinary = true;
       makeContent = async () => {
@@ -5439,7 +6086,7 @@ async function requestExport() {
       };
     } else if (choice === 'all') {
       if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
-      fileName = `notes_${ts}.zip`;
+      fileName = `ZhiNote_notes_${ts}.zip`;
       filter = 'ZIP 压缩包|*.zip';
       isBinary = true;
       makeContent = async () => {
@@ -5457,9 +6104,11 @@ async function requestExport() {
         return await zip.generateAsync({ type: 'base64' });
       };
     } else if (choice === 'backup') {
-      fileName = `notes_backup_${ts}.json`;
-      filter = 'JSON 备份|*.json';
-      makeContent = () => storage.exportJSON();
+      if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+      fileName = `ZhiNote_backup_${ts}.zip`;
+      filter = '备份压缩包|*.zip';
+      isBinary = true;
+      makeContent = async () => (await _buildBackupZip()).base64;
     } else if (choice === 'sync-config') {
       const method = storage.getSetting('syncMethod') || 'none';
       if (method === 'none') { toast('当前未配置云同步', 'warning'); return; }
@@ -5502,6 +6151,7 @@ async function requestExport() {
     toast('导出失败：' + (err?.message || err), 'error');
   }
 }
+window.requestExport = requestExport;
 
 async function requestImport() {
   const anchor = document.getElementById('btn-import');
@@ -5509,7 +6159,7 @@ async function requestImport() {
     { id: 'md', icon: '📄', label: '导入 Markdown 文件 (.md)' },
     { id: 'notebook', icon: '📓', label: '导入笔记本 (.zip)' },
     { id: 'zip', icon: '📦', label: '导入 ZIP 压缩包 (.zip)' },
-    { id: 'backup', icon: '💾', label: '恢复备份 (.json / .zhinote)' },
+    { id: 'backup', icon: '💾', label: '恢复备份 (.zip / .json)' },
     { id: 'sync-config', icon: '🔗', label: '导入同步配置' },
   ]);
   if (!result) return;
@@ -5547,8 +6197,7 @@ async function requestImport() {
       storage.save({ immediate: true });
       await window.webdavSync.loadConfig();
       window.webdavSync.startAutoSync();
-      _setCloudSyncDot('syncing');
-      toast('同步配置已导入，正在开始同步', 'success');
+      _setCloudSyncDot('syncing', 'heavy');
       return;
     }
 
@@ -5556,40 +6205,56 @@ async function requestImport() {
     if (choice === 'backup') {
       const modeResult = await showActionMenu(anchor, [
         { id: 'overwrite', icon: '🔄', label: '覆盖恢复（完全替换当前数据）' },
-        { id: 'incremental', icon: '➕', label: '增量恢复（仅添加新笔记，保留现有）' },
+        { id: 'incremental', icon: '➕', label: '增量恢复（仅添加还没有的笔记，保留现有）' },
       ]);
       if (!modeResult) return;
 
       await new Promise(r => setTimeout(r, 350));
-      let text;
+      let payload = null;
       if (storage.isQuicker()) {
         const spResult = await window.host.file.op({ mode: 'openDialog',
-          filter: '备份文件|*.json;*.zhinote', isBinary: 'false', multiSelect: 'false'
+          filter: '备份文件|*.zip;*.json;*.zhinote', isBinary: 'true', multiSelect: 'false'
         });
         const raw = spResult?.result || '';
         if (!raw) return;
         const parsed = JSON.parse(raw);
         const fileData = Array.isArray(parsed) ? parsed[0] : parsed;
-        text = fileData.content || '';
+        const name = String(fileData.name || '').toLowerCase();
+        const content = fileData.content || '';
+        if (!content) return;
+        if (name.endsWith('.zip')) {
+          if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+          const zip = await JSZip.loadAsync(_bytesFromB64(content));
+          payload = await _extractBackupZip(zip);
+        } else {
+          payload = { text: _utf8FromB64(content), images: null };
+        }
       } else {
-        const selected = await fileOpen({ extensions: ['.json', '.zhinote'], multiple: false });
+        const selected = await fileOpen({ extensions: ['.zip', '.json', '.zhinote'], multiple: false });
         if (!selected) return;
-        text = await selected.text();
+        const name = String(selected.name || '').toLowerCase();
+        if (name.endsWith('.zip')) {
+          if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
+          payload = await _extractBackupZip(await JSZip.loadAsync(await selected.arrayBuffer()));
+        } else {
+          payload = { text: await selected.text(), images: null };
+        }
       }
-      if (!text) return;
-      return await _doBackupImportWithMode(text, modeResult.id);
+      if (!payload || !payload.text) return;
+      return await _doBackupImportWithMode(payload.text, modeResult.id, payload.images);
     }
 
     // MD/ZIP：先选模式，再选文件
     const modeResult = await showActionMenu(anchor, [
       { id: 'overwrite', icon: '🔄', label: '覆盖导入（清空现有笔记，用导入内容替换）' },
-      { id: 'incremental', icon: '➕', label: '增量导入（自动跳过已有相同内容的笔记）' },
+      { id: 'incremental', icon: '➕', label: '增量导入（跳过已有同位置的笔记）' },
     ]);
     if (!modeResult) return;
     const mode = modeResult.id;
 
     await new Promise(r => setTimeout(r, 350));
     let notesToImport = [];
+    let zipMeta = null;
 
     if (storage.isQuicker()) {
       let filter, isBinary = false, multiSelect = false;
@@ -5619,7 +6284,9 @@ async function requestImport() {
         const fileData = Array.isArray(parsed) ? parsed[0] : parsed;
         const bytes = Uint8Array.from(atob(fileData.content), c => c.charCodeAt(0));
         const zip = await JSZip.loadAsync(bytes);
-        notesToImport = await _parseZipToNotes(zip);
+        const parsedZip = await _parseZipToNotes(zip);
+        notesToImport = parsedZip.notes || [];
+        zipMeta = parsedZip.meta || null;
       }
     } else {
       let extensions, multiple = false;
@@ -5640,105 +6307,94 @@ async function requestImport() {
         if (typeof JSZip === 'undefined') { toast('ZIP 库未加载，请检查网络', 'error'); return; }
         const buf = await selected.arrayBuffer();
         const zip = await JSZip.loadAsync(buf);
-        notesToImport = await _parseZipToNotes(zip);
+        const parsedZip = await _parseZipToNotes(zip);
+        notesToImport = parsedZip.notes || [];
+        zipMeta = parsedZip.meta || null;
       }
     }
 
     if (!notesToImport.length) { toast('文件中没有可导入的笔记', 'warning'); return; }
 
+    const applyImported = (opts) => {
+      window._bulkImporting = true;
+      try { return _materializeImportedNotes(notesToImport, opts); }
+      finally { window._bulkImporting = false; }
+    };
+
     if (mode === 'overwrite') {
       if (!(await _confirmOverwriteCloudIfSync())) return;
-      const data = storage.getAll();
-      data.notes = {};
-      data.rootOrder = [];
-    }
-
-    const existingContents = new Set();
-    if (mode === 'incremental') {
-      const allNotes = storage.getAll().notes || {};
-      for (const id in allNotes) {
-        const c = (allNotes[id].content || '').trim();
-        if (c) existingContents.add(c);
-      }
-    }
-
-    const pathMap = {};
-    let imported = 0, skipped = 0;
-
-    for (const item of notesToImport) {
-      if (mode === 'incremental') {
-        const contentKey = (item.content || '').trim();
-        if (contentKey && existingContents.has(contentKey)) {
-          skipped++;
-          continue;
+      await _withAuthoritativeReset(async () => {
+        let workspaces;
+        if (zipMeta && zipMeta.notebook) {
+          workspaces = [{
+            id: 'ws_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8),
+            name: zipMeta.notebook.name || '导入的笔记本',
+            icon: zipMeta.notebook.icon || '📓',
+          }];
+        } else if (zipMeta && zipMeta.workspaces && zipMeta.workspaces.length) {
+          workspaces = zipMeta.workspaces.map(w => ({
+            id: w.id || ('ws_' + Math.random().toString(36).slice(2, 8)),
+            name: w.name || '未命名笔记本',
+            icon: w.icon || '📒',
+          }));
         }
-      }
-
-      const wsId = item.workspaceId || null;
-      let parentId = null;
-      let pathAccum = (wsId || '') + '|';
-      for (const dir of item.parentPath) {
-        pathAccum += dir + '/';
-        if (pathMap[pathAccum]) {
-          parentId = pathMap[pathAccum];
-        } else {
-          const folder = storage.create({ parentId, title: dir, workspaceId: wsId });
-          pathMap[pathAccum] = folder.id;
-          parentId = folder.id;
-        }
-      }
-      storage.create({ parentId, title: item.title, content: item.content, workspaceId: wsId });
-      if (mode === 'incremental') existingContents.add((item.content || '').trim());
-      imported++;
+        await _overwriteLibraryShell({ workspaces });
+        const nameToId = {};
+        (storage.getWorkspaces() || []).forEach(w => { if (w && w.name) nameToId[w.name] = w.id; });
+        const defaultWsId = (storage.getActiveWorkspace() && storage.getActiveWorkspace().id)
+          || (storage.getWorkspaces()[0] && storage.getWorkspaces()[0].id);
+        const { imported } = applyImported({ mode: 'overwrite', defaultWsId, nameToId });
+        tree.render();
+        try { refreshWorkspaceSwitcher(); } catch (_) {}
+        try { renderWelcomeRecent(); } catch (_) {}
+        toast(`覆盖导入完成，共 ${imported} 篇笔记`, 'success');
+        await _mirrorAfterOverwrite();
+      });
+      return;
     }
 
+    let forceWsId = null;
+    const nameToId = {};
+    if (zipMeta && zipMeta.notebook) {
+      const want = (zipMeta.notebook.name || '').trim();
+      const found = want && (storage.getWorkspaces() || []).find(w => (w.name || '').trim() === want);
+      forceWsId = found ? found.id : storage.createWorkspace(want || '导入的笔记本', zipMeta.notebook.icon || '📓').id;
+    } else if (zipMeta && zipMeta.workspaces && zipMeta.workspaces.length) {
+      const existingWs = storage.getWorkspaces() || [];
+      for (const w of zipMeta.workspaces) {
+        const found = existingWs.find(x => x.name === w.name);
+        nameToId[w.name] = found ? found.id : storage.createWorkspace(w.name, w.icon).id;
+      }
+    }
+    const { imported, skipped } = applyImported({
+      mode: 'incremental',
+      forceWsId,
+      nameToId,
+      defaultWsId: storage.getActiveWorkspace() && storage.getActiveWorkspace().id,
+    });
     tree.render();
     try { refreshWorkspaceSwitcher(); } catch (_) {}
     try { renderWelcomeRecent(); } catch (_) {}
-    if (mode === 'overwrite') {
-      toast(`覆盖导入完成，共 ${imported} 篇笔记`, 'success');
-      await _mirrorAfterOverwrite();
-    } else {
-      const parts = [];
-      if (imported) parts.push(`新增 ${imported} 篇`);
-      if (skipped) parts.push(`跳过 ${skipped} 篇重复笔记`);
-      toast(parts.join('，') || '无新增笔记', imported ? 'success' : 'info');
-    }
+    const parts = [];
+    if (imported) parts.push(`新增 ${imported} 篇`);
+    if (skipped) parts.push(`跳过 ${skipped} 篇已有笔记`);
+    toast(parts.join('，') || '无新增笔记', imported ? 'success' : 'info');
   } catch (err) {
     if (err?.name === 'AbortError') return;
     toast('导入失败：' + (err?.message || err), 'error');
   }
 }
+window.requestImport = requestImport;
 
-async function _parseZipToNotes(zip, opts = {}) {
+async function _parseZipToNotes(zip) {
   const notes = [];
-  let wsMap = null;
-  const forceWsId = opts.forceWorkspaceId || null; // 「导入笔记本」：全部归入这个新建笔记本，忽略包内多本子映射
-
+  let meta = null;
   const metaFile = zip.file('.zhinote-meta.json');
-  if (!forceWsId && metaFile) {
-    try {
-      const metaText = await metaFile.async('string');
-      const meta = JSON.parse(metaText);
-      if (meta.workspaces && meta.workspaces.length > 1) {
-        wsMap = {};
-        const existingWs = storage.getWorkspaces();
-        for (const ws of meta.workspaces) {
-          const found = existingWs.find(w => w.name === ws.name);
-          if (found) {
-            wsMap[ws.name] = found.id;
-          } else {
-            const created = storage.createWorkspace(ws.name, ws.icon);
-            wsMap[ws.name] = created.id;
-          }
-        }
-      }
-    } catch (_) {}
+  if (metaFile) {
+    try { meta = JSON.parse(await metaFile.async('string')); } catch (_) { meta = null; }
   }
 
-  // 先读 assets/ 下的图片为 dataURL（整包导出新格式：正文用相对链接引用 assets/<hash>.<ext>）。
-  // 按文件名建索引，导入时把相对链接还原回 zhinote://img/<hash>（入库去重）。
-  const assetMap = {}; // basename -> dataURL
+  const assetMap = {};
   const assetEntries = [];
   zip.forEach((p, e) => {
     if (!e.dir && /(^|\/)images\/[^/]+\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p)) assetEntries.push({ p, e });
@@ -5757,38 +6413,35 @@ async function _parseZipToNotes(zip, opts = {}) {
     if (!hasAssets) return md;
     return String(md || '').replace(/(?:\.\.\/)*images\/([^)\s"'>]+)/gi, (full, fname) => {
       const base = String(fname).split('/').pop();
-      const dataUrl = assetMap[base];
-      if (!dataUrl) return full;
-      return (storage.ingestImageDataUrl ? storage.ingestImageDataUrl(dataUrl) : dataUrl);
+      return assetMap[base] || full;
     });
   };
+
+  const wsNames = new Set();
+  if (meta && Array.isArray(meta.workspaces)) {
+    for (const w of meta.workspaces) if (w && w.name) wsNames.add(w.name);
+  }
 
   const entries = [];
   zip.forEach((path, entry) => {
     if (!entry.dir && /\.(md|txt)$/i.test(path)) entries.push({ path, entry });
   });
   entries.sort((a, b) => a.path.localeCompare(b.path));
-  // 整包把所有 .md 收在「notes/」下：若全部以「notes/」开头，则视为包裹层并剥离
   const hasNotesWrap = entries.length > 0 && entries.every(e => /^notes[\/\\]/.test(e.path));
 
   for (const { path, entry } of entries) {
     const text = resolveAssets(await entry.async('string'));
     const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
-    if (hasNotesWrap && parts[0] === 'notes') parts.shift(); // 去掉「notes/」包裹层
+    if (hasNotesWrap && parts[0] === 'notes') parts.shift();
     const fileName = parts.pop();
-    const title = fileName.replace(/\.(md|txt)$/i, '') || '无标题';
-
-    let workspaceId = forceWsId;
-    if (!forceWsId && wsMap && parts.length > 0) {
-      const topFolder = parts[0];
-      if (wsMap[topFolder]) {
-        workspaceId = wsMap[topFolder];
-        parts.shift();
-      }
+    const title = (fileName || '').replace(/\.(md|txt)$/i, '') || '无标题';
+    let workspaceName = null;
+    if (wsNames.size && parts.length > 0 && wsNames.has(parts[0])) {
+      workspaceName = parts.shift();
     }
-    notes.push({ title, content: text, parentPath: parts, workspaceId });
+    notes.push({ title, content: text, parentPath: parts, workspaceName });
   }
-  return notes;
+  return { notes, meta };
 }
 
 /** 笔记本重名 → 自动加后缀「名字 (2)」「名字 (3)」…，绝不合并进现有本子、绝不覆盖。 */
@@ -5823,43 +6476,26 @@ async function importNotebookFromZip() {
       zip = await JSZip.loadAsync(await selected.arrayBuffer());
     }
 
-    // 读元数据取笔记本名/图标（导出笔记本时写入）；没有就用文件名兜底。
     let nbName = fallbackName, nbIcon = '📓';
-    const metaFile = zip.file('.zhinote-meta.json');
-    if (metaFile) {
-      try {
-        const m = JSON.parse(await metaFile.async('string'));
-        if (m && m.notebook) { nbName = m.notebook.name || nbName; nbIcon = m.notebook.icon || nbIcon; }
-      } catch (_) {}
+    const parsedZip = await _parseZipToNotes(zip);
+    if (parsedZip.meta && parsedZip.meta.notebook) {
+      nbName = parsedZip.meta.notebook.name || nbName;
+      nbIcon = parsedZip.meta.notebook.icon || nbIcon;
     }
-
-    const finalName = _dedupeWorkspaceName(nbName);
-    const ws = storage.createWorkspace(finalName, nbIcon);
-    const notes = await _parseZipToNotes(zip, { forceWorkspaceId: ws.id });
+    const notes = parsedZip.notes || [];
     if (!notes.length) {
-      // 空包：撤掉刚建的空本子，避免留下垃圾
-      try { if (storage.deleteWorkspace) storage.deleteWorkspace(ws.id, 'purge'); } catch (_) {}
       toast('压缩包里没有可导入的笔记', 'warning');
       return;
     }
 
-    const pathMap = {};
+    const finalName = _dedupeWorkspaceName(nbName);
+    const ws = storage.createWorkspace(finalName, nbIcon);
+    window._bulkImporting = true;
     let imported = 0;
-    for (const item of notes) {
-      let parentId = null;
-      let pathAccum = ws.id + '|';
-      for (const dir of item.parentPath) {
-        pathAccum += dir + '/';
-        if (pathMap[pathAccum]) {
-          parentId = pathMap[pathAccum];
-        } else {
-          const folder = storage.create({ parentId, title: dir, workspaceId: ws.id });
-          pathMap[pathAccum] = folder.id;
-          parentId = folder.id;
-        }
-      }
-      storage.create({ parentId, title: item.title, content: item.content, workspaceId: ws.id });
-      imported++;
+    try {
+      imported = _materializeImportedNotes(notes, { mode: 'incremental', forceWsId: ws.id }).imported;
+    } finally {
+      window._bulkImporting = false;
     }
 
     try { storage.setActiveWorkspace(ws.id); } catch (_) {}
@@ -5877,63 +6513,75 @@ window.importNotebookFromZip = importNotebookFromZip;
 async function _doBackupImport(text, anchor) {
   const modeResult = await showActionMenu(anchor, [
     { id: 'overwrite', icon: '🔄', label: '覆盖恢复（完全替换当前数据）' },
-    { id: 'incremental', icon: '➕', label: '增量恢复（仅添加新笔记，保留现有）' },
+    { id: 'incremental', icon: '➕', label: '增量恢复（仅添加还没有的笔记，保留现有）' },
   ]);
   if (!modeResult) return;
   await _doBackupImportWithMode(text, modeResult.id);
 }
 
-async function _doBackupImportWithMode(text, mode) {
+async function _doBackupImportWithMode(text, mode, images) {
+  if (images) {
+    try { storage.ingestBackupImages(images); } catch (_) {}
+  }
   if (mode === 'overwrite') {
     if (!(await _confirmOverwriteCloudIfSync())) return;
-    // 整段「替换本地 → 覆盖云端」期间挂起即时层入站结构/整篇，防落后设备在世代升上去前回灌删除。
-    try { window.realtime && window.realtime.beginAuthoritativeReset && window.realtime.beginAuthoritativeReset(); } catch (_) {}
-    try {
+    await _withAuthoritativeReset(async () => {
       await storage.importJSON(text);
       tree.render();
       const curId = editor.currentId?.();
       if (curId) editor.open(curId);
       toast('备份恢复成功（已覆盖）', 'success');
       await _mirrorAfterOverwrite();
-    } finally {
-      try { window.realtime && window.realtime.endAuthoritativeReset && window.realtime.endAuthoritativeReset(); } catch (_) {}
-    }
-  } else {
-    let parsed;
-    const trimmed = String(text || '').trim();
-    if (trimmed.startsWith('MDNOTE_LZB64:')) {
-      if (typeof window.LZString === 'undefined') { toast('未加载 LZ-string 库', 'error'); return; }
-      const json = window.LZString.decompressFromBase64(trimmed.slice('MDNOTE_LZB64:'.length));
-      parsed = JSON.parse(json);
-    } else {
-      parsed = JSON.parse(trimmed);
-    }
-
-    const allNotes = storage.getAll().notes || {};
-    const existingIds = new Set(Object.keys(allNotes));
-    const existingContents = new Set();
-    for (const id in allNotes) {
-      const c = (allNotes[id].content || '').trim();
-      if (c) existingContents.add(c);
-    }
-
-    const backupNotes = parsed.notes || {};
-    let imported = 0, skipped = 0;
-    for (const id in backupNotes) {
-      const note = backupNotes[id];
-      if (existingIds.has(id)) { skipped++; continue; }
-      const contentKey = (note.content || '').trim();
-      if (contentKey && existingContents.has(contentKey)) { skipped++; continue; }
-      storage.create({ parentId: null, title: note.title || '无标题', content: note.content || '' });
-      existingContents.add(contentKey);
-      imported++;
-    }
-    tree.render();
-    const parts = [];
-    if (imported) parts.push(`新增 ${imported} 篇`);
-    if (skipped) parts.push(`跳过 ${skipped} 篇已有笔记`);
-    toast(parts.join('，') || '无新增笔记', imported ? 'success' : 'info');
+    });
+    return;
   }
+
+  let parsed;
+  const trimmed = String(text || '').trim();
+  if (trimmed.startsWith('MDNOTE_LZB64:')) {
+    if (typeof window.LZString === 'undefined') { toast('未加载 LZ-string 库', 'error'); return; }
+    const json = window.LZString.decompressFromBase64(trimmed.slice('MDNOTE_LZB64:'.length));
+    parsed = JSON.parse(json);
+  } else {
+    parsed = JSON.parse(trimmed);
+  }
+  if (parsed.localImages) {
+    try { storage.ingestBackupImages(parsed.localImages); } catch (_) {}
+  }
+
+  const backupNotes = parsed.notes || {};
+  const neededWs = new Set();
+  for (const id in backupNotes) {
+    const n = backupNotes[id];
+    if (n && n.workspaceId) neededWs.add(n.workspaceId);
+  }
+
+  window._bulkImporting = true;
+  let imported = 0, skipped = 0;
+  try {
+    for (const ws of (parsed.workspaces || [])) {
+      if (ws && neededWs.has(ws.id)) storage.restoreWorkspaceFromBackup(ws);
+    }
+    const ids = Object.keys(backupNotes);
+    ids.sort((a, b) => _backupNoteDepth(backupNotes, a) - _backupNoteDepth(backupNotes, b));
+    for (const id of ids) {
+      if (storage.restoreNoteFromBackup(backupNotes[id])) imported++;
+      else skipped++;
+    }
+    for (const tpl of (parsed.templates || [])) {
+      try { storage.restoreTemplateFromBackup(tpl); } catch (_) {}
+    }
+    storage.finishIncrementalRestore();
+  } finally {
+    window._bulkImporting = false;
+  }
+  tree.render();
+  try { refreshWorkspaceSwitcher(); } catch (_) {}
+  try { renderWelcomeRecent(); } catch (_) {}
+  const parts = [];
+  if (imported) parts.push(`新增 ${imported} 篇`);
+  if (skipped) parts.push(`跳过 ${skipped} 篇已有笔记`);
+  toast(parts.join('，') || '无新增笔记', imported ? 'success' : 'info');
 }
 
 // ============================================================
@@ -6063,6 +6711,7 @@ async function _importLegacyNotes() {
         const mode = previewBody.querySelector('input[name="legacy-mode"]:checked')?.value || 'append';
         if (mode === 'replace') {
           if (!confirm('确定清空所有现有笔记并替换为导入内容吗？此操作不可恢复！')) return;
+          if (!(await _confirmOverwriteCloudIfSync())) return;
         }
         closeModal();
         await _executeLegacyImport(data, tree_nodes, groupNotes, orphanNotes, iconMap, mode);
@@ -6074,6 +6723,7 @@ async function _importLegacyNotes() {
 
 async function _executeLegacyImport(data, treeNodes, groupNotes, orphanNotes, iconMap, mode) {
   const dict = data['词典'];
+  const run = async () => {
 
   if (mode === 'replace') {
     const fresh = { version: 2, notes: {}, rootOrder: [], trash: {}, trashOrder: [],
@@ -6172,6 +6822,10 @@ async function _executeLegacyImport(data, treeNodes, groupNotes, orphanNotes, ic
   window._bulkImporting = false;
   tree.render();
   toast(`导入完成：${imported} 条笔记，${sections.length} 个笔记本`, 'success');
+  if (mode === 'replace') await _mirrorAfterOverwrite();
+  };
+  if (mode === 'replace') await _withAuthoritativeReset(run);
+  else await run();
 }
 
 // 自建跨域代理的 Cloudflare Worker 完整代码（设置面板「复制」按钮用；与 docs/webdav-proxy-worker.js 同步维护）。
@@ -6501,7 +7155,7 @@ function openSettingsModal(initialTab) {
         <option value="0">关闭</option>
         <option value="1">开启</option>
       </select>
-      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">定时把全部笔记导出为 JSON 存到本地文件夹</div>
+      <div style="font-size:12px;color:var(--text-tertiary);margin-top:4px;line-height:1.6;">定时把全部笔记和图片打成压缩包存到本地文件夹</div>
 
       <div id="backup-detail">
         <label style="margin-top:14px;">备份目录</label>
@@ -6707,6 +7361,7 @@ function openSettingsModal(initialTab) {
     </div>
     </div>
   `;
+  try { window.emojiUi?.paintIcon?.(body.querySelector('.about-logo'), '📖'); } catch (_) {}
 
   openModal({
     title: '设置',
@@ -6913,8 +7568,7 @@ function openSettingsModal(initialTab) {
             });
             _draftCache.clear();
             await window.webdavSync.loadConfig();
-            _setCloudSyncDot('syncing');
-            // 配好网盘密码后补上行小枝密钥密文（先填 key 后开同步时原先不会自动传）
+            _setCloudSyncDot('syncing', 'heavy');
             try { window.aiChat && window.aiChat.syncKeyUp && window.aiChat.syncKeyUp(); } catch (_) {}
 
             if (choice === 'upload') {
@@ -7064,7 +7718,7 @@ function openSettingsModal(initialTab) {
     const cls = ['synced', 'syncing', 'pending', 'error', 'local', 'disabled'].find((c) => cloudDot && cloudDot.classList.contains(c)) || '';
     const dot = el.querySelector('.sync-method-dot');
     const text = el.querySelector('.sync-method-text');
-    if (dot) dot.className = 'sync-method-dot' + (cls ? ' ' + cls : '');
+    if (dot) dot.className = 'sync-method-dot' + (cls ? ' ' + cls : '') + (cloudDot && cloudDot.classList.contains('busy') ? ' busy' : '');
     let sub = '—';
     if (cls === 'syncing') sub = '同步中…';
     else if (cls === 'error') sub = '同步失败';
@@ -8606,6 +9260,7 @@ function initEditorContextMenu() {
       }
       const row = document.createElement('div');
       row.className = 'md-ctx-item';
+      if (item.title) row.title = item.title;
       const iconHtml = item.icon ? `<span class="md-ctx-icon">${item.icon}</span>` : '<span class="md-ctx-icon"></span>';
 
       if (item.submenu) {

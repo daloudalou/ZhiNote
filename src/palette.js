@@ -32,8 +32,8 @@ const palette = (() => {
     { id: 'cmd-mascot', label: '问小枝（AI 助手）', kbd: 'Alt+A', icon: '🌱', run: () => { try { (window.mascot.summon || window.mascot.openPanel)(); } catch (_) {} } },
     { id: 'cmd-mascot-block', label: '插入小枝对话块', icon: '💬', run: () => { try { window.mascot && window.mascot.insertChatBlock('', ''); } catch (_) {} } },
     { id: 'cmd-quick-capture', label: '速记设置（剪贴板存到哪）', icon: '⚡', run: () => { try { window.quickCaptureSetup?.(); } catch (_) {} } },
-    { id: 'cmd-export', label: '导出为 Markdown 文件夹', icon: '⇣', run: () => window.requestExport?.() },
-    { id: 'cmd-import', label: '从 Markdown 文件夹导入', icon: '⇡', run: () => window.requestImport?.() },
+    { id: 'cmd-export', label: '导出笔记或备份', icon: '⇣', run: () => window.requestExport?.() },
+    { id: 'cmd-import', label: '导入笔记或备份', icon: '⇡', run: () => window.requestImport?.() },
     { id: 'cmd-collapse', label: '折叠所有笔记节点', icon: '◢', run: () => { tree.collapseAllAnimated(); } },
     { id: 'cmd-expand', label: '展开所有笔记节点', icon: '◣', run: () => { tree.expandAllAnimated(); } },
   ];

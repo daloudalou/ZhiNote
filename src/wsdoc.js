@@ -56,11 +56,18 @@
   }
 
   /** 把一张集合表（id->记录）协调进父文档的某个顶层 Y.Map。 */
-  function _applyColl(Y, doc, name, table, tomb) {
+  function _applyColl(Y, doc, name, table, tomb, revive) {
     let coll = doc.getMap(name);
+    const tmap = doc.getMap('tombstones');
     for (const id in table) {
       if (!Object.prototype.hasOwnProperty.call(table, id)) continue;
-      if (tomb && tomb['' + name + ':' + id]) continue; // 已墓碑 → 不复活
+      const tombKey = '' + name + ':' + id;
+      if (revive && revive[tombKey]) {
+        if (tmap.has(tombKey)) tmap.delete(tombKey);
+      } else {
+        if (tomb && tomb[tombKey]) continue; // 本次叠入自带墓碑 → 不复活
+        if (tmap.get(tombKey) != null) continue; // 账本里已有墓碑（云端已删）→ 闲设备旧目录不得叠回去
+      }
       let rec = coll.get(id);
       if (!(rec instanceof Y.Map)) { rec = new Y.Map(); coll.set(id, rec); }
       _applyRecord(Y, rec, table[id]);
@@ -71,17 +78,23 @@
   function _ingest(Y, doc, structure) {
     const s = structure || {};
     const tomb = s.tombstones || {};
+    const revive = s.revive || {};
     doc.transact(function () {
       // 墓碑：先记墓碑、再从对应集合删除其记录
       const tmap = doc.getMap('tombstones');
       for (const key in tomb) {
         if (!Object.prototype.hasOwnProperty.call(tomb, key)) continue;
+        if (revive[key]) continue; // 用户增量拉回：不得再写下删除
         if (tmap.get(key) == null) tmap.set(key, tomb[key]);
         const i = key.indexOf(':');
         if (i > 0) {
           const coll = key.slice(0, i), id = key.slice(i + 1);
           if (COLLS.indexOf(coll) >= 0) { const c = doc.getMap(coll); if (c.has(id)) c.delete(id); }
         }
+      }
+      for (const key in revive) {
+        if (!Object.prototype.hasOwnProperty.call(revive, key)) continue;
+        if (tmap.has(key)) tmap.delete(key);
       }
       // 笔记：活跃 + 回收站 合并进同一个 notes 集合，用 deleted 开关区分
       //   （活跃强制 deleted:false/deletedAt:null；回收站强制 deleted:true。其余元数据字段原样保留，
@@ -91,9 +104,9 @@
       for (const id in an) { if (Object.prototype.hasOwnProperty.call(an, id)) noteTable[id] = Object.assign({}, an[id], { deleted: false, deletedAt: null }); }
       const tn = s.trash || {};
       for (const id in tn) { if (Object.prototype.hasOwnProperty.call(tn, id)) noteTable[id] = Object.assign({}, tn[id], { deleted: true }); }
-      _applyColl(Y, doc, 'notes', noteTable, tomb);
-      _applyColl(Y, doc, 'workspaces', s.workspaces || {}, tomb);
-      _applyColl(Y, doc, 'templates', s.templates || {}, tomb);
+      _applyColl(Y, doc, 'notes', noteTable, tomb, revive);
+      _applyColl(Y, doc, 'workspaces', s.workspaces || {}, tomb, revive);
+      _applyColl(Y, doc, 'templates', s.templates || {}, tomb, revive);
       // settings：扁平 key->value
       const set = doc.getMap('settings');
       const ss = s.settings || {};

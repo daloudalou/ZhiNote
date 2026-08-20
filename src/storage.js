@@ -1250,7 +1250,12 @@ const storage = (() => {
     for (const id in (_data.tplTombstones || {})) tombstones['templates:' + id] = _data.tplTombstones[id];
     for (const id in (_data.wsTombstones || {})) tombstones['workspaces:' + id] = _data.wsTombstones[id];
     for (const id in (_data.noteTombstones || {})) tombstones['notes:' + id] = _data.noteTombstones[id];
-    return { notes, workspaces, templates, trash, settings: {}, tombstones };
+    const revive = {};
+    _reviveIds.forEach(function (id) {
+      if (_data.notes && _data.notes[id]) revive['notes:' + id] = 1;
+      else if (_data.workspaces && _data.workspaces.some(function (w) { return w && w.id === id; })) revive['workspaces:' + id] = 1;
+    });
+    return { notes, workspaces, templates, trash, settings: {}, tombstones, revive };
   }
 
   let _structLedgerTimer = null;
@@ -1375,7 +1380,7 @@ const storage = (() => {
   /** 采纳权威世代（epoch 跳变/下载覆盖）专用：直接以云端总账为本地权威，**不合并**本地旧总账。
    *  先清掉本地三类过期墓碑——否则本地旧的「删除优先」墓碑会把权威刚恢复/分发的笔记又删掉，
    *  并在本端下次上传时回传、把云端再次污染（设备B反向污染A的根因）。随后落地到真实结构。 */
-  function _webdavReplaceStructLedger(remoteB64) {
+  function _webdavReplaceStructLedger(remoteB64, opts) {
     try {
       const W = window.__wsdoc;
       if (!W || !W.ready() || !remoteB64) return false;
@@ -1385,7 +1390,7 @@ const storage = (() => {
       _data.structLedger = remoteB64;     // 以云端权威总账为准（丢弃本地独立创世/旧墓碑）
       _data.structLedgerRooted = true;
       save();
-      const ar = _applyStructLedgerToData();          // 按权威总账落地（只动元数据，不碰正文、不造空壳）
+      const ar = _applyStructLedgerToData({ skipOrphan: !!(opts && opts.skipOrphan) });
       return ar && typeof ar === 'object' ? ar : { changed: true, missing: [] };
     } catch (e) { console.warn('[storage] 采纳云端结构总账失败', e); return false; }
   }
@@ -1426,13 +1431,17 @@ const storage = (() => {
       const i = key.indexOf(':'); if (i < 0) continue;
       const coll = key.slice(0, i), id = key.slice(i + 1);
       if (coll === 'notes') {
+        if (_reviveIds.has(id)) continue; // 用户刚从备份拉回：总账旧墓碑不得再删
         data.noteTombstones = data.noteTombstones || {};
         if (!data.noteTombstones[id]) data.noteTombstones[id] = tomb[key]; // 持久化墓碑→本端后续也会携带、不复活
         if (data.notes[id]) { removed.push({ id, note: data.notes[id] }); delete data.notes[id]; changed = true; }
         if (data.trash[id]) { removed.push({ id, note: data.trash[id] }); delete data.trash[id]; changed = true; }
         data.rootOrder = data.rootOrder.filter(x => x !== id);
         data.trashOrder = data.trashOrder.filter(x => x !== id);
-      } else if (coll === 'workspaces') { data.wsTombstones = data.wsTombstones || {}; if (!data.wsTombstones[id]) { data.wsTombstones[id] = tomb[key]; changed = true; } }
+      } else if (coll === 'workspaces') {
+        if (_reviveIds.has(id)) continue;
+        data.wsTombstones = data.wsTombstones || {}; if (!data.wsTombstones[id]) { data.wsTombstones[id] = tomb[key]; changed = true; }
+      }
       else if (coll === 'templates') { data.tplTombstones = data.tplTombstones || {}; if (!data.tplTombstones[id]) { data.tplTombstones[id] = tomb[key]; changed = true; } }
     }
 
@@ -1474,6 +1483,7 @@ const storage = (() => {
       else if (!ntomb[id]) missing.push(id);
     }
     for (const id in ltrash) {
+      if (_reviveIds.has(id)) continue; // 刚拉回列表：总账若仍记在回收站，不得再塞回去
       if (data.trash[id]) { if (_applyMetaIfDiff(data.trash[id], ltrash[id], _LEDGER_META)) changed = true; }
       else if (data.notes[id]) {                 // 删到回收站：notes→trash
         const n = data.notes[id]; delete data.notes[id]; data.rootOrder = data.rootOrder.filter(x => x !== id);
@@ -2039,6 +2049,158 @@ const storage = (() => {
     return hits;
   }
 
+  /** 扫一篇笔记正文里的图片编号（旧 Markdown + 内部 JSON 都扫）。 */
+  function _collectImgHashesFromNote(note, set) {
+    if (!note || !set) return;
+    const re = /zhinote:\/\/img\/([a-z0-9]+l[a-z0-9]+)/gi;
+    const addFrom = (s) => { let m; const t = String(s || ''); while ((m = re.exec(t))) set.add(m[1]); re.lastIndex = 0; };
+    addFrom(note.content);
+    if (note.doc && window.editor && window.editor.walkDocImages) {
+      try {
+        window.editor.walkDocImages(note.doc, (src) => {
+          const mm = /zhinote:\/\/img\/([a-z0-9]+l[a-z0-9]+)/i.exec(src || '');
+          if (mm) set.add(mm[1]);
+        });
+      } catch (_) { addFrom(JSON.stringify(note.doc)); }
+    } else if (note.doc) addFrom(JSON.stringify(note.doc));
+  }
+
+  /** 完整备份用：把本机图片仓库里、笔记真正用到的图列成 zip 条目（images/<hash>.<ext>）。 */
+  async function listBackupImageFiles() {
+    const hashes = new Set();
+    for (const id in (_data.notes || {})) _collectImgHashesFromNote(_data.notes[id], hashes);
+    for (const id in (_data.trash || {})) _collectImgHashesFromNote(_data.trash[id], hashes);
+    for (const h in (_data.localImages || {})) if (h) hashes.add(h);
+    const files = [];
+    for (const h of hashes) {
+      let dataUrl = _imgCache[h];
+      if (!dataUrl) {
+        try { dataUrl = await loadImage(h); } catch (_) { dataUrl = null; }
+      }
+      if (!dataUrl && _data.localImages && _data.localImages[h]) dataUrl = _data.localImages[h];
+      if (!dataUrl) continue;
+      const ext = _imgExtOf(dataUrl);
+      const b64 = String(dataUrl).split(',')[1] || '';
+      if (!b64) continue;
+      files.push({ path: 'images/' + h + '.' + ext, content: b64, base64: true });
+    }
+    return files;
+  }
+
+  /** 恢复备份时把图片写进本机仓库。map 的键是图片编号（文件名去掉后缀）。 */
+  function ingestBackupImages(map) {
+    if (!map || typeof map !== 'object') return 0;
+    let n = 0;
+    for (const h of Object.keys(map)) {
+      const dataUrl = map[h];
+      if (!h || !dataUrl || typeof dataUrl !== 'string' || dataUrl.indexOf('data:') !== 0) continue;
+      if (!_imgCache[h]) {
+        _imgCache[h] = dataUrl;
+        _imgPersistSafe(h, dataUrl);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /** 旧备份 JSON 里还内嵌着 localImages 时，搬进外置仓库，避免只写在备份对象里。 */
+  async function adoptEmbeddedLocalImages() {
+    const legacy = (_data && _data.localImages) || {};
+    const keys = Object.keys(legacy);
+    if (!keys.length) return 0;
+    const n = ingestBackupImages(legacy);
+    if (_imgBackend !== 'legacy') {
+      _data.localImages = {};
+      save();
+    }
+    return n;
+  }
+
+  /**
+   * 增量恢复：按备份原编号把本子加回来。本地列表里已有同编号则不动。
+   * 若本子已被彻底删掉（墓碑），清掉墓碑再加回来——用户要的就是重新出现。
+   */
+  function restoreWorkspaceFromBackup(ws) {
+    if (!ws || !ws.id) return false;
+    if (_data.wsTombstones && _data.wsTombstones[ws.id]) {
+      delete _data.wsTombstones[ws.id];
+      _reviveIds.add(ws.id);
+    }
+    if (!Array.isArray(_data.workspaces)) _data.workspaces = [];
+    if (_data.workspaces.some(w => w && w.id === ws.id)) return true;
+    const name = (typeof ws.name === 'string' && ws.name.trim()) ? ws.name.trim() : '未命名笔记本';
+    _data.workspaces.push({ id: ws.id, name, icon: (typeof ws.icon === 'string' && ws.icon) ? ws.icon : '📒' });
+    _globalDirty = true;
+    return true;
+  }
+
+  /**
+   * 增量恢复：备份里还活着、这边列表里没有的，一律拉回列表（回收站 / 已删标记都算「没有」）。
+   * 用备份那份正文；标待传、记复活，上传时擦云端删除记录，避免下一轮又删掉。
+   * 列表里已经有的同编号不覆盖（那是你现在正在用的）。
+   */
+  function restoreNoteFromBackup(src) {
+    if (!src || !src.id) return false;
+    const id = src.id;
+    _data.notes = _data.notes || {};
+    _data.trash = _data.trash || {};
+    if (_data.notes[id]) return false;
+    if (_data.noteTombstones && _data.noteTombstones[id]) delete _data.noteTombstones[id];
+    if (_data.trash[id]) {
+      delete _data.trash[id];
+      _data.trashOrder = (_data.trashOrder || []).filter(x => x !== id);
+    }
+    const wsId = src.workspaceId || (_data.settings && _data.settings.activeWorkspace) || 'ws-default';
+    if (_data.wsTombstones && _data.wsTombstones[wsId]) delete _data.wsTombstones[wsId];
+    const note = {
+      id,
+      parentId: src.parentId == null ? null : src.parentId,
+      title: (typeof src.title === 'string') ? src.title : '无标题',
+      content: src.content || '',
+      color: src.color || null,
+      icon: src.icon || '',
+      expanded: !!src.expanded,
+      order: src.order || 0,
+      workspaceId: wsId,
+      createdAt: src.createdAt || now(),
+      updatedAt: src.updatedAt || now(),
+    };
+    if (src.doc) note.doc = src.doc;
+    if (src.ydoc) note.ydoc = src.ydoc;
+    if (src.pinnedAt) note.pinnedAt = src.pinnedAt;
+    if (typeof src.frac === 'string' && src.frac) note.frac = src.frac;
+    try { if (note.doc) ingestDocImages(note.doc); } catch (_) {}
+    _data.notes[id] = note;
+    if (note.parentId == null) {
+      if (!Array.isArray(_data.rootOrder)) _data.rootOrder = [];
+      if (_data.rootOrder.indexOf(id) < 0) _data.rootOrder.push(id);
+    }
+    if (!(typeof note.frac === 'string' && note.frac)) {
+      try { _assignFracAfter(note, note.parentId, note.workspaceId, null); } catch (_) {}
+    }
+    _dirtyNoteIds.add(id);
+    _reviveIds.add(id);
+    _globalDirty = true;
+    return true;
+  }
+
+  function restoreTemplateFromBackup(tpl) {
+    if (!tpl || !tpl.id) return false;
+    if (_data.tplTombstones && _data.tplTombstones[tpl.id]) delete _data.tplTombstones[tpl.id];
+    if (!Array.isArray(_data.templates)) _data.templates = [];
+    if (_data.templates.some(t => t && t.id === tpl.id)) return false;
+    _data.templates.push(tpl);
+    _globalDirty = true;
+    return true;
+  }
+
+  /** 增量恢复一批之后：接回目录、刷结构总账、安排上传（含复活篇擦云端删除）。 */
+  function finishIncrementalRestore() {
+    try { reconcileStructure(); } catch (_) {}
+    save({ immediate: true, full: true });
+    emit('change', { type: 'create' });
+  }
+
   function exportJSON() {
     // 安全：导出的备份文件**绝不**包含同步敏感信息（WebDAV 地址/账号/密码、加密口令）。
     //   否则把备份分享/上传出去就等于泄露同步登录与解密钥匙（备份本就是给人/跨设备传的）。
@@ -2107,8 +2269,13 @@ const storage = (() => {
         } else {
           children = Object.values(_data.notes).filter(n => n.parentId === parentId && n.workspaceId === wsId).sort((a, b) => (a.order || 0) - (b.order || 0));
         }
+        const usedNames = new Set();
         for (const note of children) {
-          const name = sanitize(note.title);
+          let name = sanitize(note.title);
+          const baseName = name;
+          let seq = 2;
+          while (usedNames.has(name)) name = baseName + '(' + seq++ + ')';
+          usedNames.add(name);
           const hasChildren = Object.values(_data.notes).some(n => n.parentId === note.id && n.workspaceId === wsId);
           const filePath = pathPrefix + name + '.md';
           let content = '';
@@ -2214,6 +2381,8 @@ const storage = (() => {
       for (const id in _data.notes) _dirtyNoteIds.add(id);
     }
     _globalDirty = true;
+    // 旧备份把图写在 JSON 里：搬进本机图片仓库，换电脑也能看见
+    try { await adoptEmbeddedLocalImages(); } catch (_) {}
   }
 
   function save({ immediate = false, full = false } = {}) {
@@ -2228,12 +2397,13 @@ const storage = (() => {
   let _pendingFull = false;
   function _writeDirtyToData() {
     if (!_data) return;
-    if (_dirtyNoteIds.size || _globalDirty || _indexDirty) {
+    if (_dirtyNoteIds.size || _globalDirty || _indexDirty || _reviveIds.size) {
       _data._webdavDirty = {
         notes: Array.from(_dirtyNoteIds),
         global: !!_globalDirty,
         index: !!_indexDirty,
         indexIds: Array.from(_indexPendingIds),
+        revive: Array.from(_reviveIds),
       };
     } else if (_data._webdavDirty) {
       delete _data._webdavDirty;
@@ -2254,6 +2424,11 @@ const storage = (() => {
       if (Array.isArray(d.indexIds)) {
         for (let i = 0; i < d.indexIds.length; i++) {
           if (d.indexIds[i]) _indexPendingIds.add(d.indexIds[i]);
+        }
+      }
+      if (Array.isArray(d.revive)) {
+        for (let i = 0; i < d.revive.length; i++) {
+          if (d.revive[i]) _reviveIds.add(d.revive[i]);
         }
       }
     } catch (_) {}
@@ -2284,6 +2459,7 @@ const storage = (() => {
   let _globalDirty = false;
   let _indexDirty = false;
   let _indexPendingIds = new Set();
+  let _reviveIds = new Set(); // 增量恢复拉回列表的编号：上传前挡云端删除、上传时擦名单墓碑
 
   // 这些变更会改动全局结构（rootOrder / trashOrder / 树形 / 笔记本归属），
   // 即使带 id 也必须标记 globalDirty。否则新建/删除/移动笔记后 rootOrder 不会上传，
@@ -2298,7 +2474,7 @@ const storage = (() => {
       } else if (!payload?.id && t !== 'reload' && t !== 'global-sync' && t !== 'collapseAll' && t !== 'expandAll') {
         _globalDirty = true;
       }
-      if (t === 'reload') { _dirtyNoteIds.clear(); _globalDirty = false; _indexDirty = false; _indexPendingIds.clear(); }
+      if (t === 'reload') { _dirtyNoteIds.clear(); _globalDirty = false; _indexDirty = false; _indexPendingIds.clear(); _reviveIds.clear(); }
       // 收口：本地任何会产生脏数据的变更（新建/删除/改名/移动/颜色图标/回收站/笔记本/设置…）
       // 统一在此安排一次「去抖的」上传，让它们也像编辑文字一样触发同步、点亮徽标，
       // 不再只靠失焦/隐藏才推（关闭前来不及推 → 重开拉云端对不齐 → 冲突）。
@@ -2320,6 +2496,12 @@ const storage = (() => {
   }
   function markNotesDirtyByIds(ids) {
     for (const id of ids) _dirtyNoteIds.add(id);
+    save({ immediate: true });
+  }
+  function isRevivedFromBackup(id) { return !!(id && _reviveIds.has(id)); }
+  function clearRevivedFromBackup(ids) {
+    if (!ids || !ids.length) return;
+    for (const id of ids) _reviveIds.delete(id);
     save({ immediate: true });
   }
   function markGlobalDirty() {
@@ -2746,6 +2928,7 @@ const storage = (() => {
 
   // 每台设备各自的偏好 / UI 状态：绝不随云端覆盖（否则会出现"另一台设备改了本机就被拉回"的问题）。
   // 须与 webdav-sync._extractSharedSettings 的 LOCAL_ONLY 一致（漏一项会误标 globalDirty 白跑上传）
+  // 铃铛跟笔记走的勾/删 `bellMsgAcks` 要随账号，不要加进 LOCAL_ONLY。
   const LOCAL_ONLY_SETTINGS = [
     'theme', 'fontSize', 'fontFamily', 'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
     'noteTransition', 'editorPadding', 'sidebarWidth', 'outlineOpen',
@@ -2757,6 +2940,8 @@ const storage = (() => {
     'webdavRealtime', // 即时同步开关/中转：每台本机偏好；若上云会被另一台默认「开」盖回（20260807）
     'webdavCryptoPass', // 加密口令：manifest 是明文，绝不能经云端 settings 泄漏；只走本机/配置导出
     'pinned', // 置顶已迁到 note.pinnedAt（20260622）；legacy 列表不再同步，防旧端覆盖
+    'urlOpenInBrowser', // 旧：是否用系统浏览器。已由 urlOpenBrowser 取代，仍留着兼容
+    'urlOpenBrowser',   // 打开网址：app / default / 浏览器 exe 路径；本机、不上云
   ];
   // 'webdav_' 前缀=同步配置；'_' 前缀=内部迁移标记，都只留本机
   const LOCAL_ONLY_PREFIX = ['webdav_', '_'];
@@ -2807,6 +2992,9 @@ const storage = (() => {
     searchAll,
     getWorkspaces, getActiveWorkspace, setActiveWorkspace, createWorkspace, renameWorkspace, setWorkspaceIcon, deleteWorkspace,
     exportJSON, importJSON, exportCurrentNoteMd, exportAllAsTree,
+    listBackupImageFiles, ingestBackupImages, adoptEmbeddedLocalImages,
+    restoreWorkspaceFromBackup, restoreNoteFromBackup, restoreTemplateFromBackup, finishIncrementalRestore,
+    isRevivedFromBackup, clearRevivedFromBackup,
     startAutoSync, markDirty, flushBeforeHide,
     isDirty: () => _dirtyNoteIds.size > 0 || _globalDirty || _indexDirty,
     save,

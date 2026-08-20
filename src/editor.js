@@ -1209,6 +1209,7 @@ function _znRefAttrs() {
     href: { default: '' },
     title: { default: '' },
     icon: { default: '' },
+    hideHost: { default: false },
   };
 }
 function _znRefGetAttrs(el) {
@@ -1218,6 +1219,7 @@ function _znRefGetAttrs(el) {
     href: el.getAttribute('data-href') || '',
     title: el.getAttribute('data-title') || '',
     icon: el.getAttribute('data-icon') || '',
+    hideHost: el.getAttribute('data-hide-host') === '1',
   };
 }
 function _znRefHtmlAttrs(node) {
@@ -1225,6 +1227,7 @@ function _znRefHtmlAttrs(node) {
   const out = { 'data-kind': a.kind || 'note', 'data-title': a.title || '', 'data-icon': a.icon || '' };
   if (a.id) out['data-id'] = a.id;
   if (a.href) out['data-href'] = a.href;
+  if (a.hideHost) out['data-hide-host'] = '1';
   return out;
 }
 function _znRefMarkdown(tag, flagAttr, node) {
@@ -1233,7 +1236,9 @@ function _znRefMarkdown(tag, flagAttr, node) {
   if (a.id) parts.push(' data-id="' + _escHtml(a.id) + '"');
   if (a.href) parts.push(' data-href="' + _escHtml(a.href) + '"');
   parts.push(' data-title="' + _escHtml(a.title || '') + '"');
-  parts.push(' data-icon="' + _escHtml(a.icon || '') + '"></' + tag + '>');
+  parts.push(' data-icon="' + _escHtml(a.icon || '') + '"');
+  if (a.hideHost) parts.push(' data-hide-host="1"');
+  parts.push('></' + tag + '>');
   return parts.join('');
 }
 
@@ -1255,6 +1260,7 @@ function _znMentionAttrsFromLink(href, text) {
   return {
     kind, id: '', href: href || '', title,
     icon: kind === 'file' ? '📁' : '🌐',
+    hideHost: kind === 'url',
   };
 }
 
@@ -2806,6 +2812,9 @@ const editor = (() => {
     btn.title = on ? '返回上一篇（Alt+←）' : '没有上一篇';
   }
   function goBack() {
+    try {
+      if (window.mentionUi && window.mentionUi.webGoBack && window.mentionUi.webGoBack()) return true;
+    } catch (_) {}
     while (_navStack.length) {
       const id = _navStack.pop();
       if (!id || id === _currentId) continue;
@@ -3708,11 +3717,14 @@ const editor = (() => {
         try { if (window.mentionUi && window.mentionUi.convertClassicLink) window.mentionUi.convertClassicLink(); } catch (_) {}
         if (e.ctrlKey || e.metaKey) {
           if (href.startsWith('file:///') || href.startsWith('file:\\\\')) _openLocalFile(href);
+          else if (window.mentionUi && window.mentionUi.openWebHref) window.mentionUi.openWebHref(link.href);
           else window.open(link.href, '_blank');
         } else if (window.mentionUi && typeof window.mentionUi.openSelected === 'function') {
           window.mentionUi.openSelected();
         } else if (href.startsWith('file:///') || href.startsWith('file:\\\\')) {
           _openLocalFile(href);
+        } else if (window.mentionUi && window.mentionUi.openWebHref) {
+          window.mentionUi.openWebHref(link.href);
         } else {
           window.open(link.href, '_blank');
         }
@@ -4646,6 +4658,8 @@ const editor = (() => {
         if (existingHref) {
           if (existingHref.startsWith('file:///')) {
             _openLocalFile(existingHref);
+          } else if (window.mentionUi && window.mentionUi.openWebHref) {
+            window.mentionUi.openWebHref(existingHref);
           } else {
             window.open(existingHref, '_blank');
           }
@@ -4939,6 +4953,7 @@ const editor = (() => {
   }
 
   async function open(id, opts = {}) {
+    try { if (window.mentionUi && window.mentionUi.closeWebPane) window.mentionUi.closeWebPane(); } catch (_) {}
     if (_currentId === id && _editor) return;
     flushSave();
     const note = window.storage?.get(id);
@@ -5096,6 +5111,7 @@ const editor = (() => {
   }
 
   function close() {
+    try { if (window.mentionUi && window.mentionUi.closeWebPane) window.mentionUi.closeWebPane(); } catch (_) {}
     if (_mdSourceOpen) toggleMarkdownSource(false);
     if (_editor && _currentId) { try { _scrollPos[_currentId] = document.getElementById('editor')?.scrollTop || 0; } catch (_) {} }
     flushSave();

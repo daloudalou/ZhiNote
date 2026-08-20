@@ -17,7 +17,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="枝记">
-  <link rel="stylesheet" href="styles.css?v=20260819t32">
+  <link rel="stylesheet" href="styles.css?v=20260820t19">
   <style>body:not(.app-ready) { opacity: 0; }</style>
 </head>
 <body class="theme-light">
@@ -160,9 +160,7 @@
       <div id="editor-container">
         <div id="empty-state">
           <div class="welcome">
-            <div class="welcome-icon">
-              <svg viewBox="0 0 24 24" width="56" height="56" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
-            </div>
+            <div class="welcome-icon">📖</div>
             <h1 class="welcome-title">开始记录</h1>
             <p class="welcome-subtitle">选择下方一个动作，或直接打开侧边栏的笔记开始编辑</p>
             <div class="welcome-actions">
@@ -274,6 +272,33 @@
             <pre class="mdsv-body"><code id="mdsv-code"></code></pre>
           </div>
         </div>
+        <div id="zn-web-pane" class="hidden" aria-hidden="true">
+          <div class="zn-web-bar">
+            <button type="button" class="icon-btn" data-web="back" title="后退" disabled>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>
+            </button>
+            <button type="button" class="icon-btn" data-web="fwd" title="前进" disabled>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+            </button>
+            <button type="button" class="icon-btn" data-web="reload" title="刷新">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            </button>
+            <input class="zn-web-url" type="text" spellcheck="false" autocomplete="off" autocapitalize="off" autocorrect="off" data-lpignore="true" data-form-type="other" aria-label="网址">
+            <button type="button" class="icon-btn" data-web="ext" title="用浏览器打开">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5h5v5"/><path d="M10 14L19 5"/><path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>
+            </button>
+            <button type="button" class="icon-btn" data-web="close" title="关闭">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </button>
+          </div>
+          <div class="zn-web-stage">
+            <iframe class="zn-web-frame" src="about:blank" title="网页"></iframe>
+            <div class="zn-web-fail hidden">
+              <p>这个网站不允许嵌在枝记里打开</p>
+              <button type="button" class="primary-btn" data-web="ext2">用浏览器打开</button>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>
@@ -333,7 +358,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script>
-    window.__MD_VER__ = '20260819t34';
+    window.__MD_VER__ = '20260820t19';
     // 小枝第一套：Cloudflare 代取（见 docs/emoji-proxy-worker.js）；失败自动回退谷歌
     window.__NOTO_EMO_HOST__ = 'https://emoji.zhinote.net';
   </script>
@@ -341,13 +366,13 @@
   <script src="host.js?v=20260610t27"></script>
   <script src="text-search-engine.js"></script>
   <script src="order.js?v=20260814t5"></script>
-  <script src="storage.js?v=20260816t2"></script>
-  <script src="webdav-sync.js?v=20260818t23"></script>
+  <script src="storage.js?v=20260820t12"></script>
+  <script src="webdav-sync.js?v=20260820t12"></script>
 
-  <script src="tree.js?v=20260730t24"></script>
+  <script src="tree.js?v=20260820t5"></script>
   <script src="search.js?v=20260730t24"></script>
   <script src="template.js?v=20260819t12"></script>
-  <script src="palette.js?v=20260730t24"></script>
+  <script src="palette.js?v=20260820t3"></script>
   <script>
     (function () {
       var w = console.warn;
@@ -361,7 +386,7 @@
   <script src="tiptap.bundle.js"></script>
   <script src="crdt.bundle.js?v=20260624t32"></script>
   <script src="ydoc.js?v=20260818t19"></script>
-  <script src="wsdoc.js?v=20260817t7"></script>
+  <script src="wsdoc.js?v=20260820t10"></script>
   <script src="realtime.js?v=20260818t19"></script>
   <script src="calendar.js?v=20260819t30"></script>
   <script src="applock.js?v=20260716t6"></script>
@@ -370,8 +395,8 @@
   <script src="zn-emoji-util.js?v=20260730t38"></script>
   <script src="mascot-emoji.js?v=20260728t7"></script>
   <script src="mascot.js?v=20260819t11"></script>
-  <script src="mention-ui.js?v=20260819t31"></script>
-  <script src="editor.js?v=20260819t31"></script>
-  <script src="app.js?v=20260819t34"></script>
+  <script src="mention-ui.js?v=20260820t19"></script>
+  <script src="editor.js?v=20260820t19"></script>
+  <script src="app.js?v=20260820t19"></script>
 </body>
 </html>
