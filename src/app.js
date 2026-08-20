@@ -4718,8 +4718,22 @@ function _webAppUrl() {
  * 版本已读、勿扰、跟这台走的勾删只写本机；跟笔记走的勾删进 settings.bellMsgAcks 随账号。 */
 const WHATS_NEW = {
   id: window.__MD_VER__ || '20260820t2',
+  date: '2026-08-20',
   items: [
+    { title: '历史版本', text: '保留版本更新历史记录，可展开查看。' },
     { title: '网页胶囊', text: '可更换图标；全局设置可显示域名、选择浏览器（Quicker 端）。' },
+  ],
+  history: [
+    {
+      ver: 'v2.0.1',
+      date: '2026-08-19',
+      items: [
+        { title: '消息入口', text: '点击右上角铃铛可查看日程、版本以及应用消息。' },
+        { title: '折叠列表', text: '开合状态随笔记同步；折叠标题纳入大纲。' },
+        { title: '页面链接', text: '用 @ 或 / 引用笔记、网页或文件，以胶囊或通栏呈现。' },
+        { title: '同步升级', text: '内容同步更及时，状态更准确。旧版将暂停同步，避免数据不一致。' },
+      ],
+    },
   ],
 };
 const WN_BELL_KEY = 'zhinote-whatsnew-bell';
@@ -4800,6 +4814,50 @@ function _wnNewsHtml(items) {
     const head = title ? '<strong>' + escapeHtml(title) + '：</strong>' : '';
     return '<li><i></i><span>' + head + escapeHtml(text) + '</span></li>';
   }).join('') + '</ul>';
+}
+function _wnFmtVerDate(raw, fallbackId) {
+  const s = String(raw || '').trim();
+  let y, mo, d;
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+  else {
+    const p = _wnParseId(fallbackId);
+    if (p && p.d.length === 8) {
+      y = +p.d.slice(0, 4); mo = +p.d.slice(4, 6); d = +p.d.slice(6, 8);
+    }
+  }
+  if (!y) return '';
+  return y + '年' + mo + '月' + d + '日';
+}
+function _wnVerEntries() {
+  const ver = window.__MD_VER__ || WHATS_NEW.id || '';
+  const cur = {
+    id: WHATS_NEW.id || ver,
+    ver,
+    date: WHATS_NEW.date || '',
+    items: WHATS_NEW.items || [],
+    current: true,
+  };
+  const hist = (WHATS_NEW.history || []).map((h) => ({
+    id: String((h && (h.ver || h.id)) || ''),
+    ver: String((h && (h.ver || h.id)) || ''),
+    date: (h && h.date) || '',
+    items: (h && h.items) || [],
+    current: false,
+  })).filter((h) => h.id);
+  return [cur].concat(hist);
+}
+function _wnVerBlockHtml(v, open) {
+  const n = (v.items || []).length;
+  const date = _wnFmtVerDate(v.date, v.id || v.ver);
+  const sub = [date, n + ' 条更新'].filter(Boolean).join(' · ');
+  const chev = '<svg class="ch" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>';
+  return '<div class="vn-block' + (open ? ' is-open' : '') + '" data-ver-fold="' + escapeHtml(v.id) + '">'
+    + '<button type="button" class="vn-hd" aria-expanded="' + (open ? 'true' : 'false') + '">'
+    + chev
+    + '<div class="vn-hd-m"><div class="vn-hd-t">' + escapeHtml(v.ver) + '</div>'
+    + '<div class="vn-hd-s">' + escapeHtml(sub) + '</div></div></button>'
+    + '<div class="vn-slot"><div class="vn-in"><div class="vn-bd">' + _wnNewsHtml(v.items) + '</div></div></div></div>';
 }
 function _wnPlaceBelow(anchor, pop, align) {
   if (!anchor || !pop) return;
@@ -5212,8 +5270,9 @@ function _showBellPop() {
   document.getElementById('zn-about-pop')?.classList.add('hidden');
   const pop = _wnEnsureFloat('zn-bell-pop');
   pop.classList.add('zn-bell');
-  const st = pop._bn || { tab: 'cal', weekOff: 0, pickDay: '', histView: false, pending: {} };
+  const st = pop._bn || { tab: 'cal', weekOff: 0, pickDay: '', histView: false, pending: {}, verOpen: {} };
   if (!st.pending) st.pending = {};
+  if (!st.verOpen) st.verOpen = {};
   _bnFlushPending(st);
   _bnPruneStores();
   st.histView = false;
@@ -5389,15 +5448,15 @@ function _showBellPop() {
         return '<div class="bn-sec">' + g.sec + '</div>' + g.items.map((e) => calRow(e, st.events.indexOf(e))).join('');
       }).join('');
     }
-    const localVer = window.__MD_VER__ || WHATS_NEW.id || '';
     const remoteVer = (_wnRemote && (_wnRemote.ver || _wnRemote.id)) || '';
     const banner = _wnBehind()
       ? '<button type="button" class="bn-upd" data-sys="1"><span class="ico">' + BN_ICO.sys + '</span><div><div class="t">发现新版本</div><div class="s">'
         + escapeHtml(remoteVer ? remoteVer + ' 已发布，点此查看' : '可立即更新') + '</div></div></button>'
       : '';
-    const verHtml = banner
-      + '<div class="bn-sec">本版' + (localVer ? ' ' + escapeHtml(localVer) : '') + '</div>'
-      + '<div class="bn-body">' + _wnNewsHtml(WHATS_NEW.items) + '</div>';
+    const verHtml = banner + _wnVerEntries().map((v) => {
+      if (st.verOpen[v.id] === undefined) st.verOpen[v.id] = !!v.current;
+      return _wnVerBlockHtml(v, !!st.verOpen[v.id]);
+    }).join('');
     const dnd = _bnDnd();
     const msgHtml =
       '<div class="bn-head">'
@@ -5452,6 +5511,16 @@ function _showBellPop() {
     if (evBtn) { _openBellEvent(st.events[Number(evBtn.dataset.ev)]); return; }
     if (e.target.closest('[data-sys]')) {
       if (_wnRemote) _showUpdateDialog(_wnRemote);
+      return;
+    }
+    const fold = e.target.closest('[data-ver-fold]');
+    if (fold && e.target.closest('.vn-hd')) {
+      const id = fold.getAttribute('data-ver-fold');
+      const next = !fold.classList.contains('is-open');
+      st.verOpen[id] = next;
+      fold.classList.toggle('is-open', next);
+      const hd = fold.querySelector('.vn-hd');
+      if (hd) hd.setAttribute('aria-expanded', next ? 'true' : 'false');
       return;
     }
     if (e.target.closest('[data-hist]')) { setHistView(!st.histView); return; }

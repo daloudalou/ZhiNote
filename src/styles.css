@@ -6508,6 +6508,33 @@ body.theme-dark #editor .ProseMirror .zn-mention:hover {
 }
 #zn-bell-pop .bn-body { padding: 4px 14px 12px; }
 #zn-bell-pop .bn-body .zn-news { overflow-wrap: break-word; word-break: break-word; }
+#zn-bell-pop .vn-block { border-bottom: 1px solid var(--border); }
+#zn-bell-pop .vn-block:last-child { border-bottom: 0; }
+#zn-bell-pop .vn-hd {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 10px 14px; border: 0; background: transparent;
+  text-align: left; cursor: pointer; color: inherit;
+}
+#zn-bell-pop .vn-hd:hover { background: var(--bg-hover); }
+#zn-bell-pop .vn-hd .ch {
+  flex: none; width: 16px; height: 16px;
+  color: var(--text-tertiary);
+  transition: transform var(--bn-ms) var(--bn-ease);
+}
+#zn-bell-pop .vn-block.is-open .vn-hd .ch { transform: rotate(90deg); }
+#zn-bell-pop .vn-hd-m { flex: 1; min-width: 0; }
+#zn-bell-pop .vn-hd-t { font-size: 13px; font-weight: 650; color: var(--text); line-height: 1.35; }
+#zn-bell-pop .vn-hd-s { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.4; }
+#zn-bell-pop .vn-slot {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows var(--bn-ms) var(--bn-ease);
+}
+#zn-bell-pop .vn-block.is-open .vn-slot { grid-template-rows: 1fr; }
+#zn-bell-pop .vn-slot > .vn-in { overflow: hidden; min-height: 0; }
+#zn-bell-pop .vn-bd { padding: 0 14px 12px 38px; }
+#zn-bell-pop .vn-bd .zn-news { margin: 0; overflow-wrap: break-word; word-break: break-word; }
+#zn-bell-pop .vn-bd .zn-news li { margin: 0 0 8px; }
+#zn-bell-pop .vn-bd .zn-news li:last-child { margin-bottom: 0; }
 #zn-bell-pop .bn-empty { padding: 28px 14px; font-size: 13px; color: var(--text-tertiary); text-align: center; }
 #zn-bell-pop .bn-empty.fill {
   min-height: 100%;
@@ -6516,7 +6543,8 @@ body.theme-dark #editor .ProseMirror .zn-mention:hover {
 }
 @media (prefers-reduced-motion: reduce) {
   #zn-bell-pop.zn-bell, #zn-bell-pop .bn-pane, #zn-bell-pop .bn-track,
-  #zn-bell-pop .bn-row, #zn-bell-pop .bn-msg, #zn-bell-pop .bn-chk, #zn-bell-pop .bn-chk svg {
+  #zn-bell-pop .bn-row, #zn-bell-pop .bn-msg, #zn-bell-pop .bn-chk, #zn-bell-pop .bn-chk svg,
+  #zn-bell-pop .vn-hd .ch, #zn-bell-pop .vn-slot {
     transition: none !important; animation: none !important;
   }
 }

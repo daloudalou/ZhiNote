@@ -118,7 +118,13 @@ writeFileSync(join(webDir, 'manifest.webmanifest'), readFileSync(join(SRC, 'mani
 writeFileSync(join(webDir, 'icon.svg'), readFileSync(join(SRC, 'icon.svg'), 'utf8'), 'utf8');
 {
   const wnSrc = JSON.parse(readFileSync(join(SRC, 'whats-new.json'), 'utf8'));
-  const wnOut = { id: verLabel, ver: verLabel, items: Array.isArray(wnSrc.items) ? wnSrc.items : [] };
+  const wnOut = {
+    id: verLabel,
+    ver: verLabel,
+    date: typeof wnSrc.date === 'string' ? wnSrc.date : '',
+    items: Array.isArray(wnSrc.items) ? wnSrc.items : [],
+    history: Array.isArray(wnSrc.history) ? wnSrc.history : [],
+  };
   writeFileSync(join(webDir, 'whats-new.json'), JSON.stringify(wnOut, null, 2) + '\n', 'utf8');
 }
 // PNG 图标：iOS 主屏图标不吃 SVG，manifest 也需要 PNG 兜底
