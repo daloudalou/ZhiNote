@@ -66,26 +66,8 @@ async function bootstrap() {
       } catch (_) {}
     } else if ('serviceWorker' in navigator && location.protocol === 'https:') {
       navigator.serviceWorker.register('sw.js').then((reg) => {
-        // 后台更新提示：缓存优先策略下新版本要"再启动一次"才生效，这里把"再启动一次"
-        // 变成一个可点的提示——新 SW 在后台装好并接管（controllerchange）后，提示一键刷新。
-        // 首次安装（之前没有 controller）不提示。
-        const hadController = !!navigator.serviceWorker.controller;
-        navigator.serviceWorker.addEventListener('controllerchange', () => {
-          if (!hadController) return;
-          if (window.__swReloadPrompted) return;
-          window.__swReloadPrompted = true;
-          const show = () => {
-            try {
-              const el = toast('新版本已在后台更新完成，点击立即启用', 'info', { id: 'sw-updated', duration: 12000 });
-              // 点击 = 立即重载启用新版（toast 自身的点击关闭逻辑先走，稍延迟再刷）
-              if (el) el.addEventListener('click', () => setTimeout(() => location.reload(), 150));
-            } catch (_) { /* toast 未就绪：下次启动自然生效 */ }
-          };
-          // UI 可能还没初始化完，稍等再弹
-          if (document.readyState === 'complete') setTimeout(show, 1500); else window.addEventListener('load', () => setTimeout(show, 1500));
-        });
-        // 主动感应更新：常驻页面「隐藏而非关闭」，仅靠导航很难及时发现新版。
-        // 回到前台时（可见/聚焦）检查一次新 SW，节流 ≥ 10 分钟；发现新版会走上面的 controllerchange 提示。
+        // 新版在后台装好后不再弹顶上「点击立即启用」：跟人说的只留居中「发现新版本」窗和铃铛。
+        // 回到前台时检查一次新包装（节流 ≥ 10 分钟），页面常驻时也能发现更新。
         let _lastUpdChk = Date.now();
         const _chkUpd = () => {
           if (document.visibilityState !== 'visible') return;
@@ -201,7 +183,7 @@ async function bootstrap() {
   // 显示页面（防止闪白）
   requestAnimationFrame(() => document.body.classList.add('app-ready'));
 
-  const lastId = storage.getSetting('lastOpenedId');
+  const lastId = designatedStartupId() || storage.getSetting('lastOpenedId');
   if (lastId && storage.get(lastId)) {
     // 立即隐藏欢迎页，防止闪烁
     const emptyState = document.getElementById('empty-state');
@@ -890,6 +872,32 @@ function applySavedSettings() {
 function expandAncestors(id) {
   const chain = storage.getAncestors(id);
   for (const n of chain.slice(0, -1)) storage.setExpanded(n.id, true);
+}
+
+function designatedStartupId() {
+  const fixed = storage.getSetting('startupNoteId');
+  if (fixed && !storage.get(fixed)) {
+    try { storage.setSetting('startupNoteId', ''); } catch (_) {}
+    return '';
+  }
+  return (storage.getStartupNoteId && storage.getStartupNoteId()) || '';
+}
+
+/** 指定了启动笔记且不是当前这篇时打开它。没指定返回 false（保持现状）。 */
+function openDesignatedStartupNote() {
+  const id = designatedStartupId();
+  if (!id || !storage.get(id)) return false;
+  const cur = (window.editor && window.editor.currentId && window.editor.currentId()) || '';
+  if (cur === id) return true;
+  try { expandAncestors(id); } catch (_) {}
+  try {
+    if (window.editor && window.editor.open) {
+      window.editor.open(id, { initial: true });
+      return true;
+    }
+    return false;
+  } catch (_) { return false; }
+  return true;
 }
 
 /** 屏蔽 Ctrl+滚轮缩放窗口（WebView2 默认会缩放整个 page，让 UI 错位且很难复原）
@@ -3914,9 +3922,8 @@ function bindAppTooltip(el) {
     // 表格单元格内的链接：伪元素提示会被 .tableWrapper 裁切，
     // 这里补一个 data-tip，让它走下面的浮动 tooltip（贴 body、不裁切）。
     const tlink = e.target.closest?.('#editor .ProseMirror .tableWrapper a');
-    if (tlink && !tlink.hasAttribute('data-tip')) {
-      const isFile = (tlink.getAttribute('href') || '').startsWith('file:///');
-      tlink.setAttribute('data-tip', isFile ? 'Ctrl + 点击打开文件' : 'Ctrl + 点击打开');
+    if (tlink && tlink.hasAttribute('data-tip') && /^Ctrl \+ 点击/.test(tlink.getAttribute('data-tip') || '')) {
+      tlink.removeAttribute('data-tip');
     }
     // 悬浮工具栏（bubble-menu）不再豁免：原生 title 提示框与全局 .app-tooltip 风格不一致（用户实测）
     const el = e.target.closest?.('[title], [data-tip]');
@@ -4324,12 +4331,15 @@ function handleQuickerMessage(msg) {
   }
   if (!msg || !msg.type) return;
   switch (msg.type) {
-    case 'show':
+    case 'show': {
       document.body.style.visibility = 'visible';
+      // 点叉时已在后台切过指定篇；这里再检一次：彻底关掉后冷启动走 bootstrap，
+      // 若动作发了显示消息（或藏窗时没切成）也能补上。没指定则保持现状。
+      const startOpened = openDesignatedStartupNote();
       setTimeout(() => {
         // 锁屏中：焦点归还密码框，别被编辑器抢走（否则看到锁屏却打不了字）
         if (window.appLock && window.appLock.isLocked()) window.appLock.focusInput();
-        else editor.focus();
+        else if (!startOpened) editor.focus();
       }, 50);
       // Quicker 藏窗再开：visibility 常不准，显式补拉（延迟+宽限在 wakeGet 内，防空枪误报）
       setTimeout(() => {
@@ -4340,6 +4350,7 @@ function handleQuickerMessage(msg) {
         } catch (_) {}
       }, 100);
       break;
+    }
     case 'reload':
       storage.init().then(() => { tree.render(); editor.reloadCurrent(); updateTrashBadge(); });
       break;
@@ -4717,13 +4728,28 @@ function _webAppUrl() {
  * 给人看的号 = window.__MD_VER__（打包注入）。网页端 whats-new.json 的 id/ver 打包时写成同一串。
  * 版本已读、勿扰、跟这台走的勾删只写本机；跟笔记走的勾删进 settings.bellMsgAcks 随账号。 */
 const WHATS_NEW = {
-  id: window.__MD_VER__ || '20260820t2',
-  date: '2026-08-20',
+  id: window.__MD_VER__ || '20260821t1',
+  date: '2026-08-21',
   items: [
-    { title: '历史版本', text: '保留版本更新历史记录，可展开查看。' },
-    { title: '网页胶囊', text: '可更换图标；全局设置可显示域名、选择浏览器（Quicker 端）。' },
+    { title: '引用还原', text: '网页、文件的胶囊和通栏可还原成下划线形式。' },
+    { title: '默认笔记', text: '在设置面板和笔记栏右键菜单，可指定默认打开笔记。' },
   ],
   history: [
+    {
+      ver: 'v2.0.3',
+      date: '2026-08-20',
+      items: [
+        { title: '依赖修复', text: '修复Quicker端依赖下载问题。' },
+      ],
+    },
+    {
+      ver: 'v2.0.2',
+      date: '2026-08-20',
+      items: [
+        { title: '历史版本', text: '保留版本更新历史记录，可展开查看。' },
+        { title: '网页胶囊', text: '可更换图标；全局设置可显示域名、选择浏览器（Quicker 端）。' },
+      ],
+    },
     {
       ver: 'v2.0.1',
       date: '2026-08-19',
@@ -4855,8 +4881,8 @@ function _wnVerBlockHtml(v, open) {
   return '<div class="vn-block' + (open ? ' is-open' : '') + '" data-ver-fold="' + escapeHtml(v.id) + '">'
     + '<button type="button" class="vn-hd" aria-expanded="' + (open ? 'true' : 'false') + '">'
     + chev
-    + '<div class="vn-hd-m"><div class="vn-hd-t">' + escapeHtml(v.ver) + '</div>'
-    + '<div class="vn-hd-s">' + escapeHtml(sub) + '</div></div></button>'
+    + '<div class="vn-hd-m"><span class="vn-hd-t">' + escapeHtml(v.ver) + '</span>'
+    + '<span class="vn-hd-s">' + escapeHtml(sub) + '</span></div></button>'
     + '<div class="vn-slot"><div class="vn-in"><div class="vn-bd">' + _wnNewsHtml(v.items) + '</div></div></div></div>';
 }
 function _wnPlaceBelow(anchor, pop, align) {
@@ -5828,6 +5854,8 @@ async function requestHideWindow() {
     }
     try {
       await windowOp('隐藏');
+      // 藏起来再切指定启动笔记：下次显示时已经在那篇，不会跳一下。不用改 Quicker。
+      try { openDesignatedStartupNote(); } catch (_) {}
     } catch (err) {
       console.error('[hide]', err);
       toast('隐藏窗口失败，请检查 WindowOp 子程序是否已配置', 'error');
@@ -7049,6 +7077,19 @@ function openSettingsModal(initialTab) {
         </select>
       </div>
       <div class="set-col">
+        <label>启动时打开</label>
+        <select id="set-startup-note" style="width:100%;margin-top:0;">
+          <option value="last" ${storage.getStartupNoteId()?'':'selected'}>上次关闭的笔记</option>
+          <option value="fixed" ${storage.getStartupNoteId()?'selected':''}>指定一篇</option>
+        </select>
+        <div id="startup-fixed-row" style="display:${storage.getStartupNoteId()?'':'none'};font-size:12px;color:var(--text-tertiary);margin-top:6px;line-height:1.6;">
+          指定：<span id="startup-fixed-title">${(() => { const n = storage.get(storage.getStartupNoteId()); return n ? '《' + escapeHtml(n.title || '无标题') + '》' : ''; })()}</span>
+          <button id="startup-fixed-repick" class="link-btn" style="font-size:12px;">更换…</button>
+        </div>
+      </div>
+    </div>
+    <div class="set-grid-2">
+      <div class="set-col">
         <label>挖空遮盖色</label>
         <select id="set-cloze-color" style="width:100%;margin-top:0;">
           <option value="black" ${(storage.getSetting('clozeColor')||'black')==='black'?'selected':''}>跟随文字（默认）</option>
@@ -7056,6 +7097,13 @@ function openSettingsModal(initialTab) {
           <option value="red" ${storage.getSetting('clozeColor')==='red'?'selected':''}>红色</option>
           <option value="green" ${storage.getSetting('clozeColor')==='green'?'selected':''}>绿色</option>
           <option value="blue" ${storage.getSetting('clozeColor')==='blue'?'selected':''}>蓝色</option>
+        </select>
+      </div>
+      <div class="set-col">
+        <label>代码块默认</label>
+        <select id="set-codeblock-fold" style="width:100%;margin-top:0;">
+          <option value="fold" ${storage.getSetting('codeBlockExpanded')===true?'':'selected'}>折叠（默认）</option>
+          <option value="expand" ${storage.getSetting('codeBlockExpanded')===true?'selected':''}>展开</option>
         </select>
       </div>
     </div>
@@ -7077,16 +7125,6 @@ function openSettingsModal(initialTab) {
           <option value="blur" ${storage.getSetting('noteTransition')==='blur'?'selected':''}>模糊淡入</option>
         </select>
       </div>
-    </div>
-    <div class="set-grid-2">
-      <div class="set-col">
-        <label>代码块默认</label>
-        <select id="set-codeblock-fold" style="width:100%;margin-top:0;">
-          <option value="fold" ${storage.getSetting('codeBlockExpanded')===true?'':'selected'}>折叠（默认）</option>
-          <option value="expand" ${storage.getSetting('codeBlockExpanded')===true?'selected':''}>展开</option>
-        </select>
-      </div>
-      <div class="set-col"></div>
     </div>
     </div>
 
@@ -8227,6 +8265,47 @@ function openSettingsModal(initialTab) {
         });
         body.querySelector('#qc-fixed-repick')?.addEventListener('click', (e) => pickFixed(e.currentTarget));
       }
+      {
+        const sel = body.querySelector('#set-startup-note');
+        const fixedRow = body.querySelector('#startup-fixed-row');
+        const fixedTitle = body.querySelector('#startup-fixed-title');
+        let syncing = false;
+        const refresh = () => {
+          const id = storage.getStartupNoteId ? storage.getStartupNoteId() : '';
+          const n = id ? storage.get(id) : null;
+          const isFixed = !!n;
+          const v = isFixed ? 'fixed' : 'last';
+          if (sel && sel.value !== v) {
+            syncing = true;
+            sel.value = v;
+            sel.dispatchEvent(new Event('change'));
+            syncing = false;
+          }
+          if (fixedRow) fixedRow.style.display = isFixed ? '' : 'none';
+          if (fixedTitle) fixedTitle.textContent = isFixed ? '《' + (n.title || '无标题') + '》' : '';
+        };
+        const anchorEl = () => sel?.closest('.md-select')?.querySelector('.md-select-trigger') || sel;
+        const pickFixed = (anchor) => {
+          window.mascot?.pickNote?.(anchor, null, (p) => {
+            const id = p.mode === 'current' ? editor.currentId?.() : p.id;
+            if (!id) { storage.setSetting('startupNoteId', ''); refresh(); try { window.tree?.render?.(); } catch (_) {} return; }
+            storage.setSetting('startupNoteId', id);
+            refresh();
+            try { window.tree?.render?.(); } catch (_) {}
+          }, { noOff: true, onClose: (picked) => {
+            if (!picked && !storage.getStartupNoteId()) { storage.setSetting('startupNoteId', ''); refresh(); }
+          } });
+        };
+        refresh();
+        sel?.addEventListener('change', () => {
+          if (syncing) return;
+          if (sel.value === 'fixed') { pickFixed(anchorEl()); return; }
+          storage.setSetting('startupNoteId', '');
+          refresh();
+          try { window.tree?.render?.(); } catch (_) {}
+        });
+        body.querySelector('#startup-fixed-repick')?.addEventListener('click', (e) => pickFixed(e.currentTarget));
+      }
     }
   }
 
@@ -9053,7 +9132,11 @@ function initEditorContextMenu() {
     const pageLinkHit = e.target.closest('.zn-pagelink');
     const classicLink = (!mentionHit && !pageLinkHit) ? e.target.closest('a[href]') : null;
     if (classicLink && editable.contains(classicLink) && !classicLink.closest('pre, code')) {
-      try { window.mentionUi?.convertClassicLink?.(); } catch (_) {}
+      try {
+        const inst = editor.instance?.();
+        const coords = inst && inst.view && inst.view.posAtCoords({ left: e.clientX, top: e.clientY });
+        if (coords && typeof coords.pos === 'number') inst.commands.setTextSelection(coords.pos);
+      } catch (_) {}
     }
     // 对话块的输入框里让位给系统输入菜单（粘贴等）
     if (zcHit && e.target.closest('.zc-ask')) return;
@@ -9200,14 +9283,7 @@ function initEditorContextMenu() {
       ],
     }, { sep: true }] : [];
 
-    const _refDelete = () => {
-      const inst = editor.instance?.();
-      if (!inst) return;
-      const sel = inst.state.selection;
-      if (sel.node && (sel.node.type.name === 'znMention' || sel.node.type.name === 'znPageLink')) {
-        inst.chain().focus().deleteSelection().run();
-      }
-    };
+    const _refDelete = () => { window.mentionUi?.deleteSelected?.(); };
     const _fileHref = (() => {
       const fromChip = (el) => {
         if (!el) return '';
@@ -9230,24 +9306,44 @@ function initEditorContextMenu() {
     const _icoPage = _ri('M20 22H4C3.44772 22 3 21.5523 3 21V3C3 2.44772 3.44772 2 4 2H20C20.5523 2 21 2.44772 21 3V21C21 21.5523 20.5523 22 20 22ZM7 6V10H11V6H7ZM7 12V14H17V12H7ZM7 16V18H17V16H7ZM13 7V9H17V7H13Z');
     const _icoFolder = _ri('M3 21C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H10.4142L12.4142 5H20C20.5523 5 21 5.44772 21 6V9H4V18.996L6 11H22.5L20.1894 20.2425C20.0781 20.6877 19.6781 21 19.2192 21H3Z');
     const _icoTrash = _ri('M17 6H22V8H20V21C20 21.5523 19.5523 22 19 22H5C4.44772 22 4 21.5523 4 21V8H2V6H7V3C7 2.44772 7.44772 2 8 2H16C16.5523 2 17 2.44772 17 3V6ZM9 11V17H11V11H9ZM13 11V17H15V11H13ZM9 4V6H15V4H9Z');
+    const _icoCopy = _ri('M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z');
+    const _icoRestore = _ri('M12 5V1L7 6l5 5V8c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z');
     const _locateItems = _fileHref ? [{
       label: '定位',
       icon: _icoFolder,
       title: '在资源管理器中显示这个文件',
       action: () => window.mentionUi?.revealHref?.(_fileHref),
     }] : [];
-    const _refMenuItems = (mentionHit || classicLink) ? [
-      { label: '修改', icon: _icoEdit, action: () => window.mentionUi?.editSelected?.() },
+    const _refKind = (mentionHit || pageLinkHit)?.getAttribute('data-kind')
+      || (classicLink && /^file:/i.test(classicLink.getAttribute('href') || '') ? 'file' : (classicLink ? 'url' : ''));
+    const _restoreItems = (_refKind === 'url' || _refKind === 'file') ? [
+      { sep: true },
+      { label: '还原', icon: _icoRestore, title: '拆成图标和下划线地址，可再收成胶囊', action: () => window.mentionUi?.restoreSelected?.() },
+    ] : [];
+    const _copyItem = { label: '复制', icon: _icoCopy, action: () => window.mentionUi?.copySelected?.() };
+    const _editItem = { label: '修改', icon: _icoEdit, action: () => window.mentionUi?.editSelected?.() };
+    const _delItem = { label: '删除', icon: _icoTrash, action: _refDelete };
+    const _refMenuItems = mentionHit ? [
+      _copyItem, { sep: true }, _editItem,
       { label: '通栏', icon: _icoPage, title: '变成通栏入口，可再换回胶囊', action: () => window.mentionUi?.convertToPageLink?.() },
       ..._locateItems,
+      ..._restoreItems,
       { sep: true },
-      { label: '删除', icon: _icoTrash, action: _refDelete },
+      _delItem,
     ] : pageLinkHit ? [
-      { label: '修改', icon: _icoEdit, action: () => window.mentionUi?.editSelected?.() },
+      _copyItem, { sep: true }, _editItem,
       { label: '胶囊', icon: _icoPill, title: '变成句子里的小胶囊，可再换回通栏', action: () => window.mentionUi?.convertToMention?.() },
       ..._locateItems,
+      ..._restoreItems,
       { sep: true },
-      { label: '删除', icon: _icoTrash, action: _refDelete },
+      _delItem,
+    ] : classicLink ? [
+      _copyItem, { sep: true }, _editItem,
+      { label: '胶囊', icon: _icoPill, title: '收成句子里的小胶囊', action: () => window.mentionUi?.convertThisLink?.() },
+      { label: '通栏', icon: _icoPage, title: '变成通栏入口', action: () => window.mentionUi?.convertThisLink?.(true) },
+      ..._locateItems,
+      { sep: true },
+      _delItem,
     ] : null;
 
     const items = zcHit ? _zcMenuItems : calHit ? _calMenuItems : (_refMenuItems) ? _refMenuItems : inSource ? _srcMenuItems : [
@@ -9299,7 +9395,7 @@ function initEditorContextMenu() {
         };
         if (typeof window.toggleEmojiPicker === 'function') window.toggleEmojiPicker(anchor);
       }},
-      { label: '清除格式', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12.65 14.07L11.6 20H9.57L10.92 12.34L3.51 4.93L4.93 3.51L20.49 19.07L19.07 20.49L12.65 14.07ZM11.77 7.53L12.04 6H10.24L8.24 4H20V6H14.07L13.5 9.26L11.77 7.53Z"/></svg>', action: () => {
+      { label: '还原', icon: '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 5V1L7 6l5 5V8c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>', action: () => {
         const inst = editor.instance?.();
         if (!inst) return;
         const { from, to } = inst.state.selection;
@@ -9328,7 +9424,7 @@ function initEditorContextMenu() {
         continue;
       }
       const row = document.createElement('div');
-      row.className = 'md-ctx-item';
+      row.className = 'md-ctx-item' + (item.danger ? ' danger' : '');
       if (item.title) row.title = item.title;
       const iconHtml = item.icon ? `<span class="md-ctx-icon">${item.icon}</span>` : '<span class="md-ctx-icon"></span>';
 

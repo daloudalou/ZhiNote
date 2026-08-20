@@ -237,6 +237,22 @@ const tree = (() => {
     try { window.emojiUi?.paintAll?.(container); } catch (_) {}
   }
 
+  function appendStartupMark(row, id) {
+    if (!id || !storage.getStartupNoteId || storage.getStartupNoteId() !== id) return;
+    const mark = document.createElement('span');
+    mark.className = 'tree-startup-icon';
+    mark.title = '点击取消启动指定';
+    mark.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M12 3.4 20.2 10v10.2h-5.6v-6.2H9.4v6.2H3.8V10z"/></svg>';
+    mark.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); });
+    mark.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      storage.setSetting('startupNoteId', '');
+      render();
+    });
+    row.appendChild(mark);
+  }
+
   function renderPinnedRow(note) {
     const wrap = document.createElement('div');
     wrap.className = 'tree-node';
@@ -266,6 +282,7 @@ const tree = (() => {
     row.appendChild(pinIcon);
     row.appendChild(iconBtn);
     row.appendChild(title);
+    appendStartupMark(row, note.id);
 
     row.addEventListener('click', (e) => handleRowClick(e, note.id));
     row.addEventListener('contextmenu', (e) => { e.preventDefault(); showContextMenu(e, note.id); });
@@ -675,6 +692,7 @@ const tree = (() => {
     row.appendChild(iconBtn);
     row.appendChild(title);
     row.appendChild(actions);
+    appendStartupMark(row, note.id);
 
     row.addEventListener('click', (e) => handleRowClick(e, note.id));
     row.addEventListener('dblclick', (e) => { e.stopPropagation(); beginRename(note.id); });
@@ -1096,6 +1114,7 @@ const tree = (() => {
 
     menu.innerHTML = '';
     const isPinned = storage.isPinned(id);
+    const isStartup = !!(storage.getStartupNoteId && storage.getStartupNoteId() === id);
     const items = [
       { label: '新建子笔记', icon: '➕', onClick: () => {
         const child = storage.create({ parentId: id, title: '' });
@@ -1115,6 +1134,10 @@ const tree = (() => {
         });
       }},
       { label: isPinned ? '取消置顶' : '置顶', icon: '📌', onClick: () => window.palette?.togglePin(id) },
+      { label: isStartup ? '取消指定' : '设为启动时打开', icon: '🏠', onClick: () => {
+        storage.setSetting('startupNoteId', isStartup ? '' : id);
+        render();
+      }},
       { type: 'divider' },
       { label: '颜色标记', icon: '🎨', submenu: buildColorSubmenu(id) },
       ...(storage.getWorkspaces().length > 1 ? [{ label: '移动到笔记本', icon: '📦', submenu: buildWorkspaceSubmenu(id) }] : []),

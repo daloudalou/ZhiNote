@@ -44,6 +44,7 @@
     try { v = (window.storage && window.storage.getSetting && window.storage.getSetting('urlOpenBrowser')) || ''; }
     catch (_) { v = ''; }
     if (v === 'app') return { kind: 'app' };
+    if (v === 'webview') return { kind: 'webview' };
     if (v === 'default') return { kind: 'default' };
     if (v) return { kind: 'exe', exe: v };
     try {
@@ -51,7 +52,7 @@
         return { kind: 'default' };
       }
     } catch (_) {}
-    return { kind: 'app' };
+    return { kind: canOpenInSysBrowser() ? 'webview' : 'app' };
   }
   function canOpenInSysBrowser() {
     return !!(window.host && window.host.caps && window.host.caps.file);
@@ -95,6 +96,7 @@
     var els = webEls();
     if (!els || !els.fail) return;
     els.fail.classList.toggle('hidden', !on);
+    /* 拦了只提示，不自动用浏览器打开 */
   }
   function currentWebHref() {
     return _webIdx >= 0 ? (_webHist[_webIdx] || '') : '';
@@ -220,6 +222,11 @@
     els.pane.setAttribute('aria-hidden', 'false');
     loadWebFrame(href, true);
   }
+  function openInWebView(href) {
+    href = String(href || '').trim();
+    if (!href) return;
+    try { window.open(href, '_blank'); } catch (_) {}
+  }
   function openWebHref(href) {
     href = String(href || '').trim();
     if (!href) return;
@@ -228,8 +235,16 @@
       return;
     }
     var t = urlOpenTarget();
-    if (t.kind === 'app' || !canOpenInSysBrowser()) {
+    if (!canOpenInSysBrowser()) {
       openInApp(href);
+      return;
+    }
+    if (t.kind === 'app') {
+      openInApp(href);
+      return;
+    }
+    if (t.kind === 'webview') {
+      openInWebView(href);
       return;
     }
     var args = { mode: 'openUrl', path: href, exe: '', fileName: '' };
@@ -275,6 +290,7 @@
     maxthon: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#1E88E5"/><path fill="#fff" d="M7 16.2L12 6.8l5 9.4h-2.2l-1-2.1h-3.6l-1 2.1zM11.2 12h1.6L12 9.4z"/></svg>',
     quark: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#00C2B3"/><path fill="#fff" d="M9.2 8.2h3.1c2.1 0 3.5 1.2 3.5 3.1 0 1.5-.8 2.6-2.1 3l1.8 2.7h-2.3l-1.6-2.5H11v2.5H9.2zm2.8 4.5c.9 0 1.5-.5 1.5-1.4s-.6-1.4-1.5-1.4H11v2.8z"/></svg>',
     generic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18"/><path d="M12 3a14 14 0 0 0 0 18"/></svg>',
+    webview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 8.5h17"/><circle cx="6.4" cy="6.5" r="0.7" fill="currentColor" stroke="none"/><circle cx="8.8" cy="6.5" r="0.7" fill="currentColor" stroke="none"/></svg>',
     app: ''
   };
   var ZHINOTE_ICON = '📖';
@@ -287,6 +303,11 @@
   function fillBrowserIco(el, brand, png) {
     if (!el) return;
     if (brand === 'app') { paintZnIco(el); return; }
+    if (brand === 'webview') {
+      el.classList.remove('is-app');
+      el.innerHTML = BROWSER_ICO.webview;
+      return;
+    }
     el.classList.remove('is-app');
     png = String(png || '').replace(/\s/g, '');
     if (png && /^[A-Za-z0-9+/=]+$/.test(png)) {
@@ -353,6 +374,7 @@
       var cur = urlOpenTarget();
       if (!item) return false;
       if (item.value === 'app') return cur.kind === 'app';
+      if (item.value === 'webview') return cur.kind === 'webview';
       if (item.value === 'default') return cur.kind === 'default';
       if (item.value === 'exe') return cur.kind === 'exe' && sameExe(item.exe, cur.exe);
       return false;
@@ -361,15 +383,16 @@
       for (var i = 0; i < rows.length; i++) {
         if (!rows[i].sep && isOn(rows[i])) return rows[i];
       }
-      return rows.filter(function (x) { return x && !x.sep; })[0] || { brand: 'app', label: '在枝记里打开', value: 'app' };
+      return rows.filter(function (x) { return x && !x.sep; })[0] || { brand: 'webview', label: 'WebView2打开', value: 'webview' };
     }
     function pick(item) {
       close();
       if (!item || !window.storage || !window.storage.setSetting) return;
       if (item.value === 'app') window.storage.setSetting('urlOpenBrowser', 'app');
+      else if (item.value === 'webview') window.storage.setSetting('urlOpenBrowser', 'webview');
       else if (item.value === 'default') window.storage.setSetting('urlOpenBrowser', 'default');
       else window.storage.setSetting('urlOpenBrowser', item.exe || '');
-      try { window.storage.setSetting('urlOpenInBrowser', item.value !== 'app'); } catch (_) {}
+      try { window.storage.setSetting('urlOpenInBrowser', item.value !== 'app' && item.value !== 'webview'); } catch (_) {}
       paintTrigger(item);
     }
     function close() {
@@ -439,6 +462,7 @@
       }
       var next = [];
       next.push({ brand: 'app', label: '在枝记里打开', value: 'app' });
+      next.push({ brand: 'webview', label: 'WebView2打开', value: 'webview' });
       next.push({ sep: true });
       if (def && def.name) {
         next.push({
@@ -495,6 +519,18 @@
     try { p = decodeURIComponent(p); } catch (_) {}
     var parts = p.split(/[\\/]/);
     return parts[parts.length - 1] || p;
+  }
+  function filePathDisplay(href) {
+    var p = String(href || '').replace(/^file:\/\/\//i, '');
+    try { p = decodeURIComponent(p); } catch (_) {}
+    if (/^[A-Za-z]:/.test(p) || p.indexOf('\\') >= 0) p = p.replace(/\//g, '\\');
+    return p;
+  }
+  function copyTextOf(attrs) {
+    var a = liveAttrs(attrs || {});
+    if (a.kind === 'url') return a.href || a.title || '';
+    if (a.kind === 'file') return filePathDisplay(a.href) || a.title || '';
+    return a.title || '';
   }
   function liveAttrs(attrs) {
     var a = {
@@ -1340,12 +1376,12 @@
     mountBrowserSelect(body.querySelector('#zn-url-browser-wrap'));
     if (typeof window.openModal !== 'function') return;
     window.openModal({
-      title: extra.replacePos != null ? '修改网址' : '粘贴网址',
+      title: (extra.replacePos != null || extra.edit) ? '修改网址' : '粘贴网址',
       dialogClass: 'zn-url-card-modal',
       body: body,
       footer: [
         { label: '取消', class: 'secondary-btn', onClick: function () { window.closeModal(); } },
-        { label: extra.replacePos != null ? '保存' : (asBlock ? '插入通栏' : '插入'), class: 'primary-btn', onClick: function () {
+          { label: (extra.replacePos != null || extra.edit) ? '保存' : (asBlock ? '插入通栏' : '插入'), class: 'primary-btn', onClick: function () {
           var href = (body.querySelector('#zn-url-href').value || '').trim();
           var title = (body.querySelector('#zn-url-title').value || '').trim();
           if (!href) return;
@@ -1353,7 +1389,7 @@
           var icon = ((body.querySelector('#zn-url-icon-input') || {}).value || '').trim() || '🌐';
           applyRef({
             kind: 'url', href: href, title: title || hostOf(href) || href, icon: icon,
-            hideHost: extra.replacePos != null ? !!extra.hideHost : true,
+            hideHost: (extra.replacePos != null || extra.edit) ? !!extra.hideHost : true,
           }, !!asBlock, range, extra.replacePos);
           window.closeModal();
         } },
@@ -1361,7 +1397,7 @@
     });
     var titleEl = document.getElementById('modal-title');
     if (titleEl) {
-      var editName = extra.replacePos != null ? '修改网址' : '粘贴网址';
+      var editName = (extra.replacePos != null || extra.edit) ? '修改网址' : '粘贴网址';
       titleEl.innerHTML = '<button type="button" class="zn-url-tab is-on" data-pane="edit">' + esc(editName) + '</button>'
         + '<button type="button" class="zn-url-tab" data-pane="global">全局设置</button>';
       titleEl.querySelectorAll('.zn-url-tab').forEach(function (btn) {
@@ -1468,6 +1504,79 @@
     showPicker({ query: hit.query, from: hit.from, to: hit.to, rect: caretClientRect(), asBlock: false });
   }
 
+  function findClassicLinkRange(inst) {
+    if (!inst) return null;
+    var state = inst.state;
+    var type = state.schema.marks.link;
+    if (!type) return null;
+    var pos = state.selection.from;
+    var $pos = state.doc.resolve(pos);
+    var mark = type.isInSet($pos.marks());
+    if (!mark && pos > 0) mark = type.isInSet(state.doc.resolve(pos - 1).marks());
+    if (!mark && $pos.nodeBefore && $pos.nodeBefore.marks) mark = type.isInSet($pos.nodeBefore.marks);
+    if (!mark || !mark.attrs || !mark.attrs.href) return null;
+    var href = mark.attrs.href;
+    var start = $pos.start();
+    var runs = [];
+    var cur = null;
+    $pos.parent.forEach(function (child, offset) {
+      var cs = start + offset;
+      var ce = cs + child.nodeSize;
+      var has = !!(child.marks && child.marks.some(function (m) {
+        return m.type === type && m.attrs && m.attrs.href === href;
+      }));
+      if (has) {
+        if (cur && cur.to === cs) cur.to = ce;
+        else { cur = { from: cs, to: ce }; runs.push(cur); }
+      } else cur = null;
+    });
+    var run = null;
+    var i;
+    for (i = 0; i < runs.length; i++) {
+      if (runs[i].from <= pos && pos <= runs[i].to) { run = runs[i]; break; }
+    }
+    if (!run && pos > 0) {
+      for (i = 0; i < runs.length; i++) {
+        if (runs[i].from <= pos - 1 && pos - 1 <= runs[i].to) { run = runs[i]; break; }
+      }
+    }
+    if (!run) return null;
+    var icon = (mark.attrs && mark.attrs.icon) || '';
+    var from = run.from;
+    var $r = state.doc.resolve(run.from);
+    var before = $r.nodeBefore;
+    if (before && before.isText && /^\s+$/.test(before.text || '')) {
+      from = run.from - before.nodeSize;
+      $r = state.doc.resolve(from);
+      before = $r.nodeBefore;
+    }
+    if (before && before.type.name === 'znEmoji') {
+      if (!icon) icon = (before.attrs && before.attrs.emoji) || '';
+      from = from - before.nodeSize;
+    }
+    if (!icon) {
+      var shown = String(state.doc.textBetween(run.from, run.to, '') || '');
+      icon = leadingEmoji(shown);
+    }
+    return { from: from, to: run.to, href: href, icon: icon };
+  }
+
+  function leadingEmoji(text) {
+    text = String(text || '').replace(/^\s+/, '');
+    if (!text || /^[A-Za-z0-9./:\\]/.test(text)) return '';
+    try {
+      if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+        var it = new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)[Symbol.iterator]();
+        var first = it.next();
+        var s = first && first.value && first.value.segment;
+        if (s && !/^[A-Za-z0-9./:\\]/.test(s)) return s;
+      }
+    } catch (_) {}
+    if (text.charCodeAt(0) >= 0xD800 && text.charCodeAt(0) <= 0xDBFF) return text.slice(0, 2);
+    if (text.charCodeAt(0) > 127) return text.charAt(0);
+    return '';
+  }
+
   function convertClassicLink() {
     var inst = ed();
     if (!inst) return false;
@@ -1475,40 +1584,96 @@
     if (window.editor && typeof window.editor.convertClassicLinks === 'function') {
       return !!window.editor.convertClassicLinks(pos);
     }
-    if (!inst.isActive || !inst.isActive('link')) return false;
-    var href = ((inst.getAttributes('link') || {}).href) || '';
-    if (!href) return false;
-    var from = inst.state.selection.from;
-    var to = inst.state.selection.to;
-    var $pos = inst.state.selection.$from;
-    $pos.parent.forEach(function (child, offset) {
-      var childStart = $pos.start() + offset;
-      var childEnd = childStart + child.nodeSize;
-      var hit = child.marks && child.marks.some(function (m) {
-        return m.type.name === 'link' && m.attrs.href === href;
-      });
-      if (hit && childStart <= $pos.pos && $pos.pos <= childEnd) {
-        if (childStart < from) from = childStart;
-        if (childEnd > to) to = childEnd;
-      }
-    });
-    if (to <= from) return false;
-    var title = String(inst.state.doc.textBetween(from, to, ' ') || '').trim()
-      || hostOf(href) || href;
+    return convertThisLink(false);
+  }
+
+  function convertThisLink(asBlock) {
+    var inst = ed();
+    if (!inst) return false;
+    var range = findClassicLinkRange(inst);
+    if (!range) return false;
+    var href = range.href;
     var kind = href.indexOf('file:') === 0 ? 'file' : 'url';
+    var icon = range.icon || (kind === 'file' ? '📁' : '🌐');
+    var title = kind === 'file' ? (fileName(href) || '文件') : (hostOf(href) || href);
     var attrs = liveAttrs({
-      kind: kind, id: '', href: href, title: title,
-      icon: kind === 'file' ? '📁' : '🌐',
+      kind: kind, id: '', href: href, title: title, icon: icon,
       hideHost: kind === 'url',
     });
-    return inst.chain().focus().command(function (_ref) {
+    var ok = inst.chain().focus().command(function (_ref) {
       var tr = _ref.tr, state = _ref.state, dispatch = _ref.dispatch;
-      var node = state.schema.nodes.znMention;
-      if (!node) return false;
-      tr.replaceWith(from, to, node.create(attrs));
+      var type = state.schema.nodes.znMention;
+      if (!type) return false;
+      tr.replaceWith(range.from, range.to, type.create(attrs));
       if (dispatch) dispatch(tr);
       return true;
     }).run();
+    if (!ok) return false;
+    try { inst.commands.setNodeSelection(range.from); } catch (_) {}
+    if (asBlock) return convertToPageLink();
+    return true;
+  }
+
+  function restoreSelected() {
+    var inst = ed();
+    var hit = findSelectedRef(inst);
+    if (!inst || !hit) return false;
+    var a = liveAttrs(hit.node.attrs);
+    if (a.kind === 'note') return false;
+    var href = String(a.href || '').trim();
+    if (!href) return false;
+    var display = a.kind === 'file' ? (filePathDisplay(href) || a.title || href) : href;
+    if (!display) return false;
+    var icon = a.icon || (a.kind === 'file' ? '📁' : '🌐');
+    var asBlock = hit.node.type.name === 'znPageLink';
+    return inst.chain().focus().command(function (_ref) {
+      var tr = _ref.tr, state = _ref.state, dispatch = _ref.dispatch;
+      var node = state.doc.nodeAt(hit.pos);
+      if (!node) return false;
+      var schema = state.schema;
+      var linkType = schema.marks.link;
+      if (!linkType) return false;
+      var label = icon ? (icon + ' ' + display) : display;
+      var linked = schema.text(label, [linkType.create({ href: href, plain: true, icon: icon })]);
+      if (asBlock) {
+        tr.replaceWith(hit.pos, hit.pos + node.nodeSize, schema.nodes.paragraph.create(null, linked));
+      } else {
+        tr.replaceWith(hit.pos, hit.pos + node.nodeSize, linked);
+      }
+      if (dispatch) dispatch(tr);
+      return true;
+    }).run();
+  }
+
+  function copySelected() {
+    var inst = ed();
+    var text = '';
+    var hit = findSelectedRef(inst);
+    if (hit) text = copyTextOf(hit.node.attrs);
+    else {
+      var range = findClassicLinkRange(inst);
+      if (!range) return false;
+      text = copyTextOf({
+        kind: range.href.indexOf('file:') === 0 ? 'file' : 'url',
+        href: range.href,
+        title: '',
+      });
+    }
+    if (!text) return false;
+    try { navigator.clipboard.writeText(text); } catch (_) { return false; }
+    return true;
+  }
+
+  function deleteSelected() {
+    var inst = ed();
+    if (!inst) return false;
+    var hit = findSelectedRef(inst);
+    if (hit) {
+      return inst.chain().focus().deleteRange({ from: hit.pos, to: hit.pos + hit.node.nodeSize }).run();
+    }
+    var range = findClassicLinkRange(inst);
+    if (!range) return false;
+    return inst.chain().focus().deleteRange({ from: range.from, to: range.to }).run();
   }
 
   function openSelected() {
@@ -1706,18 +1871,29 @@
   function editSelected() {
     var inst = ed();
     var hit = findSelectedRef(inst);
-    if (!hit) return false;
-    var a = liveAttrs(hit.node.attrs);
-    var asBlock = hit.node.type.name === 'znPageLink';
-    if (a.kind === 'url') {
-      openUrlCard(asBlock, null, { replacePos: hit.pos, href: a.href, title: a.title, icon: a.icon, hideHost: a.hideHost });
+    if (hit) {
+      var a = liveAttrs(hit.node.attrs);
+      var asBlock = hit.node.type.name === 'znPageLink';
+      if (a.kind === 'url') {
+        openUrlCard(asBlock, null, { replacePos: hit.pos, href: a.href, title: a.title, icon: a.icon, hideHost: a.hideHost });
+        return true;
+      }
+      if (a.kind === 'file') {
+        pickFile(asBlock, null, { replacePos: hit.pos });
+        return true;
+      }
+      showPicker({ asBlock: asBlock, replacePos: hit.pos });
       return true;
     }
-    if (a.kind === 'file') {
-      pickFile(asBlock, null, { replacePos: hit.pos });
+    var range = findClassicLinkRange(inst);
+    if (!range) return false;
+    if (range.href.indexOf('file:') === 0) {
+      pickFile(false, { from: range.from, to: range.to }, { edit: true });
       return true;
     }
-    showPicker({ asBlock: asBlock, replacePos: hit.pos });
+    openUrlCard(false, { from: range.from, to: range.to }, {
+      edit: true, href: range.href, title: hostOf(range.href) || '', icon: range.icon || '🌐',
+    });
     return true;
   }
 
@@ -1804,6 +1980,10 @@
     pickSelectedIcon: pickSelectedIcon,
     toggleHideHost: toggleHideHost,
     convertClassicLink: convertClassicLink,
+    convertThisLink: convertThisLink,
+    restoreSelected: restoreSelected,
+    copySelected: copySelected,
+    deleteSelected: deleteSelected,
     openUrlFromToolbar: openUrlFromToolbar,
     openSelected: openSelected,
     refreshLive: refreshLive,

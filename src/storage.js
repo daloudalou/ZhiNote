@@ -42,6 +42,7 @@ const DEFAULT_DATA = () => ({
     noteTransition: 'none',
     sidebarWidth: 260,
     lastOpenedId: null,
+    startupNoteId: '',
     outlineOpen: false,
     sidebarCollapsed: false,
     showTrashBadge: true,
@@ -585,11 +586,13 @@ const storage = (() => {
       const m = fname.match(/^([a-z0-9]+l[a-z0-9]+)\.([a-z0-9]+)$/i);
       if (m) entries.push({ hash: m[1], ext: m[2], path: p });
     }
-    // 优先：上次打开的那篇笔记的图先读（启动会自动打开它）。其余全库随后分批预读。
+    // 优先：启动会打开的那篇（指定启动篇，否则上次打开）先读。其余全库随后分批预读。
     let priSet = new Set();
     try {
+      const startId = (_data.settings && _data.settings.startupNoteId) || '';
       const lastId = (_data.settings && _data.settings.lastOpenedId) || '';
-      priSet = _noteImageHashes(lastId && _data.notes ? _data.notes[lastId] : null);
+      const priId = (startId && _data.notes && _data.notes[startId]) ? startId : lastId;
+      priSet = _noteImageHashes(priId && _data.notes ? _data.notes[priId] : null);
     } catch (_) {}
     const priChunk = entries.filter(e => priSet.has(e.hash));
     const rest = entries.filter(e => !priSet.has(e.hash));
@@ -1662,6 +1665,9 @@ const storage = (() => {
     }
     if (permanent) _globalDirty = true;
     else _data.trashOrder.unshift(id);
+    if (_data.settings && ids.includes(_data.settings.startupNoteId)) {
+      _data.settings.startupNoteId = '';
+    }
     recomputeOrder(n.parentId);
     save();
     emit('change', { type: 'delete', id, permanent });
@@ -1904,6 +1910,11 @@ const storage = (() => {
   function getSetting(key) {
     if (!_data || !_data.settings) return undefined;
     return _data.settings[key];
+  }
+  function getStartupNoteId() {
+    const id = getSetting('startupNoteId') || '';
+    if (id && get(id)) return id;
+    return '';
   }
   function setSetting(key, value) {
     if (!_data) {
@@ -2932,7 +2943,7 @@ const storage = (() => {
   const LOCAL_ONLY_SETTINGS = [
     'theme', 'fontSize', 'fontFamily', 'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
     'noteTransition', 'editorPadding', 'sidebarWidth', 'outlineOpen',
-    'activeWorkspace', 'lastOpenedId', 'recent',
+    'activeWorkspace', 'lastOpenedId', 'startupNoteId', 'recent',
     'recentEmojis', // 本机表情常用：上云只会徒增清单写入，无跨设备必要
     'imagesDir',   // 图片文件夹：本机路径，跨设备无意义，绝不上云
     'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes',
@@ -2941,7 +2952,7 @@ const storage = (() => {
     'webdavCryptoPass', // 加密口令：manifest 是明文，绝不能经云端 settings 泄漏；只走本机/配置导出
     'pinned', // 置顶已迁到 note.pinnedAt（20260622）；legacy 列表不再同步，防旧端覆盖
     'urlOpenInBrowser', // 旧：是否用系统浏览器。已由 urlOpenBrowser 取代，仍留着兼容
-    'urlOpenBrowser',   // 打开网址：app / default / 浏览器 exe 路径；本机、不上云
+    'urlOpenBrowser',   // 打开网址：app / webview / default / 浏览器 exe；本机、不上云。空则电脑端默认 webview
   ];
   // 'webdav_' 前缀=同步配置；'_' 前缀=内部迁移标记，都只留本机
   const LOCAL_ONLY_PREFIX = ['webdav_', '_'];
@@ -2987,7 +2998,7 @@ const storage = (() => {
     create, rename, updateDoc, setColor, setIcon, setPinned, isPinned, getPinnedNotes, setExpanded, collapseAll, expandAll, hasExpandedNodes,
     remove, restoreFromTrash, purgeFromTrash, emptyTrash, purgeConflictCopies, syncSelfCheck,
     move, moveToWorkspace,
-    getSetting, setSetting,
+    getSetting, setSetting, getStartupNoteId,
     getTemplates, saveTemplate, deleteTemplate,
     searchAll,
     getWorkspaces, getActiveWorkspace, setActiveWorkspace, createWorkspace, renameWorkspace, setWorkspaceIcon, deleteWorkspace,

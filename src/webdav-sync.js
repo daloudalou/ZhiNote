@@ -4256,7 +4256,7 @@
     const LOCAL_ONLY = ['theme', 'fontSize', 'fontFamily', 'noteTransition',
       'sidebarCollapsed', 'outlineCollapsed', 'showTrashBadge', 'syncMethod',
       'editorPadding', 'sidebarWidth', 'outlineOpen',
-      'activeWorkspace', 'lastOpenedId', 'recent', 'recentEmojis', 'imagesDir',
+      'activeWorkspace', 'lastOpenedId', 'startupNoteId', 'recent', 'recentEmojis', 'imagesDir',
       'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes', 'webdavProxy', 'webdavRealtime', 'webdavCryptoPass', 'pinned',
       'urlOpenInBrowser', 'urlOpenBrowser'];
     const LOCAL_PREFIX = ['webdav_', '_'];

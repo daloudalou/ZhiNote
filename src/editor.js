@@ -1264,7 +1264,22 @@ function _znMentionAttrsFromLink(href, text) {
   };
 }
 
-/** 旧下划线链接（link mark）收成胶囊。打开旧笔记 / 粘贴 / 打网址都会走到这里。 */
+function _znLinkIsPlain(mark) {
+  const v = mark && mark.attrs && mark.attrs.plain;
+  return v === true || v === 'true' || v === 1 || v === '1';
+}
+function _znRefClipboardText(node) {
+  const a = (node && node.attrs) || {};
+  const kind = a.kind || 'note';
+  if (kind === 'url') return a.href || a.title || '';
+  if (kind === 'file') {
+    let p = String(a.href || '').replace(/^file:\/\/\//i, '');
+    try { p = decodeURIComponent(p); } catch (_) {}
+    return p.replace(/\//g, '\\') || a.title || '';
+  }
+  return a.title || '';
+}
+/** 旧下划线链接（无 plain 的 link mark）收成胶囊。打开旧笔记 / 粘贴 / 打网址都会走到这里。还原后的下划线带 plain，跳过。 */
 function _znConvertClassicLinksTr(state, mentionType) {
   if (!mentionType) return null;
   const runs = [];
@@ -1273,7 +1288,7 @@ function _znConvertClassicLinksTr(state, mentionType) {
     if (node.type.spec.code) { cur = null; return false; }
     if (!node.isText) { cur = null; return; }
     const mark = node.marks.find((m) => m.type && m.type.name === 'link' && m.attrs && m.attrs.href);
-    if (!mark) { cur = null; return; }
+    if (!mark || _znLinkIsPlain(mark)) { cur = null; return; }
     const href = mark.attrs.href;
     const from = pos;
     const to = pos + node.nodeSize;
@@ -1317,6 +1332,7 @@ const ZnMention = Node.create({
           try {
             if (el.closest && (el.closest('pre') || el.closest('code'))) return false;
           } catch (_) {}
+          if (el.getAttribute('data-zn-plain') === '1') return false;
           const href = el.getAttribute('href') || '';
           if (!href) return false;
           return _znMentionAttrsFromLink(href, el.textContent || '');
@@ -1330,7 +1346,7 @@ const ZnMention = Node.create({
   renderText({ node }) { return (node.attrs && node.attrs.title) || ''; },
   renderMarkdown(node) { return _znRefMarkdown('span', 'data-zn-mention=""', node); },
   addStorage() {
-    return { clipboardTextSerializer: (node) => (node.attrs && node.attrs.title) || '' };
+    return { clipboardTextSerializer: (node) => _znRefClipboardText(node) };
   },
   addNodeView() {
     return ({ node, getPos, editor: ed }) => {
@@ -1391,7 +1407,7 @@ const ZnPageLink = Node.create({
   },
   renderMarkdown(node) { return _znRefMarkdown('div', 'data-zn-pagelink=""', node); },
   addStorage() {
-    return { clipboardTextSerializer: (node) => (node.attrs && node.attrs.title) || '' };
+    return { clipboardTextSerializer: (node) => _znRefClipboardText(node) };
   },
   addNodeView() {
     return ({ node, getPos, editor: ed }) => {
@@ -1932,7 +1948,7 @@ function _znEmojiExpandTr(state, emojiType) {
   state.doc.descendants((node, pos, parent) => {
     if (!node.isText || !node.text) return;
     if (parent && (parent.type.name === 'codeBlock' || parent.type.name === 'code')) return;
-    if (node.marks && node.marks.some((m) => m.type && m.type.name === 'code')) return;
+    if (node.marks && node.marks.some((m) => m.type && (m.type.name === 'code' || m.type.name === 'link'))) return;
     _forEachEmojiInText(node.text, (ch, fromRel, toRel) => {
       replacements.push({
         from: pos + fromRel,
@@ -3016,7 +3032,24 @@ const editor = (() => {
         }).configure({ multicolor: true }),
         Underline,
         TextAlign.configure({ types: ['paragraph', 'heading', 'toggleSummary'], alignments: ['left', 'center', 'right', 'justify'] }),
-        Link.extend({ inclusive() { return false; } }).configure({
+        Link.extend({
+          inclusive() { return false; },
+          addAttributes() {
+            return {
+              ...this.parent?.(),
+              plain: {
+                default: false,
+                parseHTML: (el) => el.getAttribute('data-zn-plain') === '1',
+                renderHTML: (attrs) => (attrs.plain ? { 'data-zn-plain': '1', class: 'zn-plain-link' } : {}),
+              },
+              icon: {
+                default: '',
+                parseHTML: (el) => el.getAttribute('data-zn-icon') || '',
+                renderHTML: (attrs) => (attrs.icon ? { 'data-zn-icon': attrs.icon } : {}),
+              },
+            };
+          },
+        }).configure({
           openOnClick: false,
           autolink: true,
           protocols: ['http', 'https', 'mailto', 'tel', { scheme: 'file', optionalSlashes: true }],
@@ -3714,20 +3747,16 @@ const editor = (() => {
         e.preventDefault();
         e.stopPropagation();
         const href = link.getAttribute('href') || '';
-        try { if (window.mentionUi && window.mentionUi.convertClassicLink) window.mentionUi.convertClassicLink(); } catch (_) {}
-        if (e.ctrlKey || e.metaKey) {
-          if (href.startsWith('file:///') || href.startsWith('file:\\\\')) _openLocalFile(href);
-          else if (window.mentionUi && window.mentionUi.openWebHref) window.mentionUi.openWebHref(link.href);
-          else window.open(link.href, '_blank');
-        } else if (window.mentionUi && typeof window.mentionUi.openSelected === 'function') {
-          window.mentionUi.openSelected();
-        } else if (href.startsWith('file:///') || href.startsWith('file:\\\\')) {
-          _openLocalFile(href);
-        } else if (window.mentionUi && window.mentionUi.openWebHref) {
-          window.mentionUi.openWebHref(link.href);
-        } else {
-          window.open(link.href, '_blank');
+        const plain = link.getAttribute('data-zn-plain') === '1' || link.classList.contains('zn-plain-link');
+        if (!plain) {
+          try { if (window.mentionUi && window.mentionUi.convertClassicLink) window.mentionUi.convertClassicLink(); } catch (_) {}
         }
+        if (window.mentionUi && typeof window.mentionUi.openSelected === 'function' && window.mentionUi.openSelected()) {
+          return;
+        }
+        if (href.startsWith('file:///') || href.startsWith('file:\\\\')) _openLocalFile(href);
+        else if (window.mentionUi && window.mentionUi.openWebHref) window.mentionUi.openWebHref(link.href);
+        else window.open(link.href, '_blank');
         return;
       }
       const img = e.target.closest('img');
