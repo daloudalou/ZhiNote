@@ -1050,6 +1050,30 @@ const tree = (() => {
   }
 
   // ========== 右键菜单 ==========
+  function _ctxRi(d) {
+    return '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><path d="' + d + '"/></svg>';
+  }
+  const CTX_ICO = {
+    add: _ctxRi('M11 11V5H13V11H19V13H13V19H11V13H5V11H11Z'),
+    fileAdd: _ctxRi('M15 4H5V20H19V8H15V4ZM3 2.9918C3 2.44405 3.44749 2 3.9985 2H16L20.9997 7L21 20.9925C21 21.5489 20.5551 22 20.0066 22H3.9934C3.44476 22 3 21.5447 3 21.0082V2.9918ZM11 11V8H13V11H16V13H13V16H11V13H8V11H11Z'),
+    edit: _ctxRi('M9.24264 18.9967H21V20.9967H3V16.754L12.8995 6.85453L17.1421 11.0972L9.24264 18.9967ZM14.3137 5.44032L16.435 3.319C16.8256 2.92848 17.4587 2.92848 17.8492 3.319L20.6777 6.14743C21.0682 6.53795 21.0682 7.17112 20.6777 7.56164L18.5563 9.68296L14.3137 5.44032Z'),
+    image: _ctxRi('M4.828 21L3 19.172V4.828L4.828 3H19.172L21 4.828V19.172L19.172 21H4.828ZM5 19H19V5H5V19ZM15.5 11L19 16H5L8.5 11.5L11 14.5L15.5 11Z'),
+    pin: _ctxRi('M18 3V5H17V11L19 14V16H13V23H11V16H5V14L7 11V5H6V3H18ZM9 5V11.6056L7.4037 14H16.5963L15 11.6056V5H9Z'),
+    home: _ctxRi('M19 21H5C4.44772 21 4 20.5523 4 20V11L1 11L11.3273 1.6115C11.7087 1.26475 12.2913 1.26475 12.6727 1.6115L23 11L20 11V20C20 20.5523 19.5523 21 19 21ZM6 19H18V9.15745L12 3.7029L6 9.15745V19Z'),
+    palette: _ctxRi('M12 2C17.5222 2 22 5.97778 22 10.8889C22 13.9556 19.5111 16.4444 16.4444 16.4444H14.4778C13.5556 16.4444 12.8111 17.1889 12.8111 18.1111C12.8111 18.5333 12.9778 18.9222 13.2333 19.2111C13.5 19.5111 13.6667 19.9 13.6667 20.3333C13.6667 21.2556 12.9 22 12 22C6.47778 22 2 17.5222 2 12C2 6.47778 6.47778 2 12 2ZM10.8111 18.1111C10.8111 16.0843 12.451 14.4444 14.4778 14.4444H16.4444C18.4065 14.4444 20 12.851 20 10.8889C20 7.1392 16.4677 4 12 4C7.58235 4 4 7.58235 4 12C4 16.19 7.2226 19.6285 11.324 19.9718C10.9948 19.4168 10.8111 18.7761 10.8111 18.1111ZM7.5 12C6.67157 12 6 11.3284 6 10.5C6 9.67157 6.67157 9 7.5 9C8.32843 9 9 9.67157 9 10.5C9 11.3284 8.32843 12 7.5 12ZM16.5 12C15.6716 12 15 11.3284 15 10.5C15 9.67157 15.6716 9 16.5 9C17.3284 9 18 9.67157 18 10.5C18 11.3284 17.3284 12 16.5 12ZM12 9C11.1716 9 10.5 8.32843 10.5 7.5C10.5 6.67157 11.1716 6 12 6C12.8284 6 13.5 6.67157 13.5 7.5C13.5 8.32843 12.8284 9 12 9Z'),
+    box: _ctxRi('M3 10H2V4.00293C2 3.44903 2.45531 3 2.9918 3H21.0082C21.556 3 22 3.43788 22 4.00293V10H21V20.0015C21 20.553 20.5551 21 20.0066 21H3.9934C3.44476 21 3 20.5525 3 20.0015V10ZM19 10H5V19H19V10ZM4 5V8H20V5H4ZM9 12H15V14H9V12Z'),
+    more: _ctxRi('M5 10.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm7 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zm7 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z'),
+    trash: _ctxRi('M17 6H22V8H20V21C20 21.5523 19.5523 22 19 22H5C4.44772 22 4 21.5523 4 21V8H2V6H7V3C7 2.44772 7.44772 2 8 2H16C16.5523 2 17 2.44772 17 3V6ZM9 11V17H11V11H9ZM13 11V17H15V11H13ZM9 4V6H15V4H9Z'),
+    folder: _ctxRi('M3 21C2.44772 21 2 20.5523 2 20V4C2 3.44772 2.44772 3 3 3H10.4142L12.4142 5H20C20.5523 5 21 5.44772 21 6V9H4V18.996L6 11H22.5L20.1894 20.2425C20.0781 20.6877 19.6781 21 19.2192 21H3Z'),
+    book: _ctxRi('M21 18H6C5.44772 18 5 18.4477 5 19C5 19.5523 5.44772 20 6 20H21V22H6C4.34315 22 3 20.6569 3 19V4C3 2.89543 3.89543 2 5 2H21V18ZM5 16.05C5.16156 16.0172 5.32877 16 5.5 16H19V4H5V16.05ZM16 9H8V7H16V9Z'),
+    checks: _ctxRi('M6.99979 7V3C6.99979 2.44772 7.4475 2 7.99979 2H20.9998C21.5521 2 21.9998 2.44772 21.9998 3V16C21.9998 16.5523 21.5521 17 20.9998 17H17V20.9925C17 21.5489 16.551 22 15.9925 22H3.00728C2.45086 22 2 21.5511 2 20.9925L2.00276 8.00748C2.00288 7.45107 2.4518 7 3.01025 7H6.99979ZM8.99979 7H15.9927C16.549 7 17 7.44892 17 8.00748V15H19.9998V4H8.99979V7ZM15 9H4.00255L4.00021 20H15V9ZM8.50242 18L4.96689 14.4645L6.3811 13.0503L8.50242 15.1716L12.7451 10.9289L14.1593 12.3431L8.50242 18Z'),
+    check: _ctxRi('M4 3H20C20.5523 3 21 3.44772 21 4V20C21 20.5523 20.5523 21 20 21H4C3.44772 21 3 20.5523 3 20V4C3 3.44772 3.44772 3 4 3ZM5 5V19H19V5H5ZM11.0026 16L6.75999 11.7574L8.17421 10.3431L11.0026 13.1716L16.6595 7.51472L18.0737 8.92893L11.0026 16Z'),
+    download: _ctxRi('M13 10H18L12 16L6 10H11V3H13V10ZM4 19H20V12H22V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V12H4V19Z'),
+    copy: _ctxRi('M7 6V3C7 2.45 7.45 2 8 2H20C20.55 2 21 2.45 21 3V17C21 17.55 20.55 18 20 18H17V21C17 21.55 16.55 22 16 22H4C3.45 22 3 21.55 3 21V7C3 6.45 3.45 6 4 6H7ZM9 6H16C16.55 6 17 6.45 17 7V16H19V4H9V6ZM5 8V20H15V8H5Z'),
+    md: _ctxRi('M3 3H21C21.5523 3 22 3.44772 22 4V20C22 20.5523 21.5523 21 21 21H3C2.44772 21 2 20.5523 2 20V4C2.44772 3 3 3ZM4 5V19H20V5H4ZM7 15.5H5V8.5H7L9 10.5L11 8.5H13V15.5H11V11.5L9 13.5L7 11.5V15.5ZM18 12.5H20L17 15.5L14 12.5H16V8.5H18V12.5Z'),
+    back: _ctxRi('M5.82843 6.99955L8.36396 9.53509L6.94975 10.9493L2 5.99955L6.94975 1.0498L8.36396 2.46402L5.82843 4.99955H13C17.4183 4.99955 21 8.58127 21 12.9996C21 17.4178 17.4183 20.9996 13 20.9996H4V18.9996H13C16.3137 18.9996 19 16.3133 19 12.9996C19 9.68584 16.3137 6.99955 13 6.99955H5.82843Z')
+  };
+
   // 把 items 渲染进菜单容器（支持 divider / submenu / onClick），showContextMenu 与批量菜单共用
   function _populateMenu(menu, items) {
     for (const it of items) {
@@ -1061,7 +1085,9 @@ const tree = (() => {
       }
       const el = document.createElement('div');
       el.className = 'context-menu-item' + (it.danger ? ' danger' : '') + (it.submenu ? ' has-submenu' : '');
-      el.innerHTML = `<span class="ctx-icon-emoji">${it.icon}</span><span>${it.label}</span>`;
+      const raw = it.icon || '';
+      const cls = raw.indexOf('<svg') >= 0 ? 'ctx-icon' : 'ctx-icon-emoji';
+      el.innerHTML = `<span class="${cls}">${raw}</span><span>${it.label}</span>`;
       if (it.submenu) {
         el.addEventListener('mouseenter', () => showSubmenu(el, it.submenu));
       } else {
@@ -1082,23 +1108,16 @@ const tree = (() => {
   // 「其他」子菜单：把不常用项收纳进来，主菜单更清爽
   function _buildMoreSubmenu(id, note) {
     const more = [
-      { label: '导出为 .md', icon: '💾', onClick: () => exportSingleNote(id) },
-      { label: '打开文件', icon: '📂', onClick: () => openFileAsNote(id) },
-      { label: '复制副本', icon: '📋', onClick: () => duplicateNote(id) },
-      { label: '复制为 Markdown', icon: '📄', onClick: () => copyNoteAsMarkdown(id) },
+      { label: '导出为 .md', icon: CTX_ICO.download, onClick: () => exportSingleNote(id) },
+      { label: '打开文件', icon: CTX_ICO.folder, onClick: () => openFileAsNote(id) },
+      { label: '复制副本', icon: CTX_ICO.copy, onClick: () => duplicateNote(id) },
+      { label: '复制为 Markdown', icon: CTX_ICO.md, onClick: () => copyNoteAsMarkdown(id) },
     ];
     return {
       render() {
         const el = document.createElement('div');
         el.className = 'context-menu';
-        for (const it of more) {
-          const item = document.createElement('div');
-          item.className = 'context-menu-item';
-          item.innerHTML = `<span class="ctx-icon-emoji">${it.icon}</span><span>${it.label}</span>`;
-          item.addEventListener('click', () => { hideContextMenu(); it.onClick(); });
-          el.appendChild(item);
-        }
-        try { window.emojiUi?.paintAll?.(el); } catch (_) {}
+        _populateMenu(el, more);
         return el;
       }
     };
@@ -1116,7 +1135,7 @@ const tree = (() => {
     const isPinned = storage.isPinned(id);
     const isStartup = !!(storage.getStartupNoteId && storage.getStartupNoteId() === id);
     const items = [
-      { label: '新建子笔记', icon: '➕', onClick: () => {
+      { label: '新建子笔记', icon: CTX_ICO.add, onClick: () => {
         const child = storage.create({ parentId: id, title: '' });
         const noteData = storage.get(id);
         if (noteData && !noteData.expanded) {
@@ -1125,25 +1144,25 @@ const tree = (() => {
         render();
         editor.open(child.id);
       }},
-      { label: '重命名', icon: '✏️', onClick: () => beginRename(id) },
-      { label: '更换图标', icon: '🖼️', onClick: () => {
+      { label: '重命名', icon: CTX_ICO.edit, onClick: () => beginRename(id) },
+      { label: '更换图标', icon: CTX_ICO.image, onClick: () => {
         const iconEl = document.querySelector(`.tree-node[data-id="${CSS.escape(id)}"] .tree-note-icon`) || document.body;
         window.openIconPicker(iconEl, {
           currentIcon: note.icon || '', defaultIcon: '', title: '更换笔记图标',
           onPick: (icon) => { storage.setIcon(id, icon); render(); }
         });
       }},
-      { label: isPinned ? '取消置顶' : '置顶', icon: '📌', onClick: () => window.palette?.togglePin(id) },
-      { label: isStartup ? '取消指定' : '设为启动时打开', icon: '🏠', onClick: () => {
+      { label: isPinned ? '取消置顶' : '置顶', icon: CTX_ICO.pin, onClick: () => window.palette?.togglePin(id) },
+      { label: isStartup ? '取消指定' : '设为启动时打开', icon: CTX_ICO.home, onClick: () => {
         storage.setSetting('startupNoteId', isStartup ? '' : id);
         render();
       }},
       { type: 'divider' },
-      { label: '颜色标记', icon: '🎨', submenu: buildColorSubmenu(id) },
-      ...(storage.getWorkspaces().length > 1 ? [{ label: '移动到笔记本', icon: '📦', submenu: buildWorkspaceSubmenu(id) }] : []),
-      { label: '其他', icon: '⋯', submenu: _buildMoreSubmenu(id, note) },
+      { label: '颜色标记', icon: CTX_ICO.palette, submenu: buildColorSubmenu(id) },
+      ...(storage.getWorkspaces().length > 1 ? [{ label: '移动到笔记本', icon: CTX_ICO.box, submenu: buildWorkspaceSubmenu(id) }] : []),
+      { label: '其他', icon: CTX_ICO.more, submenu: _buildMoreSubmenu(id, note) },
       { type: 'divider' },
-      { label: '删除', icon: '🗑️', danger: true, onClick: () => {
+      { label: '删除', icon: CTX_ICO.trash, danger: true, onClick: () => {
         const anchor = document.querySelector(`.tree-row[data-id="${id}"]`) || document.body;
         requestDelete(id, anchor);
       }},
@@ -1162,11 +1181,11 @@ const tree = (() => {
     const menu = document.getElementById('context-menu');
     menu.innerHTML = '';
     const items = [
-      { label: '颜色标记', icon: '🎨', submenu: _buildBatchColorSubmenu(ids) },
-      ...(storage.getWorkspaces().length > 1 ? [{ label: '移动到笔记本', icon: '📦', submenu: _buildBatchWorkspaceSubmenu(ids) }] : []),
-      { label: '导出为 .md', icon: '💾', onClick: () => _batchExport() },
+      { label: '颜色标记', icon: CTX_ICO.palette, submenu: _buildBatchColorSubmenu(ids) },
+      ...(storage.getWorkspaces().length > 1 ? [{ label: '移动到笔记本', icon: CTX_ICO.box, submenu: _buildBatchWorkspaceSubmenu(ids) }] : []),
+      { label: '导出为 .md', icon: CTX_ICO.download, onClick: () => _batchExport() },
       { type: 'divider' },
-      { label: `删除 ${ids.length} 项`, icon: '🗑️', danger: true, onClick: () => {
+      { label: `删除 ${ids.length} 项`, icon: CTX_ICO.trash, danger: true, onClick: () => {
         const anchor = document.querySelector(`.tree-row[data-id="${CSS.escape(ids[0])}"]`) || document.body;
         _batchDelete(anchor);
       }},
@@ -1719,20 +1738,20 @@ const tree = (() => {
     menu.innerHTML = '';
     const hasSel = _sel.size > 0;
     const items = [
-      { label: '新建笔记', icon: '📝', onClick: () => {
+      { label: '新建笔记', icon: CTX_ICO.fileAdd, onClick: () => {
         const rootOrder = storage.getAll().rootOrder || [];
         const insertAfterId = rootOrder.length ? rootOrder[rootOrder.length - 1] : null;
         const note = storage.create({ parentId: null, title: '', insertAfterId });
         render();
         editor.open(note.id);
       }},
-      { label: '打开文件', icon: '📂', onClick: () => openFileAsNote(null) },
-      { label: '导入笔记本', icon: '📓', onClick: () => { if (window.importNotebookFromZip) window.importNotebookFromZip(); } },
+      { label: '打开文件', icon: CTX_ICO.folder, onClick: () => openFileAsNote(null) },
+      { label: '导入笔记本', icon: CTX_ICO.book, onClick: () => { if (window.importNotebookFromZip) window.importNotebookFromZip(); } },
       { type: 'divider' },
       ...(hasSel || _selectMode
-        ? [{ label: '取消选择', icon: '↩️', onClick: () => clearSelection() }]
-        : [{ label: '选择多项', icon: '☑️', onClick: () => enterSelectMode() }]),
-      { label: '全选', icon: '✅', onClick: () => selectAllVisible() },
+        ? [{ label: '取消选择', icon: CTX_ICO.back, onClick: () => clearSelection() }]
+        : [{ label: '选择多项', icon: CTX_ICO.checks, onClick: () => enterSelectMode() }]),
+      { label: '全选', icon: CTX_ICO.check, onClick: () => selectAllVisible() },
     ];
     _populateMenu(menu, items);
     menu.classList.remove('hidden');

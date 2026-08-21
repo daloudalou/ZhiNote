@@ -1338,7 +1338,7 @@
       + '</div>'
       + '<div class="zn-url-pane" data-pane="global">'
       + '<div class="zn-url-showhost-row"><span class="zn-url-showhost-text">显示域名</span>'
-      + '<label class="zn-toggle">'
+      + '<label class="zn-switch">'
       + '<input type="checkbox" id="zn-url-show-host"' + (showHost ? ' checked' : '') + '>'
       + '<i></i></label></div>'
       + (sysBrowser

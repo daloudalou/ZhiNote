@@ -3617,7 +3617,7 @@ function tryEmojiTrigger() {
     if (!/[;；]{2}$/.test(left0)) return;
   } else {
     const wrap = target.closest(
-      '.ProseMirror p, .ProseMirror li, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6, .ProseMirror blockquote, .ProseMirror .zn-toggle-summary'
+      '.ProseMirror p, .ProseMirror li, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4, .ProseMirror h5, .ProseMirror h6, .ProseMirror blockquote, .ProseMirror .zn-fold-summary'
     );
     if (!wrap) return;
     const before = (wrap.textContent || '').replace(/[\u200b\u200c\u200d\ufeff]/g, '');
@@ -4731,10 +4731,18 @@ const WHATS_NEW = {
   id: window.__MD_VER__ || '20260821t1',
   date: '2026-08-21',
   items: [
-    { title: '引用还原', text: '网页、文件的胶囊和通栏可还原成下划线形式。' },
-    { title: '默认笔记', text: '在设置面板和笔记栏右键菜单，可指定默认打开笔记。' },
+    { title: '折叠待办', text: '修复折叠列表里的待办任务显示问题（折叠标题不支持放任务框）。' },
+    { title: '闲机回收', text: '很久没开的设备对完云后，独有的旧笔记进回收站，避免把旧稿传到云上。' },
   ],
   history: [
+    {
+      ver: 'v2.0.4',
+      date: '2026-08-21',
+      items: [
+        { title: '引用还原', text: '网页、文件的胶囊和通栏可还原成下划线形式。' },
+        { title: '默认笔记', text: '在设置面板和笔记栏右键菜单，可指定默认打开笔记。' },
+      ],
+    },
     {
       ver: 'v2.0.3',
       date: '2026-08-20',
@@ -4772,6 +4780,7 @@ const BN_DEV_ACKS = 'zhinote-bell-acks-dev';
 const BN_LIB_ACKS = 'bellMsgAcks';
 const BN_KEEP_MS = 7 * 24 * 3600 * 1000;
 const BN_EASE_MS = 240;
+const BN_STALE_PARK = 'zhinote-bell-stale-park';
 const WN_SHARE = 'https://getquicker.net/Sharedaction?code=b5091d78-12cc-4fb9-bd01-08debb8a5d21&fromMyShare=true';
 let _wnFmtBlocked = false;
 
@@ -5145,7 +5154,29 @@ function _bnFacts() {
       s: '版本过旧，先更新'
     });
   }
+  const parked = _bnStaleParked();
+  if (parked) {
+    out.push({
+      id: 'stale:park:' + parked.at,
+      kind: 'trash',
+      scope: 'dev',
+      at: today,
+      t: '这台有 ' + parked.n + ' 篇只在本机',
+      s: '已放入回收站，避免传上云端弄乱'
+    });
+  }
   return out;
+}
+function _bnStaleParked() {
+  let rec = null;
+  try { rec = JSON.parse(_wnLsGet(BN_STALE_PARK) || 'null'); } catch (_) { rec = null; }
+  if (!rec || !rec.n || !Array.isArray(rec.ids) || !rec.ids.length) return null;
+  const all = (window.storage && storage.getAll) ? storage.getAll() : null;
+  const trash = (all && all.trash) || {};
+  const still = rec.ids.filter((id) => trash[id]);
+  if (!still.length) return null;
+  return { n: still.length, at: rec.at || todayStamp(), ids: still };
+  function todayStamp() { return Date.now(); }
 }
 function _bnLiveItems(pending) {
   pending = pending || {};
@@ -5249,10 +5280,8 @@ function _wnDoUpdate(pop) {
   if (pop) pop.classList.add('hidden');
   if (window.host?.caps?.quicker) {
     try { window.open(WN_SHARE, '_blank'); } catch (_) {}
-    toast('请到 Quicker 更新枝记动作', 'info');
     return;
   }
-  toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
   _applyAppUpdate();
 }
 function _openBellEvent(ev, keep) {
@@ -5685,11 +5714,10 @@ function _showUpdateDialog(remote) {
   overlay.querySelector('#zn-upd-now')?.addEventListener('click', () => {
     if (window.host?.caps?.quicker) {
       try { window.open(WN_SHARE, '_blank'); } catch (_) {}
-      toast('请到 Quicker 更新枝记动作', 'info');
       _closeUpdateMask(overlay, remote.id);
       return;
     }
-    toast('发现新版本，正在更新…', 'info', { id: 'app-update', duration: 0 });
+    _closeUpdateMask(overlay, remote.id);
     _applyAppUpdate();
   });
   document.addEventListener('keydown', onKey, true);

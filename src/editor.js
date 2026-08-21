@@ -181,10 +181,10 @@ const MathBlock = Node.create({
 });
 
 /**
- * Notion 式折叠块（方案 A）：toggle / toggleSummary / toggleContent。
- * - open 写入文档属性 → 两端开合一致（同步）。
- * - level 0=普通折叠列表；1/2/3=折叠标题。
- * - 结构对齐 TipTap Details：标题层可编，内容层可嵌任意块（含再套折叠）。
+ * Notion 式折叠块：schema 仍叫 toggle / toggleSummary / toggleContent（进正文 JSON，勿改名）。
+ * open 写入属性两端一致；level 0=列表、1–3=折叠标题。界面 class 用 zn-fold*。
+ * 坑：勿用 zn-toggle（曾与网址卡片开关重名，折叠里的待办勾选被藏掉）。
+ * Markdown 仍写 data-zn-toggle。侧栏展开三角是 tree-chevron，回收站是 rcv-caret。
  */
 function _znEmptyToggle(level, open) {
   // 新建默认收起：内容空段不抢光标，先写标题；回车再展开进内部
@@ -402,7 +402,7 @@ const ToggleSummary = Node.create({
     return [{ tag: 'summary' }, { tag: 'div[data-type="toggleSummary"]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggleSummary', class: 'zn-toggle-summary' }), 0];
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggleSummary', class: 'zn-fold-summary' }), 0];
   },
   // 必须传 content 数组：空标题没有 content 字段时若传整个 node，会再次进本函数 → 爆栈
   renderMarkdown(node, helpers) {
@@ -421,7 +421,7 @@ const ToggleContent = Node.create({
     return [{ tag: 'div[data-type="toggleContent"]' }];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggleContent', class: 'zn-toggle-content' }), 0];
+    return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'toggleContent', class: 'zn-fold-content' }), 0];
   },
   renderMarkdown(node, helpers) {
     if (!node) return '';
@@ -469,7 +469,7 @@ const Toggle = Node.create({
     ];
   },
   renderHTML({ HTMLAttributes }) {
-    return ['details', mergeAttributes(HTMLAttributes, { 'data-zn-toggle': '', 'data-type': 'toggle', class: 'zn-toggle' }), 0];
+    return ['details', mergeAttributes(HTMLAttributes, { 'data-zn-toggle': '', 'data-type': 'toggle', class: 'zn-fold' }), 0];
   },
   renderMarkdown(node, helpers) {
     const open = node.attrs && node.attrs.open;
@@ -494,7 +494,7 @@ const Toggle = Node.create({
       const attrs = mergeAttributes(HTMLAttributes, {
         'data-type': 'toggle',
         'data-zn-toggle': '',
-        class: 'zn-toggle',
+        class: 'zn-fold',
       });
       Object.entries(attrs).forEach(([k, v]) => {
         if (v == null || v === false) return;
@@ -513,13 +513,13 @@ const Toggle = Node.create({
 
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'zn-toggle-chevron';
+      btn.className = 'zn-fold-chevron';
       btn.setAttribute('aria-label', '展开/折叠');
       btn.contentEditable = 'false';
-      btn.innerHTML = '<svg class="zn-toggle-chevron-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5L19 12L8 19Z" fill="currentColor"/></svg>';
+      btn.innerHTML = '<svg class="zn-fold-chevron-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M8 5L19 12L8 19Z" fill="currentColor"/></svg>';
 
       const content = document.createElement('div');
-      content.className = 'zn-toggle-inner';
+      content.className = 'zn-fold-inner';
 
       dom.appendChild(btn);
       dom.appendChild(content);
@@ -5358,8 +5358,8 @@ const editor = (() => {
       if (!dom) return;
       if (dom.nodeType === 3) dom = dom.parentElement;
       if (!dom) return;
-      const target = (dom.classList && dom.classList.contains('zn-toggle'))
-        ? (dom.querySelector('.zn-toggle-summary') || dom)
+      const target = (dom.classList && dom.classList.contains('zn-fold'))
+        ? (dom.querySelector('.zn-fold-summary') || dom)
         : dom;
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       target.classList.add('outline-flash');

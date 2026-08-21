@@ -1230,6 +1230,7 @@ const storage = (() => {
     }
     const notes = {};
     for (const id in _data.notes) {
+      if (_isUnsyncedParked(id)) continue;
       const n = _data.notes[id];
       notes[id] = {
         title: n.title || '', pinnedAt: n.pinnedAt || null, color: n.color || null,
@@ -1246,6 +1247,7 @@ const storage = (() => {
     (_data.templates || []).forEach((t, i) => { templates[t.id] = { name: t.name || '', content: t.content || '', order: i }; });
     const trash = {};
     for (const id in (_data.trash || {})) {
+      if (_isUnsyncedParked(id)) continue;
       const tn = _data.trash[id];
       trash[id] = { title: tn.title || '', workspaceId: tn.workspaceId || 'ws-default', parentId: tn.parentId == null ? null : tn.parentId, deletedAt: tn.deletedAt || '', updatedAt: tn.updatedAt || '' };
     }
@@ -1673,6 +1675,67 @@ const storage = (() => {
     emit('change', { type: 'delete', id, permanent });
   }
 
+  function _parkedIds() {
+    const a = _data && _data.settings && _data.settings.unsyncedParkedIds;
+    return Array.isArray(a) ? a.filter(Boolean) : [];
+  }
+  function _isUnsyncedParked(id) { return !!(id && _parkedIds().indexOf(id) >= 0); }
+  function _writeParkedIds(ids) {
+    if (!_data) return;
+    if (!_data.settings) _data.settings = DEFAULT_DATA().settings;
+    _data.settings.unsyncedParkedIds = ids;
+  }
+  /**
+   * 久闲对云后：云端名单没有的本机篇放进回收站，不标脏、不上云。
+   * 用户从回收站还原后才当作新篇上传。
+   */
+  function parkUnsyncedNotes(ids) {
+    if (!_data || !ids || !ids.length) return [];
+    const parked = [];
+    const parents = new Set();
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const node = _data.notes[id];
+      if (!node) continue;
+      if (_reviveIds.has(id)) continue;
+      parents.add(node.parentId);
+      _data.trash[id] = { ...node, deletedAt: now() };
+      delete _data.notes[id];
+      parked.push(id);
+      _dirtyNoteIds.delete(id);
+      if (node.parentId == null) {
+        _data.rootOrder = (_data.rootOrder || []).filter(x => x !== id);
+      }
+    }
+    if (!parked.length) return [];
+    for (let i = parked.length - 1; i >= 0; i--) {
+      const id = parked[i];
+      if (!(_data.trashOrder || []).includes(id)) {
+        if (!_data.trashOrder) _data.trashOrder = [];
+        _data.trashOrder.unshift(id);
+      }
+    }
+    parents.forEach((p) => { try { recomputeOrder(p); } catch (_) {} });
+    _writeParkedIds([...new Set(_parkedIds().concat(parked))]);
+    if (_data.settings && parked.includes(_data.settings.startupNoteId)) {
+      _data.settings.startupNoteId = '';
+    }
+    try {
+      if (window.editor && window.editor.currentId && parked.includes(window.editor.currentId())) {
+        window.editor.close();
+      }
+    } catch (_) {}
+    save({ immediate: true });
+    emit('change', { type: 'global-sync' });
+    return parked;
+  }
+  function isUnsyncedParked(id) { return _isUnsyncedParked(id); }
+  function _unparkIds(ids) {
+    if (!ids || !ids.length) return;
+    const drop = new Set(ids);
+    _writeParkedIds(_parkedIds().filter((x) => !drop.has(x)));
+  }
+
   function restoreFromTrash(id) {
     const node = _data.trash[id];
     if (!node) return;
@@ -1692,6 +1755,7 @@ const storage = (() => {
     // 还原回末尾：分配新 frac（旧 frac 可能与现存兄弟冲突，重排到末尾最稳）。
     { const rn = _data.notes[id]; _assignFracAfter(rn, rn.parentId, _rootWs(rn), null); }
     recomputeOrder(_data.notes[id].parentId);
+    _unparkIds(ids);
     save();
     emit('change', { type: 'restore', id });
   }
@@ -1709,9 +1773,20 @@ const storage = (() => {
     const ids = [id, ..._collectDescendantsInTrash(id)];
     // 显式写墓碑 + 标脏：永久删除经「总账墓碑(即时同步)」与「网盘 deleted 清单」双通道传播，
     //   替代原先靠 _maintainStructLedger 推断（已移除）。
-    for (const nid of ids) { delete _data.trash[nid]; _dirtyNoteIds.add(nid); (_data.noteTombstones || (_data.noteTombstones = {}))[nid] = now(); }
+    const parked = [];
+    for (const nid of ids) {
+      delete _data.trash[nid];
+      if (_isUnsyncedParked(nid)) {
+        parked.push(nid);
+        _dirtyNoteIds.delete(nid);
+      } else {
+        _dirtyNoteIds.add(nid);
+        (_data.noteTombstones || (_data.noteTombstones = {}))[nid] = now();
+      }
+    }
+    _unparkIds(parked);
     _data.trashOrder = _data.trashOrder.filter(x => x !== id);
-    _globalDirty = true;
+    if (parked.length < ids.length) _globalDirty = true;
     save();
     emit('change', { type: 'purge', id });
   }
@@ -1720,8 +1795,18 @@ const storage = (() => {
     const ids = Object.keys(_data.trash);
     _data.trash = {};
     _data.trashOrder = [];
-    for (const id of ids) { _dirtyNoteIds.add(id); (_data.noteTombstones || (_data.noteTombstones = {}))[id] = now(); } // 写墓碑+删云端文件，防复活
-    if (ids.length) _globalDirty = true;
+    const parked = [];
+    for (const id of ids) {
+      if (_isUnsyncedParked(id)) {
+        parked.push(id);
+        _dirtyNoteIds.delete(id);
+      } else {
+        _dirtyNoteIds.add(id);
+        (_data.noteTombstones || (_data.noteTombstones = {}))[id] = now();
+      }
+    }
+    _unparkIds(parked);
+    if (parked.length < ids.length) _globalDirty = true;
     save();
     emit('change', { type: 'emptyTrash' });
   }
@@ -2953,6 +3038,7 @@ const storage = (() => {
     'pinned', // 置顶已迁到 note.pinnedAt（20260622）；legacy 列表不再同步，防旧端覆盖
     'urlOpenInBrowser', // 旧：是否用系统浏览器。已由 urlOpenBrowser 取代，仍留着兼容
     'urlOpenBrowser',   // 打开网址：app / webview / default / 浏览器 exe；本机、不上云。空则电脑端默认 webview
+    'unsyncedParkedIds', // 久闲对云后放进回收站、尚未上云的本机独有篇
   ];
   // 'webdav_' 前缀=同步配置；'_' 前缀=内部迁移标记，都只留本机
   const LOCAL_ONLY_PREFIX = ['webdav_', '_'];
@@ -2996,7 +3082,7 @@ const storage = (() => {
     getImagesBackendInfo: () => ({ backend: _imgBackend, dir: _imgDir }),
     setImagesDir,
     create, rename, updateDoc, setColor, setIcon, setPinned, isPinned, getPinnedNotes, setExpanded, collapseAll, expandAll, hasExpandedNodes,
-    remove, restoreFromTrash, purgeFromTrash, emptyTrash, purgeConflictCopies, syncSelfCheck,
+    remove, parkUnsyncedNotes, isUnsyncedParked, restoreFromTrash, purgeFromTrash, emptyTrash, purgeConflictCopies, syncSelfCheck,
     move, moveToWorkspace,
     getSetting, setSetting, getStartupNoteId,
     getTemplates, saveTemplate, deleteTemplate,

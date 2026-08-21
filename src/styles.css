@@ -903,6 +903,7 @@ body.theme-gruvbox .tree-row.selected .tree-title { color: #21252b; }
   height: 2px; background: var(--accent); border-radius: 1px;
 }
 
+/* 侧栏笔记树的展开三角。正文折叠是 .zn-fold-chevron，开关是 label.zn-switch，三类不要共用名字。 */
 .tree-chevron {
   width: 24px;
   height: 24px;
@@ -1677,8 +1678,8 @@ body.theme-dark .rt-badge { background: #a394e6; }
   color: var(--text-secondary);
 }
 
-/* Notion 式折叠块（方案 A · 大三角） */
-#editor .ProseMirror .zn-toggle {
+/* 正文折叠块三角（仅编辑区）。侧栏笔记树用 .tree-chevron，勿共用。 */
+#editor .ProseMirror .zn-fold {
   position: relative;
   margin: 0;
   display: flex;
@@ -1687,10 +1688,10 @@ body.theme-dark .rt-badge { background: #a394e6; }
   min-width: 0;
 }
 /* 普通折叠列表：行高/边距跟旁边正文走；三角钉在第一行，不随换行居中 */
-#editor .ProseMirror .zn-toggle[data-level="0"] {
+#editor .ProseMirror .zn-fold[data-level="0"] {
   align-items: flex-start;
 }
-#editor .ProseMirror .zn-toggle-chevron {
+#editor .ProseMirror .zn-fold-chevron {
   flex: none;
   width: 34px;
   height: 34px;
@@ -1708,30 +1709,30 @@ body.theme-dark .rt-badge { background: #a394e6; }
   -webkit-app-region: no-drag;
   transition: color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
 }
-#editor .ProseMirror .zn-toggle[data-level="0"] > .zn-toggle-chevron {
+#editor .ProseMirror .zn-fold[data-level="0"] > .zn-fold-chevron {
   width: 1.15em;
   height: 1.15em;
   margin: 0.18em 6px 0 0;
   border-radius: 4px;
   overflow: visible;
 }
-#editor .ProseMirror .zn-toggle[data-level="0"] > .zn-toggle-chevron .zn-toggle-chevron-icon {
+#editor .ProseMirror .zn-fold[data-level="0"] > .zn-fold-chevron .zn-fold-chevron-icon {
   width: 18px;
   height: 18px;
 }
-#editor .ProseMirror .zn-toggle.is-empty > .zn-toggle-chevron {
+#editor .ProseMirror .zn-fold.is-empty > .zn-fold-chevron {
   color: var(--text-tertiary);
   opacity: 0.5;
 }
-#editor .ProseMirror .zn-toggle-chevron:hover {
+#editor .ProseMirror .zn-fold-chevron:hover {
   background: rgba(0, 0, 0, 0.05);
   color: var(--text);
   opacity: 1;
 }
-body.theme-dark #editor .ProseMirror .zn-toggle-chevron:hover {
+body.theme-dark #editor .ProseMirror .zn-fold-chevron:hover {
   background: rgba(255, 255, 255, 0.06);
 }
-#editor .ProseMirror .zn-toggle-chevron-icon {
+#editor .ProseMirror .zn-fold-chevron-icon {
   display: block;
   width: 18px;
   height: 18px;
@@ -1739,65 +1740,65 @@ body.theme-dark #editor .ProseMirror .zn-toggle-chevron:hover {
   transition: transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
   transform-origin: 50% 50%;
 }
-#editor .ProseMirror .zn-toggle.is-open > .zn-toggle-chevron .zn-toggle-chevron-icon {
+#editor .ProseMirror .zn-fold.is-open > .zn-fold-chevron .zn-fold-chevron-icon {
   transform: rotate(90deg);
 }
-#editor .ProseMirror .zn-toggle-inner {
+#editor .ProseMirror .zn-fold-inner {
   flex: 1;
   min-width: 0;
 }
-#editor .ProseMirror .zn-toggle[data-level="1"] > .zn-toggle-chevron,
-#editor .ProseMirror .zn-toggle[data-level="2"] > .zn-toggle-chevron,
-#editor .ProseMirror .zn-toggle[data-level="3"] > .zn-toggle-chevron {
+#editor .ProseMirror .zn-fold[data-level="1"] > .zn-fold-chevron,
+#editor .ProseMirror .zn-fold[data-level="2"] > .zn-fold-chevron,
+#editor .ProseMirror .zn-fold[data-level="3"] > .zn-fold-chevron {
   width: 36px;
   height: 36px;
   margin-top: 0.15em;
 }
-#editor .ProseMirror .zn-toggle-summary {
+#editor .ProseMirror .zn-fold-summary {
   min-height: 34px;
   padding: 5px 6px;
   border-radius: 6px;
   line-height: 1.55;
   outline: none;
 }
-#editor .ProseMirror .zn-toggle[data-level="0"] > .zn-toggle-inner > .zn-toggle-summary {
+#editor .ProseMirror .zn-fold[data-level="0"] > .zn-fold-inner > .zn-fold-summary {
   min-height: 0;
   padding: 0;
   line-height: inherit;
   border-radius: 4px;
 }
-#editor .ProseMirror .zn-toggle-summary:hover {
+#editor .ProseMirror .zn-fold-summary:hover {
   background: rgba(0, 0, 0, 0.035);
 }
-#editor .ProseMirror .zn-toggle-summary:empty::before {
+#editor .ProseMirror .zn-fold-summary:empty::before {
   content: '折叠标题';
   color: var(--text-tertiary, #a89f8c);
   pointer-events: none;
 }
-#editor .ProseMirror .zn-toggle[data-level="1"] > .zn-toggle-inner > .zn-toggle-summary {
+#editor .ProseMirror .zn-fold[data-level="1"] > .zn-fold-inner > .zn-fold-summary {
   font-size: 1.8em;
   font-weight: 650;
   letter-spacing: -0.02em;
   min-height: 1.3em;
   line-height: 1.3;
 }
-#editor .ProseMirror .zn-toggle[data-level="2"] > .zn-toggle-inner > .zn-toggle-summary {
+#editor .ProseMirror .zn-fold[data-level="2"] > .zn-fold-inner > .zn-fold-summary {
   font-size: 1.5em;
   font-weight: 650;
   min-height: 1.3em;
   line-height: 1.35;
 }
-#editor .ProseMirror .zn-toggle[data-level="3"] > .zn-toggle-inner > .zn-toggle-summary {
+#editor .ProseMirror .zn-fold[data-level="3"] > .zn-fold-inner > .zn-fold-summary {
   font-size: 1.3em;
   font-weight: 650;
   min-height: 1.3em;
   line-height: 1.4;
 }
-#editor .ProseMirror .zn-toggle-content {
+#editor .ProseMirror .zn-fold-content {
   padding: 0 0 0 2px;
   margin-left: 0;
 }
-#editor .ProseMirror .zn-toggle:not(.is-open) > .zn-toggle-inner > .zn-toggle-content {
+#editor .ProseMirror .zn-fold:not(.is-open) > .zn-fold-inner > .zn-fold-content {
   display: none;
 }
 
@@ -3230,6 +3231,9 @@ body.theme-gruvbox .context-menu { background: rgba(50,48,47,0.92); border-color
 }
 .context-menu-caption + .context-menu-divider { margin-top: 2px; }
 .ctx-icon-emoji { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; line-height: 1; }
+.ctx-icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--text-secondary); }
+.ctx-icon svg { width: 14px; height: 14px; display: block; }
+.context-menu-item.danger .ctx-icon { color: var(--danger); }
 .context-menu-item:hover { background: var(--bg-hover); }
 /* 模板高亮：方向键移动时的选中态。覆盖两条路径——
    侧栏图标唤出的快选窗（.tpl-quickpick .context-menu-item）+ 编辑区 / 唤出的浮窗（.tpl-item）。
@@ -3639,23 +3643,23 @@ body.theme-gruvbox .context-menu-divider { background: rgba(255,255,255,0.08); }
   visibility: hidden; pointer-events: none;
 }
 .zn-url-pane.is-on { visibility: visible; pointer-events: auto; }
-.modal-body .zn-toggle {
+label.zn-switch {
   position: relative; width: 40px; height: 22px; flex: none;
   display: inline-block; cursor: pointer; margin: 0; padding: 0; vertical-align: middle;
 }
-.zn-toggle input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; margin: 0; }
-.zn-toggle i {
+label.zn-switch input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; margin: 0; }
+label.zn-switch i {
   display: block; width: 40px; height: 22px; border-radius: 999px;
   background: var(--bg-tertiary); border: 1px solid var(--border);
   box-sizing: border-box; position: relative; transition: background 0.18s, border-color 0.18s;
 }
-.zn-toggle i::after {
+label.zn-switch i::after {
   content: ''; position: absolute; top: 2px; left: 2px;
   width: 16px; height: 16px; border-radius: 50%; background: #fff;
   box-shadow: 0 1px 2px rgba(0,0,0,0.22); transition: transform 0.18s;
 }
-.zn-toggle input:checked + i { background: var(--accent); border-color: var(--accent); }
-.zn-toggle input:checked + i::after { transform: translateX(18px); }
+label.zn-switch input:checked + i { background: var(--accent); border-color: var(--accent); }
+label.zn-switch input:checked + i::after { transform: translateX(18px); }
 .zn-url-showhost-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 0; }
 .zn-url-showhost-text { font-size: 13px; color: var(--text); user-select: none; }
 .zn-url-open-row { margin-top: 8px; }

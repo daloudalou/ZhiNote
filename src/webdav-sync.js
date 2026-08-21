@@ -1587,7 +1587,7 @@
     }
     _persistHealth();
   }
-  /** 久闲对完云端后：云端已有或已删的篇不要再拿本机旧正文回灌；只留云端没有的本机独有篇。 */
+  /** 久闲对完云端后：云端已有或已删的篇不要再拿本机旧正文回灌；云端没有的本机独有篇放进回收站（不上云），有则铃铛提醒。 */
   function _scrubStaleDirtyAgainstManifest(manifest) {
     if (!manifest || !manifest.notes || !window.storage) return;
     const dirty = window.storage.getDirtyNoteIds ? window.storage.getDirtyNoteIds() : [];
@@ -1601,12 +1601,30 @@
     if (drop.length && window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds(drop);
     const data = window.storage.getAll && window.storage.getAll();
     const notes = (data && data.notes) || {};
-    let localOnly = false;
+    const park = [];
     for (const id in notes) {
+      if (window.storage.isRevivedFromBackup && window.storage.isRevivedFromBackup(id)) continue;
       if (manifest.deleted && manifest.deleted[id]) continue;
-      if (!manifest.notes[id]) { localOnly = true; break; }
+      if (!manifest.notes[id]) park.push(id);
     }
-    if (!localOnly && window.storage.clearGlobalDirty) window.storage.clearGlobalDirty();
+    let parked = [];
+    if (park.length && window.storage.parkUnsyncedNotes) {
+      try {
+        localStorage.setItem('zhinote-bell-stale-park', JSON.stringify({
+          ids: park, n: park.length, at: Date.now()
+        }));
+      } catch (_) {}
+      parked = window.storage.parkUnsyncedNotes(park) || [];
+    }
+    try {
+      if (!parked.length) localStorage.removeItem('zhinote-bell-stale-park');
+      else if (parked.length !== park.length) {
+        localStorage.setItem('zhinote-bell-stale-park', JSON.stringify({
+          ids: parked, n: parked.length, at: Date.now()
+        }));
+      }
+    } catch (_) {}
+    if (window.storage.clearGlobalDirty) window.storage.clearGlobalDirty();
   }
   /** 下行并入云端总账：采纳或久闲 → 整本听云端（禁止把本机旧标题叠上去）；日常 → 合并/认领。 */
   function _applyCloudStructOnGet(cloudLed, adoptMode) {
@@ -3260,7 +3278,7 @@
       return;
     }
     // 久闲设备闸：连续 7 天没同步过的设备，先完整核对云端（先下后对），核对完成前绝不上传——
-    // 防它把旧内容/旧结构灌回云端（「久闲设备新旧掺杂」的挂账债）。改动留在本地脏集合里不丢。
+    // 防它把旧内容/旧结构灌回云端（「久闲设备新旧掺杂」的挂账债）。云端没有的本机独有篇对完进回收站，不在此补传。
     if (_staleGate) {
       _pendingPut = true;
       if (Date.now() - _staleGetAt > 30_000) {
@@ -3356,6 +3374,11 @@
       let skippedNotes = 0;
       for (const id of Array.from(dirtyIds)) {
         if (_stopped) break;
+        if (window.storage.isUnsyncedParked && window.storage.isUnsyncedParked(id)) {
+          if (window.storage.removeDirtyNoteIds) window.storage.removeDirtyNoteIds([id]);
+          skippedNotes++;
+          continue;
+        }
         const one = new Set([id]);
         try {
           await _guardUploadConflicts(one, data, manifest);
@@ -4258,7 +4281,7 @@
       'editorPadding', 'sidebarWidth', 'outlineOpen',
       'activeWorkspace', 'lastOpenedId', 'startupNoteId', 'recent', 'recentEmojis', 'imagesDir',
       'webdavUrl', 'webdavUser', 'webdavPass', 'webdavProvider', 'webdavEncryptNotes', 'webdavProxy', 'webdavRealtime', 'webdavCryptoPass', 'pinned',
-      'urlOpenInBrowser', 'urlOpenBrowser'];
+      'urlOpenInBrowser', 'urlOpenBrowser', 'unsyncedParkedIds'];
     const LOCAL_PREFIX = ['webdav_', '_'];
     const shared = {};
     for (const k in settings) {
